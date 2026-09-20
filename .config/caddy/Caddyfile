@@ -11,6 +11,17 @@
 {$DOMAIN} {
     encode gzip zstd
 
+    # The backend sets these on its own responses; Caddy is the only place that
+    # also covers the frontend's HTML, which is served by Next and otherwise
+    # ships bare. Set, not add, so there is one value per header.
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+
     # Backend API + OpenAPI + docs.
     @api path /api/* /openapi.json /docs /docs/* /redoc /redoc/*
     handle @api {

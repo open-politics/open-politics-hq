@@ -1,0 +1,208 @@
+# HQ deployment config. non-secret, safe to commit, safe to paste.
+# secrets live in .env. both are managed by ./setup.sh.
+# what every block is for: see the index at the bottom of this file.
+
+# ── identity ──────────────────────────────────────────────────────────────────
+
+stack:
+  name: open-politics-hq          # docker volume prefix, renaming orphans your data
+  project: HQ
+  environment: local              # local | staging | production
+  user_agent: OpenPoliticsHQ/1.0
+
+# ── how it runs ───────────────────────────────────────────────────────────────
+
+deployment:
+  users:
+    open_registration: true
+    require_email_verification: false
+    allowed_actions: "*"          # organize, ingest, compute, delete, setup -> ceiling on what any user can do, empty = read only
+    token_expiry_minutes: 11520
+    password_reset_expiry_hours: 48
+  storage:
+    use: local_fs                 # local_fs | s3 -> garage below, or any bucket. see services.s3
+    user_uploads:                 # where uploaded files land
+      host_path: ./.store/local_fs     # on this machine
+      base_path: /data/storage         # inside the container
+    importable_paths:             # dirs users may import FROM, read only
+      - /data/storage/datasets
+      - /data/storage/managed
+    browse_max_files: 5000        # 0 = no cap
+  email:
+    host: ""                      # password: SMTP_PASSWORD in .env
+    port: 587
+    user: ""
+    from_email: info@example.com
+    from_name: ""                 # empty -> stack.project
+    tls: true
+    ssl: false
+  network:
+    mode: host                    # host | bridge -> host puts every service in the host netns, no port mappings
+    reach: local                  # local | public -> public adds caddy + auto-TLS on domain below
+    bind: 127.0.0.1               # host mode only
+    domain: localhost
+    acme_email: ""
+    cors:
+      origins:
+        - http://localhost:3000
+      methods:
+        - GET
+        - POST
+        - PUT
+        - PATCH
+        - DELETE
+        - OPTIONS
+      headers:
+        - "*"
+  services:
+    backend:
+      port: 8022                  # host side, the container always binds 8022 inside
+      workers: auto               # uvicorn, production only. auto = 1 per cpu (2-8); or set a number
+      image: backend              # registry path, see scripts/push-registry-containers.sh
+      tag: latest
+    frontend:
+      port: 3000
+    celery:
+      workers: auto               # default, llm, embedding, external_api queues.
+                                  # auto = 2 per cpu (2-8) - these wait on other people's APIs
+      processing_workers: auto    # ingestion + content, kept apart so a big import cant starve annotation.
+                                  # auto = 1 per cpu (2-6) - parsing and hashing are cpu-bound
+    database:
+      host: db
+      port: 5432
+      name: opp_app_users
+      user: postgres
+      ssl_mode: ""                # "" | disable | allow | prefer | require | verify-ca | verify-full
+                                  # password: POSTGRES_PASSWORD in .env
+      pool:
+        size: 10
+        max_overflow: 20
+        pre_ping: true
+    redis:
+      host: redis
+      port: 6379
+      db: 0                       # password: REDIS_PASSWORD in .env
+      url: ""                     # set to override host/port/db, rediss:// for TLS
+    s3:                           # only when storage.use is s3
+      endpoint: garage:3900       # the garage container. vs nbg1.your-objectstorage.com, s3.amazonaws.com
+      bucket: hq-assets
+      region: garage
+      use_ssl: false
+  processing:
+    background_content_enrichers: # run automatically on every new asset
+      hash: false
+      ocr: false
+      geocoding: false
+      language_detection: false
+      quality_score: false
+      embedding: false
+    pdf_max_pages: 0              # 0 = no limit
+    max_upload_size_bytes: 1073741824
+    dispatch_interval_seconds: 120
+    annotation:
+      default_concurrency: 5
+      max_concurrency: 20
+      chunk_size: 50              # commit granularity, so a 50k run isnt one transaction
+  sso:
+    discourse:
+      enabled: false
+      url: ""                     # secret: DISCOURSE_CONNECT_SECRET in .env
+
+# ── what it talks to ──────────────────────────────────────────────────────────
+
+foundation:
+  run:                            # containers we start
+    searxng: true
+    ollama: false
+    nominatim: false
+    garage: false                 # object storage, when storage.use is s3
+  use:                            # what answers when nobody picked, comma list = try in order
+    ocr: tesseract
+    geocoding: nominatim_local, nominatim_api
+    web_search: searxng
+    scraping: newspaper4k
+  access:                         # all -> everyone. superuser -> admins. byok -> users bring their own key. none -> blocked
+    language:                     # leaving a keyed provider out means none, so a forgotten line never spends your money
+      ollama: all
+      llamacpp: all
+      openai: byok
+      anthropic: byok
+      mistral: byok
+    embedding:
+      ollama: all
+      openai: byok
+      jina: byok
+      voyage: byok
+    ocr:
+      tesseract: all
+      ollama: all
+    geocoding:
+      nominatim_local: all
+      nominatim_api: all
+      mapbox: byok
+    web_search:
+      searxng: all
+      tavily: byok
+    scraping:
+      newspaper4k: all
+  providers:                      # how each one is reached
+    ollama:
+      base_url: http://ollama:11434    # vs host.docker.internal:11434 -> ollama on the host, not a container
+      ocr_model: llava
+    llamacpp:
+      base_url: http://host.docker.internal:4000
+    searxng:
+      base_url: http://searxng:8888   # not 8080, nominatim's gunicorn is nailed to that
+    nominatim_local:
+      base_url: http://nominatim:8080
+      pbf_url: https://download.geofabrik.de/europe-latest.osm.pbf
+      replication_url: https://planet.openstreetmap.org/replication/day/
+      import_style: admin         # admin | address -> address is way bigger, way slower
+    tesseract:
+      language: eng
+    openai:
+      base_url: https://api.openai.com/v1
+      key_env: OPENAI_API_KEY
+    anthropic:
+      base_url: https://api.anthropic.com
+      key_env: ANTHROPIC_API_KEY
+    mistral:
+      base_url: https://api.mistral.ai/v1
+      key_env: MISTRAL_API_KEY
+    jina:
+      base_url: https://api.jina.ai/v1/embeddings
+      key_env: JINA_API_KEY
+    voyage:
+      base_url: https://api.voyageai.com/v1
+      key_env: VOYAGE_API_KEY
+    tavily:
+      base_url: https://api.tavily.com
+      key_env: TAVILY_API_KEY
+    nominatim_api:
+      base_url: https://nominatim.openstreetmap.org
+    mapbox:
+      base_url: https://api.mapbox.com/geocoding/v5/mapbox.places
+      key_env: MAPBOX_ACCESS_TOKEN
+
+# ── whats in here ─────────────────────────────────────────────────────────────
+#
+#   stack             name, env, identity. renaming stack.name orphans your volumes
+#
+#   deployment
+#     users           signup, verification, what users are allowed to do at all
+#     storage         local_fs vs s3, where uploads land, which dirs are importable
+#     email           smtp, password in .env
+#     network         bridge vs host, local vs public, cors
+#     services        per service: port, workers, image. plus db, redis, s3
+#     processing      enrichers, page/upload/rate limits, annotation concurrency
+#     sso             discourse
+#
+#   foundation
+#     run             containers we start. drives compose profiles
+#     use             what answers when nobody picked. comma list = try in order
+#     access          all | superuser | byok | none. keyed providers left out = none
+#     providers       base_url, models, key_env
+#
+# secrets never live here. .env holds them, providers.*.key_env names which one.
+# pointing `use` at a container thats not in `run` wont boot. the same in
+# `access` only warns — granting something you switch on later is fine.

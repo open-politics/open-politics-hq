@@ -19,13 +19,15 @@ cd "$(dirname "$0")"
 # The only sane source of truth is .env; defend it by clearing the rest.
 unset POSTGRES_PASSWORD POSTGRES_USER POSTGRES_DB POSTGRES_PORT POSTGRES_SERVER \
       REDIS_PASSWORD REDIS_PORT REDIS_HOST REDIS_DB \
-      MINIO_ROOT_USER MINIO_ROOT_PASSWORD MINIO_ACCESS_KEY MINIO_SECRET_KEY \
-      MINIO_ENDPOINT MINIO_HOST MINIO_PORT MINIO_BUCKET_NAME \
+      S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY GARAGE_RPC_SECRET GARAGE_ADMIN_TOKEN \
       DOMAIN ACME_EMAIL BACKEND_PORT FRONTEND_PORT BACKEND_BIND_HOST \
       SECRET_KEY ENCRYPTION_MASTER_KEY ENCRYPTION_MASTER_KEY_FALLBACKS \
       FIRST_SUPERUSER FIRST_SUPERUSER_PASSWORD \
       LOCAL_STORAGE_HOST_PATH LOCAL_STORAGE_BASE_PATH \
-      BACKEND_WORKERS CELERY_CONCURRENCY 2>/dev/null || true
+      BACKEND_WORKERS CELERY_CONCURRENCY CELERY_PROCESSING_CONCURRENCY \
+      COMPOSE_FILE COMPOSE_PROFILES COMPOSE_PROJECT_NAME COMPOSE_BAKE \
+      HQ_BIND_HOST HQ_SEARXNG_PORT HQ_CONFIG_SHA \
+      TAG INSTALL_DEV DOCKER_IMAGE_BACKEND S3_BUCKET_NAME 2>/dev/null || true
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -33,113 +35,156 @@ unset POSTGRES_PASSWORD POSTGRES_USER POSTGRES_DB POSTGRES_PORT POSTGRES_SERVER 
 RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'; BLUE=$'\033[0;34m'
 DIM=$'\033[2m';   BOLD=$'\033[1m';     NC=$'\033[0m'
 
-ENV_FILE=".env"
+# Path, then the mode it is written with. One rule decides the mode: 600 iff the
+# file can hold a secret, 644 otherwise. my-hq.yml is 644 deliberately — it holds
+# no key material, and 600 would couple it to whatever UID the backend container
+# runs as the day that stops being root.
+ENV_FILE=".env";                                      ENV_MODE=600
 EXAMPLE_FILE=".env.example"
-SETUP_CONF=".config/hq/setup.conf"
-HOST_NET_FRAGMENT=".config/hq/compose.host-net.yml"
-ENV_BACKUP_DIR=".config/hq/backups/env_files"
+CONF_FILE="my-hq.yml";                                CONF_MODE=644
+CONF_EXAMPLE="my-hq.example.yml"
+SETUP_CONF=".config/hq/setup.conf";                   SETUP_CONF_MODE=644
+HOST_NET_FRAGMENT=".config/hq/compose.host-net.yml";  HOST_NET_MODE=644
+GARAGE_CONFIG=".config/hq/garage.toml";               GARAGE_CONFIG_MODE=644
+ENV_BACKUP_DIR=".config/hq/backups/env_files";        ENV_BACKUP_DIR_MODE=700
 PLACEHOLDERS="|changeThis|changethis|app_user|app_user_password|"
-OPTIONAL_SERVICES=(minio ollama searxng nominatim caddy)
+OPTIONAL_SERVICES=(garage ollama searxng nominatim caddy)
 
-# ── Foundation service provider matrix ────────────────────────────────────────
-# Single source of truth for the capability-first foundation menu. Mirrors the
-# backend declarations in
-# backend/app/api/modules/foundation_service_providers/providers.py — keep them
-# in sync when adding a provider on either side.
+# ── Foundation service providers ──────────────────────────────────────────────
+# Two tables, and both hold only what my-hq.yml cannot tell us.
 #
-# CAPABILITY_LIST   ordered list of capabilities shown in the foundation menu.
-#                   pipe-delimited: cap_key|label|description|provider_type_env
-#                   provider_type_env is the *_PROVIDER_TYPE env var that picks
-#                   the system default (empty for caps with no system default —
-#                   language/embedding let the user pick at runtime).
-#
-# PROVIDER_MATRIX   one row per (capability, provider) pair. Pipe-delimited:
-#                   cap|key|label|kind|compose_profile|key_env|grant_env|notes
-#                   - kind:    container | cloud | builtin
-#                   - compose_profile: empty for cloud/builtin
-#                   - key_env:         empty if provider needs no API key
-#                   - grant_env:       PROVIDER_ACCESS_* env (empty if N/A)
+# Everything else is READ from the config: whether we run a provider, where it
+# lives, which .env variable holds its key, who may use it. The eight-field
+# rows this replaces restated all of that, so adding a provider meant editing
+# the same fact in two files and the two drifted — a menu row for a Gemini
+# provider the backend never declared, a geocoding key renamed in one place
+# only. Derive it and there is nothing to keep in sync.
+
+# Which providers serve which capability. Not inferable from the config,
+# because a provider you have switched OFF must still be offerable in the menu.
+PROVIDERS_FOR="
+language   ollama llamacpp openai anthropic mistral
+embedding  ollama openai jina voyage
+storage    local_fs s3
+web_search searxng tavily
+geocoding  nominatim_local nominatim_api mapbox
+ocr        tesseract ollama
+scraping   newspaper4k
+"
+
+# Display only: name, and where it runs / who pays. Never model names — those
+# go stale the moment a vendor ships, and the app's model picker lists what the
+# endpoint actually has.
+PROVIDER_INFO="
+ollama|Ollama|open models, in a container on this machine
+llamacpp|llama.cpp|open models, llama-server already running on the host
+openai|OpenAI|hosted, needs an API key
+anthropic|Anthropic|hosted, needs an API key
+mistral|Mistral|hosted, needs an API key
+jina|Jina|hosted embeddings, needs an API key
+voyage|Voyage|hosted embeddings, needs an API key
+local_fs|Local files|files live under ./.store/local_fs on this machine
+s3|Object storage (S3)|Garage in Docker, or point it at Hetzner / AWS / any S3
+searxng|SearXNG|meta-searches DuckDuckGo, Brave, Bing
+tavily|Tavily|search API tuned for agent use
+nominatim_local|Nominatim (local)|OSM on your hardware, ~5GB + ~2h first import
+nominatim_api|Nominatim (public)|free public API, no key, rate-limited
+mapbox|Mapbox|paid, fast, high quality
+tesseract|Tesseract|built in, always available, no setup
+newspaper4k|Newspaper4k|built into the backend, always available
+"
+
 CAPABILITY_LIST=(
-  "language|AI chat models|chat, annotation, agents|"
-  "embedding|Embeddings|semantic search, retrieval|"
-  "storage|File storage|uploads, dataset blobs, exports|STORAGE_PROVIDER_TYPE"
-  "web_search|Web search|live news, agent browsing|WEB_SEARCH_PROVIDER_TYPE"
-  "geocoding|Geocoding|place names ↔ coordinates|GEOCODING_PROVIDER_TYPE"
-  "ocr|OCR|text from images and scans|OCR_PROVIDER_TYPE"
-  "scraping|Web scraping|article text from URLs|SCRAPING_PROVIDER_TYPE"
+  "language|AI chat models|chat, annotation, agents"
+  "embedding|Embeddings|semantic search, retrieval"
+  "storage|File storage|uploads, dataset blobs, exports"
+  "web_search|Web search|live news, agent browsing"
+  "geocoding|Geocoding|place names ↔ coordinates"
+  "ocr|OCR|text from images and scans"
+  "scraping|Web scraping|article text from URLs"
 )
 
-PROVIDER_MATRIX=(
-  # language
-  "language|ollama|Ollama|container|ollama||PROVIDER_ACCESS_LANGUAGE_ollama|open models on your hardware; 8GB+ VRAM recommended"
-  "language|openai|OpenAI|cloud||OPENAI_API_KEY|PROVIDER_ACCESS_LANGUAGE_openai|GPT-5, GPT-4.1, o-series"
-  "language|anthropic|Anthropic|cloud||ANTHROPIC_API_KEY|PROVIDER_ACCESS_LANGUAGE_anthropic|Claude Sonnet, Opus, Haiku"
-  "language|gemini|Google Gemini|cloud||GOOGLE_API_KEY|PROVIDER_ACCESS_LANGUAGE_gemini|Gemini Pro / Flash"
-  "language|mistral|Mistral|cloud||MISTRAL_API_KEY|PROVIDER_ACCESS_LANGUAGE_mistral|Mistral Large / Small, Codestral"
-  # embedding
-  "embedding|ollama|Ollama|container|ollama||PROVIDER_ACCESS_EMBEDDING_ollama|local embedding models via Ollama"
-  "embedding|openai|OpenAI|cloud||OPENAI_API_KEY|PROVIDER_ACCESS_EMBEDDING_openai|text-embedding-3-small / large"
-  "embedding|jina|Jina|cloud||JINA_API_KEY|PROVIDER_ACCESS_EMBEDDING_jina|jina-embeddings-v5"
-  "embedding|voyage|Voyage|cloud||VOYAGE_API_KEY|PROVIDER_ACCESS_EMBEDDING_voyage|voyage-4 family"
-  # storage  (exclusive — only one runs at a time)
-  "storage|local_fs|Local files|builtin|||PROVIDER_ACCESS_STORAGE_local_fs|files live under ./.store/local_fs on this machine"
-  "storage|minio|MinIO (S3-compatible)|container|minio||PROVIDER_ACCESS_STORAGE_minio|S3-compatible bucket running in Docker"
-  "storage|s3|External S3|cloud||||AWS S3, Hetzner, etc. — bring your own bucket"
-  # web_search
-  "web_search|searxng|SearXNG|container|searxng||PROVIDER_ACCESS_WEB_SEARCH_searxng|meta-searches DuckDuckGo, Brave, Bing"
-  "web_search|tavily|Tavily|cloud||TAVILY_API_KEY|PROVIDER_ACCESS_WEB_SEARCH_tavily|search API tuned for agent use"
-  # geocoding
-  "geocoding|local|Nominatim (local)|container|nominatim||PROVIDER_ACCESS_GEOCODING_local|OSM data on your hardware; ~5GB + ~2h initial import"
-  "geocoding|nominatim_api|Nominatim (public)|cloud|||PROVIDER_ACCESS_GEOCODING_nominatim_api|free public API — no key, rate-limited"
-  "geocoding|mapbox|Mapbox|cloud||MAPBOX_ACCESS_TOKEN|PROVIDER_ACCESS_GEOCODING_mapbox|paid, fast, high quality"
-  # ocr
-  "ocr|tesseract|Tesseract|builtin|||PROVIDER_ACCESS_OCR_tesseract|built-in; always available, no setup"
-  "ocr|ollama|Ollama vision|container|ollama||PROVIDER_ACCESS_OCR_ollama|via LLaVA — pulls a vision model"
-  # scraping  (only one provider today — exclusive)
-  "scraping|newspaper4k|Newspaper4k|builtin|||PROVIDER_ACCESS_SCRAPING_newspaper4k|built into the backend; always available"
-)
-
-# Field accessors. Each takes a row (or capability key) and emits one field.
-# Bash 3.2 doesn't have associative arrays we can rely on — pipe parsing is
-# the lowest-common-denominator approach.
-cap_field() {  # cap_field CAP_KEY {label|desc|type_env}
-  local want="$2" row ck cl cd ce
+cap_field() {  # cap_field CAP_KEY {label|desc}
+  local want="$2" row ck cl cd
   for row in "${CAPABILITY_LIST[@]}"; do
-    IFS='|' read -r ck cl cd ce <<< "$row"
+    IFS='|' read -r ck cl cd <<< "$row"
     [[ "$ck" == "$1" ]] || continue
-    case "$want" in
-      label)    echo "$cl" ;;
-      desc)     echo "$cd" ;;
-      type_env) echo "$ce" ;;
-    esac
+    case "$want" in label) echo "$cl" ;; desc) echo "$cd" ;; esac
     return 0
   done
 }
 
-prov_field() {  # prov_field CAP PROVIDER {label|kind|profile|key_env|grant_env|notes}
-  local want="$3" row cap pk lbl kind prof kenv genv notes
-  for row in "${PROVIDER_MATRIX[@]}"; do
-    IFS='|' read -r cap pk lbl kind prof kenv genv notes <<< "$row"
-    [[ "$cap" == "$1" && "$pk" == "$2" ]] || continue
-    case "$want" in
-      label)     echo "$lbl" ;;
-      kind)      echo "$kind" ;;
-      profile)   echo "$prof" ;;
-      key_env)   echo "$kenv" ;;
-      grant_env) echo "$genv" ;;
-      notes)     echo "$notes" ;;
-    esac
-    return 0
-  done
+prov_field() {  # prov_field CAP PROVIDER {label|kind|profile|key_env|notes}
+  local cap="$1" prov="$2" want="$3" host
+  case "$want" in
+    label|notes)
+      local line l n
+      line="$(printf '%s\n' "$PROVIDER_INFO" | awk -F'|' -v k="$prov" '$1==k{print; exit}')"
+      IFS='|' read -r _ l n <<< "$line"
+      [[ "$want" == label ]] && echo "${l:-$prov}" || echo "$n"
+      ;;
+    key_env)   yget "foundation.providers.$prov.key_env" ;;
+    profile)   prov_profile "$prov" ;;
+    kind)
+      # A provider we can start is a container; one with a key is somebody
+      # else's service; anything with neither runs inside the backend.
+      if [[ -n "$(prov_profile "$prov")" ]]; then echo container
+      elif [[ -n "$(yget "foundation.providers.$prov.base_url")" ]]; then echo cloud
+      else echo builtin; fi
+      ;;
+  esac
+  return 0
 }
 
-providers_for_cap() {  # echo each provider_key for a capability, in matrix order
-  local row cap pk
-  for row in "${PROVIDER_MATRIX[@]}"; do
-    IFS='|' read -r cap pk _ _ _ _ _ _ <<< "$row"
-    [[ "$cap" == "$1" ]] && echo "$pk"
-  done
+# The compose profile a provider needs, or empty. Derived from its address:
+# a base_url pointing at something listed in foundation.run is that container.
+prov_profile() {
+  local prov="$1" host
+  # s3 is the one address that isn't under providers.* — the bucket lives in
+  # deployment.services.s3, and garage is what serves it locally.
+  if [[ "$prov" == "s3" ]]; then
+    host="$(url_host "$(yget deployment.services.s3.endpoint)")"
+  else
+    host="$(url_host "$(yget "foundation.providers.$prov.base_url")")"
+  fi
+  [[ -z "$host" ]] && { echo ""; return 0; }
+  ykeys foundation.run | grep -qFx "$host" && echo "$host" || echo ""
+  return 0
 }
+
+# Grants and defaults, read and written where they live. There used to be a
+# PROVIDER_ACCESS_<CAP>_<KEY> string built here and decoded again two calls
+# later — an encode/decode round trip between two places that both already had
+# (capability, provider). That concatenated key is the thing this whole change
+# set out to delete; synthesising it in the script just moved it.
+prov_grant()     { yget "foundation.access.$1.$2"; }                 # CAP PROV
+prov_set_grant() { yadd "foundation.access.$1" "$2" "$3"; }          # CAP PROV LEVEL
+
+# Which provider answers a capability when nobody picked. language and
+# embedding have none: a stored vector's dimension depends on the choice, so it
+# is always the user's.
+cap_default() {  # CAP
+  case "$1" in
+    language|embedding) echo "" ;;
+    storage)            yget deployment.storage.use ;;
+    *)                  yget "foundation.use.$1" ;;
+  esac
+}
+cap_set_default() {  # CAP PROVIDER
+  case "$1" in
+    language|embedding) : ;;
+    storage)            yset deployment.storage.use "$2" ;;
+    *)                  yset "foundation.use.$1" "$2" ;;
+  esac
+  return 0
+}
+# True when this capability resolves to exactly one provider deployment-wide.
+cap_has_default() { [[ "$1" != language && "$1" != embedding ]]; }
+
+providers_for_cap() {  # echo each provider_key for a capability, in order
+  printf '%s\n' "$PROVIDERS_FOR" | awk -v c="$1" '$1==c{for(i=2;i<=NF;i++) print $i}'
+}
+
 
 # True for capabilities that resolve to exactly one provider deployment-wide
 # (no user-pickable runtime override). Status display treats these as a radio
@@ -153,10 +198,9 @@ cap_is_exclusive() {
 # - Multi-provider caps: anything keyed-and-not-blocked, or keyless-and-not-
 #   blocked, or a running local container.
 provider_active() {  # provider_active CAP PROVIDER
-  local cap="$1" prov="$2" kind prof type_env type_val
+  local cap="$1" prov="$2" kind prof type_val
   if cap_is_exclusive "$cap"; then
-    type_env="$(cap_field "$cap" type_env)"
-    type_val="$(get_env "$type_env")"
+    type_val="$(cap_default "$cap")"
     if [[ -n "$type_val" ]]; then
       [[ "$type_val" == "$prov" ]]
     else
@@ -171,9 +215,8 @@ provider_active() {  # provider_active CAP PROVIDER
   kind="$(prov_field "$cap" "$prov" kind)"
   case "$kind" in
     builtin)
-      type_env="$(cap_field "$cap" type_env)"
-      [[ -z "$type_env" ]] && return 0   # no system default → always implicitly available
-      type_val="$(get_env "$type_env")"
+      cap_has_default "$cap" || return 0   # no system default → always implicitly available
+      type_val="$(cap_default "$cap")"
       # Built-in is active either as the system default or (when no default is
       # set) as the implicit fallback. Tesseract = OCR default.
       [[ "$type_val" == "$prov" || -z "$type_val" ]]
@@ -185,12 +228,11 @@ provider_active() {  # provider_active CAP PROVIDER
     cloud)
       # Usable when the key is set (if needed) AND sharing isn't explicitly
       # blocked. Keyless cloud (nominatim public API) is usable unless blocked.
-      local kenv genv; kenv="$(prov_field "$cap" "$prov" key_env)"
-      genv="$(prov_field "$cap" "$prov" grant_env)"
+      local kenv; kenv="$(prov_field "$cap" "$prov" key_env)"
       if [[ -n "$kenv" ]]; then
-        [[ -n "$(get_env "$kenv")" && "$(get_env "$genv")" != "none" ]]
+        [[ -n "$(get_env "$kenv")" && "$(prov_grant "$cap" "$prov")" != "none" ]]
       else
-        [[ "$(get_env "$genv")" != "none" ]]
+        [[ "$(prov_grant "$cap" "$prov")" != "none" ]]
       fi
       ;;
   esac
@@ -199,11 +241,10 @@ provider_active() {  # provider_active CAP PROVIDER
 # Friendly status snippet for a single provider — used in the per-capability menu.
 # Returns a colored token. Caller is responsible for layout.
 provider_status_token() {  # provider_status_token CAP PROVIDER
-  local cap="$1" prov="$2" kind kenv genv g
+  local cap="$1" prov="$2" kind kenv g
   kind="$(prov_field "$cap" "$prov" kind)"
   kenv="$(prov_field "$cap" "$prov" key_env)"
-  genv="$(prov_field "$cap" "$prov" grant_env)"
-  g="$(get_env "$genv")"
+  g="$(prov_grant "$cap" "$prov")"
   case "$kind" in
     container)
       if provider_active "$cap" "$prov"; then echo "${GREEN}on${NC}"
@@ -227,7 +268,7 @@ provider_status_token() {  # provider_status_token CAP PROVIDER
 
 # Compact single-line capability status for the foundation menu. Skips the
 # kind marker when the provider's display label already includes one in
-# parentheses (e.g. "Nominatim (local)", "MinIO (S3-compatible)") so we don't
+# parentheses (e.g. "Nominatim (local)", "Object storage (S3)") so we don't
 # emit "Nominatim (local) (local)".
 capability_status_line() {  # capability_status_line CAP
   local cap="$1" prov parts="" tok kind label
@@ -312,13 +353,37 @@ trap '__cleanup' EXIT
 trap '__cleanup; exit 130' INT
 trap '__cleanup; exit 143' TERM
 
+# ── Atomic file writes ────────────────────────────────────────────────────────
+# Every file this script writes goes through stage_file → commit_file.
+#
+#   MODE       mktemp happens to make 0600 files and mv happens to carry that
+#              mode over, so .env ended up private by accident and my-hq.yml
+#              ended up 0664 or 0600 depending on which path wrote it last.
+#              commit_file takes the mode as an argument.
+#   ATOMICITY  bare mktemp creates in $TMPDIR — usually tmpfs, a different
+#              filesystem from the repo — so mv was copy-then-unlink. Interrupt
+#              it and .env is truncated, after backup_env already ran. Staging
+#              beside the target makes it a real rename(2).
+stage_file() {          # stage_file TARGET → temp path on TARGET's filesystem
+  local dir; dir="$(dirname "$1")"
+  mkdir -p "$dir"
+  mktemp "${dir}/.$(basename "$1").tmp.XXXXXX"
+}
+
+commit_file() {         # commit_file TMP TARGET MODE
+  chmod "$3" "$1"
+  mv -f "$1" "$2"
+}
+
 # ── .env IO ───────────────────────────────────────────────────────────────────
 
 backup_env() {
   [[ -f "$ENV_FILE" ]] || return 0
-  mkdir -p "$ENV_BACKUP_DIR"
+  # mkdir -p is a no-op on an existing dir, so the chmod is what actually fixes
+  # a backups dir created before modes were stated. These are full copies of .env.
+  mkdir -p "$ENV_BACKUP_DIR"; chmod "$ENV_BACKUP_DIR_MODE" "$ENV_BACKUP_DIR"
   local b="${ENV_BACKUP_DIR}/.env.bak.$(date +%Y%m%d%H%M%S)"
-  cp "$ENV_FILE" "$b"; say "${DIM}backed up $ENV_FILE → $b${NC}"
+  install -m "$ENV_MODE" "$ENV_FILE" "$b"; say "${DIM}backed up $ENV_FILE → $b${NC}"
 }
 
 # One-time migration: move legacy .env.bak.* files out of the repo root.
@@ -326,8 +391,8 @@ migrate_old_env_backups() {
   shopt -s nullglob
   local f moved=0
   for f in .env.bak.*; do
-    mkdir -p "$ENV_BACKUP_DIR"
-    mv "$f" "$ENV_BACKUP_DIR/" && moved=$((moved+1))
+    mkdir -p "$ENV_BACKUP_DIR"; chmod "$ENV_BACKUP_DIR_MODE" "$ENV_BACKUP_DIR"
+    mv "$f" "$ENV_BACKUP_DIR/" && chmod "$ENV_MODE" "$ENV_BACKUP_DIR/$f" && moved=$((moved+1))
   done
   shopt -u nullglob
   # `(( expr ))` returns 1 when expr is false, which `set -e` would abort on.
@@ -342,14 +407,24 @@ get_env() {
     | sed 's/[[:space:]]*#.*$//; s/^"\(.*\)"$/\1/'
 }
 
+# .env has exactly two kinds of key. Secrets, which live here and are edited
+# here; and the generated region, which render_env projects from my-hq.yml for
+# compose to interpolate. Writing a generated key here looked like it worked and
+# was silently reverted by the next render — five settings-menu actions and the
+# port-conflict retry all did it. Refusing is the only version that cannot rot.
 set_env() {
   local key="$1" val="$2" tmp
-  tmp="$(mktemp)"
+  if [[ " ${RENDERED_ENV_KEYS[*]:-} " == *" $key "* ]]; then
+    die "set_env: $key is generated from $CONF_FILE — set it with \`yset\` and re-render, not here."
+  fi
+  local _yp; _yp="$(yaml_path_for_env "$key")"
+  if [[ -n "$_yp" ]]; then
+    die "set_env: $key is read from $CONF_FILE ($_yp), not .env — set it with \`yset $_yp\`."
+  fi
+  tmp="$(stage_file "$ENV_FILE")"
   if [[ -f "$ENV_FILE" ]] && grep -qE "^${key}=" "$ENV_FILE"; then
-    # Pass val via ENVIRON[] (process env), NOT awk -v. Awk's -v interprets
-    # backslash escapes (\n → newline, \\ → \, etc.) which silently corrupts
-    # passwords / secrets containing backslashes. ENVIRON[] reads the raw byte
-    # string from the process environment with no escape processing.
+    # Value goes through ENVIRON[], not awk -v: -v interprets backslash escapes
+    # and would corrupt any secret containing one.
     SETENV_KEY="$key" SETENV_VAL="$val" awk '
       BEGIN { k = ENVIRON["SETENV_KEY"]; v = ENVIRON["SETENV_VAL"] }
       $0 ~ "^" k "=" { print k "=" v; next }
@@ -359,7 +434,7 @@ set_env() {
     [[ -f "$ENV_FILE" ]] && cat "$ENV_FILE" > "$tmp" || true
     printf '%s=%s\n' "$key" "$val" >> "$tmp"
   fi
-  mv "$tmp" "$ENV_FILE"
+  commit_file "$tmp" "$ENV_FILE" "$ENV_MODE"
 }
 
 is_placeholder() {
@@ -382,14 +457,17 @@ ensure_secret() {
   fi
 }
 
-# Compose-managed named volumes are <project>_<vol-name>; project defaults to
-# the lowercased directory name. Pattern-match the suffix so we don't have to
-# hardcode the project name.
+# Compose names volumes <project>_<vol>. Matching the suffix alone matched every
+# other project on the box — so a first install where an HQ already existed saw
+# "existing data" and offered to delete a volume belonging to something else.
+project_volume() {      # project_volume VOL → <project>_<vol>
+  local proj; proj="$(yget stack.name)"
+  echo "${proj:-$(basename "$PWD")}_$1"
+}
+
 docker_volume_exists() {
-  local pattern="$1"
   docker_ok || return 1
-  docker volume ls --format '{{.Name}}' 2>/dev/null \
-    | grep -qE "(^|_)${pattern}\$"
+  docker volume ls --format '{{.Name}}' 2>/dev/null | grep -qFx "$(project_volume "$1")"
 }
 
 # Postgres bakes POSTGRES_PASSWORD into the data dir on first init — env vars
@@ -416,7 +494,7 @@ ensure_postgres_password() {
 
   echo
   warn "Existing postgres data volume found:"
-  docker volume ls --format '{{.Name}}' | grep -E '(^|_)app-db-data$' | sed 's/^/    /'
+  printf '    %s\n' "$(project_volume app-db-data)"
   warn "Postgres bakes the password into its data dir on first init. Generating"
   warn "a fresh POSTGRES_PASSWORD now would NOT match what's stored there, and"
   warn "the backend would fail authentication on every restart."
@@ -426,7 +504,8 @@ ensure_postgres_password() {
   say "      value that matches the existing volume, then re-run setup."
   echo
   say "  ${DIM}Manual wipe command (equivalent to choice 1):${NC}"
-  say "    ${DIM}$(compose_cmd) down -v${NC}"
+  say "    ${DIM}$(compose_cmd) down${NC}"
+  say "    ${DIM}docker volume rm $(project_volume app-db-data)${NC}"
   echo
   if [[ "${ASSUME_YES:-false}" == true ]]; then
     die "Auto-yes mode refuses to destroy postgres data silently. Re-run interactively."
@@ -453,7 +532,7 @@ ensure_postgres_password() {
           failed=$((failed + 1))
           warn "  could not remove $v"
         fi
-      done < <(docker volume ls --format '{{.Name}}' | grep -E '(^|_)app-db-data$')
+      done < <(docker volume ls --format '{{.Name}}' | grep -Fx "$(project_volume app-db-data)")
 
       if [[ "$failed" -gt 0 || "$removed" -eq 0 ]]; then
         warn "Volume removal incomplete. Try manually:"
@@ -467,6 +546,780 @@ ensure_postgres_password() {
   esac
 }
 
+# ── my-hq.yml IO ──────────────────────────────────────────────────────────────
+# my-hq.yml holds everything non-secret. .env holds secrets + a generated region
+# rendered from it for what only compose can read. Strict yaml subset: 2-space
+# indent, block maps, block lists, # comments. No flow maps, no anchors.
+
+# Scalar at a dotted path, or a comma-joined block list. Empty when absent.
+yget() {
+  [[ -f "$CONF_FILE" ]] || return 0
+  awk -v want="$1" '
+    BEGIN { n = split(want, seek, ".") }
+    {
+      line = $0
+      sub(/[[:space:]]+#.*$/, "", line)
+      if (line ~ /^[[:space:]]*#/ || line ~ /^[[:space:]]*$/) next
+      match(line, / */); ind = RLENGTH / 2
+      body = substr(line, RLENGTH + 1)
+      if (body ~ /^- /) {
+        if (hit && ind == hitind + 1) {
+          v = substr(body, 3); gsub(/^"|"$/, "", v)
+          out = out (out == "" ? "" : ",") v
+        }
+        next
+      }
+      if (body !~ /:/) next
+      key = body; sub(/:.*/, "", key)
+      val = body; sub(/^[^:]*:[[:space:]]*/, "", val)
+      if (val == body) val = ""
+      gsub(/^"|"$/, "", val)
+      path[ind] = key
+      for (i = ind + 1; i <= 16; i++) path[i] = ""
+      if (hit && ind <= hitind) exit
+      ok = 1
+      for (i = 0; i < n; i++) if (path[i] != seek[i + 1]) ok = 0
+      if (ok && ind == n - 1) {
+        if (val != "") { print val; exit }
+        hit = 1; hitind = ind
+      }
+    }
+    END { if (out != "") print out }
+  ' "$CONF_FILE"
+}
+
+# Immediate child keys of a dotted path.
+ykeys() {
+  [[ -f "$CONF_FILE" ]] || return 0
+  awk -v want="$1" '
+    BEGIN { n = split(want, seek, ".") }
+    {
+      line = $0
+      sub(/[[:space:]]+#.*$/, "", line)
+      if (line ~ /^[[:space:]]*#/ || line ~ /^[[:space:]]*$/) next
+      match(line, / */); ind = RLENGTH / 2
+      body = substr(line, RLENGTH + 1)
+      if (body !~ /:/) next
+      key = body; sub(/:.*/, "", key)
+      path[ind] = key
+      for (i = ind + 1; i <= 16; i++) path[i] = ""
+      if (hit && ind <= hitind) exit
+      if (hit && ind == hitind + 1) { print key; next }
+      ok = 1
+      for (i = 0; i < n; i++) if (path[i] != seek[i + 1]) ok = 0
+      if (ok && ind == n - 1) { hit = 1; hitind = ind }
+    }
+  ' "$CONF_FILE"
+}
+
+yon() { [[ "$(yget "$1")" == "true" ]]; }
+
+# An address carries both facts we need. http://searxng:8888/x -> host searxng,
+# port 8888. garage:3900 -> garage, 3900. Nothing is hardcoded elsewhere:
+# change base_url and the bind, the port and the extra_hosts entry all follow.
+url_host() { local u="${1#*://}"; u="${u%%/*}"; echo "${u%%:*}"; }
+url_port() {
+  local u="${1#*://}"; u="${u%%/*}"
+  case "$u" in *:*) echo "${u##*:}" ;; *) case "$1" in https://*) echo 443 ;; *) echo 80 ;; esac ;; esac
+}
+provider_host() { url_host "$(yget "foundation.providers.$1.base_url")"; }
+provider_port() { url_port "$(yget "foundation.providers.$1.base_url")"; }
+
+# Rewrites ONE existing line. Never creates keys and never round-trips the doc —
+# that's what keeps the operator's comments and formatting intact.
+yset() {
+  local path="$1" val="$2" tmp
+  [[ -f "$CONF_FILE" ]] || die "No $CONF_FILE — run ./setup.sh first."
+  tmp="$(stage_file "$CONF_FILE")"
+  YSET_PATH="$path" YSET_VAL="$val" awk '
+    BEGIN { n = split(ENVIRON["YSET_PATH"], seek, "."); v = ENVIRON["YSET_VAL"] }
+    {
+      line = $0; probe = line
+      sub(/[[:space:]]+#.*$/, "", probe)
+      if (done || probe ~ /^[[:space:]]*#/ || probe ~ /^[[:space:]]*$/) { print; next }
+      match(probe, / */); ind = RLENGTH / 2
+      body = substr(probe, RLENGTH + 1)
+      if (body !~ /:/ || body ~ /^- /) { print; next }
+      key = body; sub(/:.*/, "", key)
+      path[ind] = key
+      for (i = ind + 1; i <= 16; i++) path[i] = ""
+      ok = 1
+      for (i = 0; i < n; i++) if (path[i] != seek[i + 1]) ok = 0
+      if (ok && ind == n - 1) {
+        comment = ""
+        if (match(line, /[[:space:]]+#.*$/)) comment = substr(line, RSTART, RLENGTH)
+        printf "%*s%s: %s%s\n", ind * 2, "", key, v, comment
+        done = 1; next
+      }
+      print
+    }
+  ' "$CONF_FILE" > "$tmp"
+  commit_file "$tmp" "$CONF_FILE" "$CONF_MODE"
+}
+
+# Replaces a block list's items. Separate from yset: a scalar written over a
+# list leaves `paths: a,b` sitting on top of the old `- ` lines.
+yset_list() {
+  local path="$1" csv="$2" tmp
+  [[ -f "$CONF_FILE" ]] || die "No $CONF_FILE — run ./setup.sh first."
+  tmp="$(stage_file "$CONF_FILE")"
+  YSL_PATH="$path" YSL_CSV="$csv" awk '
+    BEGIN { n = split(ENVIRON["YSL_PATH"], seek, "."); split(ENVIRON["YSL_CSV"], vals, ",") }
+    {
+      line = $0; probe = line
+      sub(/[[:space:]]+#.*$/, "", probe)
+      if (done && !hit) { print; next }
+      match(probe, / */); ind = RLENGTH / 2
+      body = substr(probe, RLENGTH + 1)
+      if (hit) { if (body ~ /^- /) next; hit = 0 }
+      print
+      if (body !~ /:/ || body ~ /^- /) next
+      key = body; sub(/:.*/, "", key)
+      path[ind] = key
+      for (i = ind + 1; i <= 16; i++) path[i] = ""
+      ok = 1
+      for (i = 0; i < n; i++) if (path[i] != seek[i + 1]) ok = 0
+      if (ok && ind == n - 1) {
+        for (j = 1; j in vals; j++) printf "%*s- %s\n", (ind + 1) * 2, "", vals[j]
+        hit = 1; done = 1
+      }
+    }
+  ' "$CONF_FILE" > "$tmp"
+  commit_file "$tmp" "$CONF_FILE" "$CONF_MODE"
+}
+
+# Sets a child key, inserting it when absent. Migration needs this: an operator
+# can hold a grant the example only ships commented out, and dropping it would
+# silently revoke access nobody asked to revoke.
+yadd() {
+  local parent="$1" key="$2" val="$3"
+  if ykeys "$parent" | grep -qFx "$key"; then yset "$parent.$key" "$val"; return; fi
+  local tmp; tmp="$(stage_file "$CONF_FILE")"
+  YADD_PARENT="$parent" YADD_KEY="$key" YADD_VAL="$val" awk '
+    BEGIN { n = split(ENVIRON["YADD_PARENT"], seek, "."); k = ENVIRON["YADD_KEY"]; v = ENVIRON["YADD_VAL"] }
+    function emit() { printf "%*s%s: %s\n", (hitind + 1) * 2, "", k, v; done = 1 }
+    {
+      line = $0; probe = line
+      sub(/[[:space:]]+#.*$/, "", probe)
+      if (done) { print; next }
+      if (probe ~ /^[[:space:]]*$/) { pending = pending line "\n"; next }
+      match(probe, / */); ind = RLENGTH / 2
+      body = substr(probe, RLENGTH + 1)
+      if (hit && body != "" && ind <= hitind) { emit(); printf "%s", pending; pending = ""; print; next }
+      printf "%s", pending; pending = ""
+      print
+      if (body ~ /^- / || body !~ /:/) next
+      key = body; sub(/:.*/, "", key)
+      path[ind] = key
+      for (i = ind + 1; i <= 16; i++) path[i] = ""
+      ok = 1
+      for (i = 0; i < n; i++) if (path[i] != seek[i + 1]) ok = 0
+      if (ok && ind == n - 1) { hit = 1; hitind = ind }
+    }
+    END { if (!done && hit) emit(); printf "%s", pending }
+  ' "$CONF_FILE" > "$tmp"
+  commit_file "$tmp" "$CONF_FILE" "$CONF_MODE"
+}
+
+ensure_conf() {
+  [[ -f "$CONF_FILE" ]] && return 0
+  [[ -f "$CONF_EXAMPLE" ]] || die "$CONF_EXAMPLE is missing — this checkout is incomplete. Re-clone or restore it."
+  install -m "$CONF_MODE" "$CONF_EXAMPLE" "$CONF_FILE"
+  ok "created $CONF_FILE from $CONF_EXAMPLE"
+  if [[ -f "$ENV_FILE" ]]; then
+    backup_env
+    migrate_env_to_conf   # settings out of the old .env…
+    rebuild_env           # …and the keys they came from out of .env
+  fi
+  return 0
+}
+
+# ── one-time migration from a pre-split .env ─────────────────────────────────
+
+migrate_env_to_conf() {
+  local moved=0
+  _mv() {  # ENV_NAME yaml.path [lower]
+    local v; v="$(get_env "$1")"
+    v="${v#\'}"; v="${v%\'}"
+    [[ -z "$v" ]] && return 0
+    [[ "${3:-}" == lower ]] && v="$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')"
+    yset "$2" "$v"; moved=$((moved + 1))
+  }
+
+  _mv PROJECT_NAME        stack.project
+  _mv ENVIRONMENT         stack.environment
+  _mv GEOCODING_USER_AGENT stack.user_agent
+  _mv DOMAIN              deployment.network.domain
+  _mv ACME_EMAIL          deployment.network.acme_email
+  _mv BACKEND_PORT        deployment.services.backend.port
+  _mv BACKEND_WORKERS     deployment.services.backend.workers
+  _mv DOCKER_IMAGE_BACKEND deployment.services.backend.image
+  _mv FRONTEND_PORT       deployment.services.frontend.port
+  _mv CELERY_CONCURRENCY  deployment.services.celery.workers
+  _mv CELERY_PROCESSING_CONCURRENCY deployment.services.celery.processing_workers
+  _mv POSTGRES_SERVER     deployment.services.database.host
+  _mv POSTGRES_PORT       deployment.services.database.port
+  _mv POSTGRES_DB         deployment.services.database.name
+  _mv POSTGRES_USER       deployment.services.database.user
+  _mv POSTGRES_SSL_MODE   deployment.services.database.ssl_mode
+  _mv REDIS_HOST          deployment.services.redis.host
+  _mv REDIS_PORT          deployment.services.redis.port
+  _mv REDIS_DB            deployment.services.redis.db
+  _mv REDIS_URL           deployment.services.redis.url
+  _mv SMTP_HOST           deployment.email.host
+  _mv SMTP_PORT           deployment.email.port
+  _mv SMTP_USER           deployment.email.user
+  _mv EMAILS_FROM_EMAIL   deployment.email.from_email
+  _mv EMAILS_FROM_NAME    deployment.email.from_name
+  _mv USERS_OPEN_REGISTRATION      deployment.users.open_registration lower
+  _mv REQUIRE_EMAIL_VERIFICATION   deployment.users.require_email_verification lower
+  _mv DEPLOYMENT_CAPABILITIES      deployment.users.allowed_actions
+  _mv STORAGE_BROWSE_MAX_COUNT_FILES deployment.storage.browse_max_files
+  _mv LOCAL_STORAGE_HOST_PATH      deployment.storage.user_uploads.host_path
+  _mv LOCAL_STORAGE_BASE_PATH      deployment.storage.user_uploads.base_path
+  _mv PDF_MAX_PAGES                deployment.processing.pdf_max_pages
+  _mv PROCESS_CONTENT_RATE_LIMIT   deployment.processing.content_rate_limit
+  _mv MAX_UPLOAD_SIZE_BYTES        deployment.processing.max_upload_size_bytes
+  _mv DEFAULT_ANNOTATION_CONCURRENCY deployment.processing.annotation.default_concurrency
+  _mv MAX_ANNOTATION_CONCURRENCY   deployment.processing.annotation.max_concurrency
+  _mv DISCOURSE_CONNECT_ENABLED    deployment.sso.discourse.enabled lower
+  _mv DISCOURSE_CONNECT_URL        deployment.sso.discourse.url
+  _mv OLLAMA_BASE_URL              foundation.providers.ollama.base_url
+  _mv OLLAMA_OCR_MODEL             foundation.providers.ollama.ocr_model
+  _mv OPENAI_BASE_URL              foundation.providers.openai.base_url
+  _mv ANTHROPIC_BASE_URL           foundation.providers.anthropic.base_url
+  _mv MISTRAL_BASE_URL             foundation.providers.mistral.base_url
+  _mv VOYAGE_BASE_URL              foundation.providers.voyage.base_url
+  _mv JINA_EMBEDDING_MODEL         foundation.providers.jina.model
+  _mv NOMINATIM_BASE_URL           foundation.providers.nominatim_local.base_url
+  _mv NOMINATIM_PBF_URL            foundation.providers.nominatim_local.pbf_url
+  _mv NOMINATIM_IMPORT_STYLE       foundation.providers.nominatim_local.import_style
+
+  local ip co; ip="$(get_env ALLOWED_IMPORT_PATHS)"; co="$(get_env BACKEND_CORS_ORIGINS)"
+  [[ -n "$ip" ]] && { yset_list deployment.storage.importable_paths "$ip"; moved=$((moved + 1)); }
+  [[ -n "$co" ]] && { yset_list deployment.network.cors.origins "$co"; moved=$((moved + 1)); }
+
+  local gp; gp="$(get_env GEOCODING_PROVIDER_TYPE)"
+  [[ "$gp" == "local" ]] && gp="nominatim_local"
+  [[ -n "$gp" ]] && { yset foundation.use.geocoding "$gp"; moved=$((moved + 1)); }
+
+  local st; st="$(get_env STORAGE_PROVIDER_TYPE)"
+  case "$st" in
+    minio) yset deployment.storage.use s3
+           warn "STORAGE_PROVIDER_TYPE=minio → storage.use: s3. MinIO's on-disk layout is not"
+           warn "Garage's — copy the bucket out before switching object servers." ;;
+    ""|local_fs) : ;;
+    *)     yset deployment.storage.use "$st" ;;
+  esac
+
+  local p cur; cur=",$(get_env COMPOSE_PROFILES),"
+  for p in $(ykeys foundation.run); do
+    [[ "$cur" == *",$p,"* ]] && yset "foundation.run.$p" true
+  done
+  [[ "$cur" == *",minio,"* ]] && warn "profile 'minio' has no equivalent — see storage.use above"
+
+  migrate_grants; moved=$((moved + MIGRATED_GRANTS))
+
+  local en; en="$(get_env ENABLED_ENRICHERS)"
+  if [[ -n "$en" ]]; then
+    local e
+    for e in $(ykeys deployment.processing.background_content_enrichers); do
+      [[ "$en" == "*" || ",$en," == *",$e,"* ]] \
+        && yset "deployment.processing.background_content_enrichers.$e" true
+    done
+  fi
+
+  ok "migrated $moved setting(s) from $ENV_FILE into $CONF_FILE"
+  say "${DIM}  review $CONF_FILE, then re-run ./setup.sh${NC}"
+}
+
+# PROVIDER_ACCESS_<CAP>_<provider> → foundation.access.<cap>.<provider>.
+# Driven off what .env holds, not what the example lists — a grant for a provider
+# the example only shows commented out is still a grant. Anything unplaceable is
+# reported, never dropped in silence: this is a security control.
+MIGRATED_GRANTS=0
+migrate_grants() {
+  MIGRATED_GRANTS=0
+  local line k v cap prov c caps
+  caps="$(ykeys foundation.access)"
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    k="${line%%=*}"; v="${line#*=}"
+    v="$(printf '%s' "$v" | tr '[:upper:]' '[:lower:]')"
+    k="$(printf '%s' "${k#PROVIDER_ACCESS_}" | tr '[:upper:]' '[:lower:]')"
+    [[ "$k" == llm_* ]] && k="language_${k#llm_}"      # legacy alias
+    case "$v" in all|superuser|none) ;; *) warn "dropped ${line%%=*}=$v — not all|superuser|none"; continue ;; esac
+    cap=""; prov=""
+    for c in $(printf '%s\n' $caps | awk '{print length, $0}' | sort -rn | cut -d' ' -f2-); do
+      [[ "$k" == "${c}_"* ]] && { cap="$c"; prov="${k#${c}_}"; break; }
+    done
+    [[ -z "$cap" ]] && { warn "dropped ${line%%=*} — no matching capability in $CONF_FILE"; continue; }
+    yadd "foundation.access.$cap" "$prov" "$v"
+    MIGRATED_GRANTS=$((MIGRATED_GRANTS + 1))
+  done < <(grep -E '^PROVIDER_ACCESS_[A-Za-z_]+=.' "$ENV_FILE" 2>/dev/null || true)
+}
+
+# Rebuilds .env's secret region from .env.example with current values. Deleting
+# migrated keys line-by-line would leave their comment blocks orphaned. Anything
+# unrecognised is appended and reported, never dropped.
+rebuild_env() {
+  [[ -f "$ENV_FILE" ]] || return 0
+  local tmp known="" k v line kept=""
+  tmp="$(stage_file "$ENV_FILE")"
+  while IFS= read -r line; do
+    [[ "$line" == "# ── generated"* ]] && break
+    if [[ "$line" =~ ^([A-Z_0-9]+)= ]]; then
+      k="${BASH_REMATCH[1]}"; known="$known $k"; v="$(get_env "$k")"
+      [[ -n "$v" ]] && printf '%s=%s\n' "$k" "$v" || printf '%s\n' "$line"
+    else
+      printf '%s\n' "$line"
+    fi
+  done < "$EXAMPLE_FILE" > "$tmp"
+  while IFS= read -r line; do
+    [[ "$line" =~ ^([A-Za-z_0-9]+)=(.*)$ ]] || continue
+    k="${BASH_REMATCH[1]}"; v="${BASH_REMATCH[2]}"
+    [[ -z "$v" ]] && continue
+    [[ " $known " == *" $k "* ]] && continue
+    [[ " ${RENDERED_ENV_KEYS[*]} " == *" $k "* ]] && continue
+    [[ " ${MIGRATED_ENV_KEYS[*]} " == *" $k "* ]] && continue
+    [[ "$k" == PROVIDER_ACCESS_* ]] && continue
+    kept="${kept:+$kept }$k"
+    printf '%s=%s\n' "$k" "$v" >> "$tmp"
+  done < "$ENV_FILE"
+  commit_file "$tmp" "$ENV_FILE" "$ENV_MODE"
+  [[ -n "$kept" ]] && warn "kept unrecognised .env keys: $kept"
+  return 0
+}
+
+MIGRATED_ENV_KEYS=(
+  PROJECT_NAME ORGANISATION_NAME STACK_NAME ENVIRONMENT DOMAIN ACME_EMAIL
+  BACKEND_CORS_ORIGINS CORS_ALLOWED_METHODS CORS_ALLOWED_HEADERS
+  USERS_OPEN_REGISTRATION REQUIRE_EMAIL_VERIFICATION DEPLOYMENT_CAPABILITIES
+  ACCESS_TOKEN_EXPIRE_MINUTES EMAIL_RESET_TOKEN_EXPIRE_HOURS
+  STORAGE_PROVIDER_TYPE ALLOWED_IMPORT_PATHS STORAGE_BROWSE_MAX_COUNT_FILES
+  ENABLED_ENRICHERS PDF_MAX_PAGES PROCESS_CONTENT_RATE_LIMIT
+  MAX_UPLOAD_SIZE_BYTES DISPATCH_REACTIVE_WORK_INTERVAL_SECONDS
+  DEFAULT_ANNOTATION_CONCURRENCY MAX_ANNOTATION_CONCURRENCY ANNOTATION_CHUNK_SIZE
+  GEOCODING_USER_AGENT GEOCODING_PROVIDER_TYPE OCR_PROVIDER_TYPE
+  WEB_SEARCH_PROVIDER_TYPE SCRAPING_PROVIDER_TYPE NOMINATIM_BASE_URL
+  OLLAMA_OCR_MODEL JINA_EMBEDDING_MODEL
+  OPENAI_BASE_URL ANTHROPIC_BASE_URL MISTRAL_BASE_URL VOYAGE_BASE_URL
+  POSTGRES_SERVER POSTGRES_DB POSTGRES_USER POSTGRES_SSL_MODE
+  DB_POOL_SIZE DB_MAX_OVERFLOW DB_POOL_PRE_PING REDIS_URL
+  SMTP_HOST SMTP_PORT SMTP_TLS SMTP_SSL SMTP_USER
+  EMAILS_FROM_NAME EMAILS_FROM_EMAIL
+  DISCOURSE_CONNECT_ENABLED DISCOURSE_CONNECT_URL
+  DOCKER_IMAGE_FRONTEND WIPE_DB MINIO_ENDPOINT MINIO_HOST MINIO_PORT
+  MINIO_ROOT_USER MINIO_ROOT_PASSWORD MINIO_BUCKET_NAME MINIO_REGION
+  MINIO_ACCESS_KEY MINIO_SECRET_KEY MINIO_SECURE MINIO_USE_SSL
+)
+
+# Drop the legacy names my-hq.yml now owns. They are inert — the backend's
+# _SecretsOnlyEnvSource refuses to read a yaml-backed name out of .env — but
+# inert is not harmless: MINIO_SECRET_KEY outlived MinIO by months, and WIPE_DB
+# is a DROP TABLE switch one character from firing. A key that looks editable
+# and does nothing is a trap for whoever reads this file next.
+#
+# Runs on every render, not once at migration. The one-shot in ensure_conf fires
+# only on the upgrade from a pre-split .env and never again, so anything its
+# list missed at the time was permanent.
+prune_env() {
+  [[ -f "$ENV_FILE" ]] || return 0
+  local tmp line k dropped="" past_marker=false
+  tmp="$(stage_file "$ENV_FILE")"
+  while IFS= read -r line; do
+    # Only the hand-editable region above the marker. The generated region
+    # below it is render_env's to own, and several migrated names legitimately
+    # reappear there as the compose projection.
+    [[ "$line" == "# ── generated"* ]] && past_marker=true
+    if [[ "$past_marker" == false && "$line" =~ ^([A-Za-z_0-9]+)= ]]; then
+      k="${BASH_REMATCH[1]}"
+      if [[ " ${MIGRATED_ENV_KEYS[*]} " == *" $k "* || "$k" == PROVIDER_ACCESS_* ]]; then
+        dropped="${dropped:+$dropped }$k"
+        continue
+      fi
+    fi
+    printf '%s\n' "$line"
+  done < "$ENV_FILE" > "$tmp"
+  commit_file "$tmp" "$ENV_FILE" "$ENV_MODE"
+  [[ -n "$dropped" ]] && say "  pruned legacy .env keys: $dropped"
+  return 0
+}
+
+# ── garage.toml ──────────────────────────────────────────────────────────────
+# Garage takes its binds from a config FILE only — no env var reaches
+# rpc_bind_addr or api_bind_addr (the env overrides it does have are secrets:
+# GARAGE_RPC_SECRET, GARAGE_ADMIN_TOKEN). So the file is generated, from the
+# same my-hq.yml everything else derives from.
+#
+#   bridge mode  0.0.0.0 inside garage's own namespace, nothing published
+#   host mode    HQ_BIND_HOST, because there is no namespace to hide in
+write_garage_config() {
+  local bind port region
+  if [[ "$(yget deployment.network.mode)" == host ]]; then
+    bind="$(yget deployment.network.bind)"; bind="${bind:-127.0.0.1}"
+  else
+    bind="0.0.0.0"
+  fi
+  port="$(url_port "$(yget deployment.services.s3.endpoint)")"
+  region="$(yget deployment.services.s3.region)"
+
+  local tmp; tmp="$(stage_file "$GARAGE_CONFIG")"
+  cat > "$tmp" <<TOML
+# Generated by ./setup.sh from my-hq.yml — DO NOT edit by hand.
+# Secrets are NOT here: GARAGE_RPC_SECRET and GARAGE_ADMIN_TOKEN come from .env,
+# which is what keeps this file safe to read and safe to check in.
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir     = "/var/lib/garage/data"
+db_engine    = "lmdb"
+
+# Single node. Garage is happy with this; it just means no redundancy, which is
+# the right trade for one machine holding one copy anyway.
+replication_factor = 1
+
+rpc_bind_addr   = "${bind}:3901"
+rpc_public_addr = "${bind}:3901"
+
+[s3_api]
+s3_region     = "${region:-garage}"
+api_bind_addr = "${bind}:${port:-3900}"
+root_domain   = ".s3.garage"
+
+[admin]
+api_bind_addr = "${bind}:3903"
+TOML
+  commit_file "$tmp" "$GARAGE_CONFIG" "$GARAGE_CONFIG_MODE"
+  ok "wrote $GARAGE_CONFIG"
+}
+
+# Garage serves nothing until a layout is applied and a bucket exists. The
+# image is scratch plus one static binary, so there is no shell in it to run a
+# sidecar script — each step is its own `exec` of the binary. All of them are
+# idempotent, which is what makes running this on every start the simple option.
+garage_bootstrap() {
+  local c node bucket key sec
+  c="$(compose_cmd)"
+  bucket="$(yget deployment.services.s3.bucket)"
+  key="$(get_env S3_ACCESS_KEY_ID)"; sec="$(get_env S3_SECRET_ACCESS_KEY)"
+  [[ -z "$bucket" || -z "$key" ]] && { warn "garage: missing bucket or key, skipping bootstrap"; return 0; }
+
+  local i
+  for i in $(seq 1 30); do
+    COMPOSE_PROFILES="$(active_profiles)" $c exec -T garage /garage status >/dev/null 2>&1 && break
+    sleep 2
+  done
+
+  node="$(COMPOSE_PROFILES="$(active_profiles)" $c exec -T garage /garage node id -q 2>/dev/null | cut -d@ -f1 | tr -d '\r')"
+  [[ -z "$node" ]] && { warn "garage: node not answering, skipping bootstrap"; return 0; }
+
+  local g=(env COMPOSE_PROFILES="$(active_profiles)" $c exec -T garage /garage)
+  # A node with no role stores nothing. Assign once; re-running is a no-op.
+  "${g[@]}" layout assign "$node" -z hq -c 10G >/dev/null 2>&1 || true
+  "${g[@]}" layout apply --version 1          >/dev/null 2>&1 || true
+  # Imported, not created: .env already holds the key and the backend is using
+  # it. Letting garage mint its own would guarantee they disagree.
+  "${g[@]}" key import --yes -n hq "$key" "$sec" >/dev/null 2>&1 || true
+  "${g[@]}" bucket create "$bucket"              >/dev/null 2>&1 || true
+  "${g[@]}" bucket allow "$bucket" --key hq --read --write --owner >/dev/null 2>&1 || true
+
+  if "${g[@]}" bucket info "$bucket" >/dev/null 2>&1; then
+    ok "garage ready — bucket '$bucket', key hq"
+  else
+    warn "garage: bucket '$bucket' still not present after bootstrap. Inspect with:"
+    warn "  $c exec garage /garage status"
+  fi
+  return 0
+}
+
+# Garage key format is exact: an id of GK + 24 hex, a secret of 64 hex. They are
+# generated HERE rather than by `garage key new` so .env and the running node
+# agree by construction — the bootstrap imports exactly what the backend holds.
+ensure_s3_secrets() {
+  local id sec
+  id="$(get_env S3_ACCESS_KEY_ID)"; sec="$(get_env S3_SECRET_ACCESS_KEY)"
+  if [[ "${REGEN:-false}" == true ]] || [[ ! "$id" =~ ^GK[0-9a-f]{24}$ ]] || [[ ! "$sec" =~ ^[0-9a-f]{64}$ ]]; then
+    set_env S3_ACCESS_KEY_ID     "GK$(openssl rand -hex 12)"
+    set_env S3_SECRET_ACCESS_KEY "$(openssl rand -hex 32)"
+    say "  generated S3_ACCESS_KEY_ID / S3_SECRET_ACCESS_KEY"
+  else
+    say "${DIM}  kept existing S3 credentials${NC}"
+  fi
+  local k
+  for k in GARAGE_RPC_SECRET GARAGE_ADMIN_TOKEN; do
+    [[ "${REGEN:-false}" == true ]] || is_placeholder "$(get_env "$k")" && set_env "$k" "$(openssl rand -hex 32)"
+  done
+  return 0
+}
+
+# ── my-hq.yml ──► .env generated region ──────────────────────────────────────
+# Compose can only interpolate from .env, so what it needs is rendered there.
+# Not a second home — nothing in the backend reads these names, it reads the
+# mounted yaml — so they can't disagree. Stale is caught by HQ_CONFIG_SHA.
+
+RENDERED_ENV_KEYS=(
+  HQ_CONFIG_SHA COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_PROFILES
+  FRONTEND_PORT BACKEND_PORT BACKEND_BIND_HOST
+  POSTGRES_PORT POSTGRES_DB POSTGRES_USER
+  REDIS_HOST REDIS_PORT REDIS_DB HQ_BIND_HOST HQ_SEARXNG_PORT
+  LOCAL_STORAGE_HOST_PATH LOCAL_STORAGE_BASE_PATH BACKEND_WORKERS
+  CELERY_CONCURRENCY CELERY_PROCESSING_CONCURRENCY
+  NOMINATIM_PBF_URL NOMINATIM_REPLICATION_URL NOMINATIM_IMPORT_STYLE
+  OLLAMA_BASE_URL SEARXNG_API_URL DOMAIN ACME_EMAIL
+  DOCKER_IMAGE_BACKEND TAG INSTALL_DEV S3_BUCKET_NAME COMPOSE_BAKE
+)
+
+# Names that exist in .env's history but whose value the backend reads only from
+# my-hq.yml — config.py declares them with an AliasPath, and its env sources hand
+# back nothing for those. Writing one here is a silent no-op, so set_env refuses
+# and names the path instead. ENV_NAME|yaml.path
+YAML_BACKED_ENV_KEYS=(
+  "SMTP_HOST|deployment.email.host"
+  "SMTP_PORT|deployment.email.port"
+  "SMTP_USER|deployment.email.user"
+  "SMTP_TLS|deployment.email.tls"
+  "SMTP_SSL|deployment.email.ssl"
+  "EMAILS_FROM_EMAIL|deployment.email.from_email"
+  "EMAILS_FROM_NAME|deployment.email.from_name"
+  "USERS_OPEN_REGISTRATION|deployment.users.open_registration"
+  "REQUIRE_EMAIL_VERIFICATION|deployment.users.require_email_verification"
+  "S3_REGION|deployment.services.s3.region"
+  "S3_ENDPOINT|deployment.services.s3.endpoint"
+  "STORAGE_PROVIDER_TYPE|deployment.storage.use"
+  "ENVIRONMENT|stack.environment"
+  "PROJECT_NAME|stack.project"
+)
+
+yaml_path_for_env() {   # echoes the yaml path, or nothing
+  local row
+  for row in "${YAML_BACKED_ENV_KEYS[@]}"; do
+    [[ "${row%%|*}" == "$1" ]] && { echo "${row#*|}"; return 0; }
+  done
+  return 0
+}
+
+# Concurrency follows the host instead of a hardcoded 4. `auto` in my-hq.yml
+# (or a blank/non-numeric value) derives from the CPU count; an explicit number
+# always wins, so nothing you set by hand gets second-guessed.
+#
+# The multipliers differ because the pools do different work:
+#   backend    1x  uvicorn workers are event loops — one per core saturates it,
+#                  and each additional one re-imports the whole app.
+#   celery     2x  default/llm/embedding/external_api are I/O-bound; they spend
+#                  most of their life waiting on someone else's API.
+#   processing 1x  ingestion and content parsing are CPU-bound (PDF extraction,
+#                  hashing, chunking), so oversubscribing just thrashes.
+host_cpus() {
+  getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 2
+}
+
+# derived_concurrency <yaml-value> <multiplier> <floor> <ceiling>
+derived_concurrency() {
+  local v="$1" mult="$2" lo="$3" hi="$4" n
+  if [[ "$v" =~ ^[0-9]+$ ]] && (( v > 0 )); then echo "$v"; return; fi
+  n=$(( $(host_cpus) * mult ))
+  (( n < lo )) && n=$lo
+  (( n > hi )) && n=$hi
+  echo "$n"
+}
+
+derived_profiles() {
+  local p out=""
+  for p in $(ykeys foundation.run); do yon "foundation.run.$p" && out="${out:+$out,}$p"; done
+  [[ "$(yget deployment.network.reach)" == "public" ]] && out="${out:+$out,}caddy"
+  echo "$out"
+}
+
+# Dev names both files explicitly: passing any -f stops compose auto-loading
+# the override, which would silently drop the source binds.
+derived_compose_file() {
+  local f="compose.yml"
+  [[ "$(yget stack.environment)" == "local" ]] && f="$f:compose.override.yml"
+  [[ "$(yget deployment.network.mode)" == "host" ]] && f="$f:$HOST_NET_FRAGMENT"
+  echo "$f"
+}
+
+# The compose projection: every value my-hq.yml hands to docker compose, and
+# nothing else. Printed, not written, so the same text can be hashed and
+# rendered — they cannot disagree.
+render_projection() {
+  local bind mode; bind="$(yget deployment.network.bind)"; bind="${bind:-127.0.0.1}"
+  mode="$(yget deployment.network.mode)"
+  printf 'COMPOSE_PROJECT_NAME=%s\n'          "$(yget stack.name)"
+  printf 'COMPOSE_FILE=%s\n'                  "$(derived_compose_file)"
+  printf 'COMPOSE_PROFILES=%s\n'              "$(derived_profiles)"
+  # Four services share context: ./backend, so plain compose issues four
+  # identical build requests. Bake collapses them into one graph.
+  printf 'COMPOSE_BAKE=%s\n'                   'true'
+  printf 'FRONTEND_PORT=%s\n'                 "$(yget deployment.services.frontend.port)"
+  printf 'BACKEND_PORT=%s\n'                  "$(yget deployment.services.backend.port)"
+  printf 'BACKEND_BIND_HOST=%s\n'             "$([[ "$mode" == host ]] && echo "$bind" || echo 0.0.0.0)"
+  printf 'POSTGRES_PORT=%s\n'                 "$(yget deployment.services.database.port)"
+  printf 'POSTGRES_DB=%s\n'                   "$(yget deployment.services.database.name)"
+  printf 'POSTGRES_USER=%s\n'                 "$(yget deployment.services.database.user)"
+  printf 'REDIS_HOST=%s\n'                    "$(yget deployment.services.redis.host)"
+  printf 'REDIS_PORT=%s\n'                    "$(yget deployment.services.redis.port)"
+  printf 'REDIS_DB=%s\n'                      "$(yget deployment.services.redis.db)"
+  printf 'HQ_BIND_HOST=%s\n'                  "$bind"
+  printf 'HQ_SEARXNG_PORT=%s\n'               "$(provider_port searxng)"
+  printf 'LOCAL_STORAGE_HOST_PATH=%s\n'       "$(yget deployment.storage.user_uploads.host_path)"
+  printf 'LOCAL_STORAGE_BASE_PATH=%s\n'       "$(yget deployment.storage.user_uploads.base_path)"
+  printf 'BACKEND_WORKERS=%s\n'               "$(derived_concurrency "$(yget deployment.services.backend.workers)" 1 2 8)"
+  printf 'CELERY_CONCURRENCY=%s\n'            "$(derived_concurrency "$(yget deployment.services.celery.workers)" 2 2 8)"
+  printf 'CELERY_PROCESSING_CONCURRENCY=%s\n' "$(derived_concurrency "$(yget deployment.services.celery.processing_workers)" 1 2 6)"
+  printf 'NOMINATIM_PBF_URL=%s\n'             "$(yget foundation.providers.nominatim_local.pbf_url)"
+  printf 'NOMINATIM_REPLICATION_URL=%s\n'     "$(yget foundation.providers.nominatim_local.replication_url)"
+  printf 'NOMINATIM_IMPORT_STYLE=%s\n'        "$(yget foundation.providers.nominatim_local.import_style)"
+  printf 'OLLAMA_BASE_URL=%s\n'               "$(yget foundation.providers.ollama.base_url)"
+  printf 'SEARXNG_API_URL=%s\n'               "$(yget foundation.providers.searxng.base_url)"
+  printf 'DOMAIN=%s\n'                        "$(yget deployment.network.domain)"
+  printf 'ACME_EMAIL=%s\n'                    "$(yget deployment.network.acme_email)"
+  printf 'DOCKER_IMAGE_BACKEND=%s\n'          "$(yget deployment.services.backend.image)"
+  printf 'TAG=%s\n'                           "$(yget deployment.services.backend.tag)"
+  printf 'INSTALL_DEV=%s\n'                   "$([[ "$(yget stack.environment)" == local ]] && echo true || echo false)"
+  printf 'S3_BUCKET_NAME=%s\n'                "$(yget deployment.services.s3.bucket)"
+}
+
+# Hashes the FILE, and must keep doing so: config.py's staleness gate recomputes
+# this same digest, and the projection below is bash the backend cannot run. A
+# projection hash would be the sharper check — an edit to a value only the
+# backend reads would stop invalidating .env — but only if both sides could
+# produce it byte-identically, and derived_concurrency alone (host cpu count,
+# clamped) makes that a promise we would break. So: file hash, and `setup.sh
+# render` is the cheap one-command answer when it trips.
+conf_sha() {
+  [[ -f "$CONF_FILE" ]] || { echo ""; return; }
+  { sha256sum "$CONF_FILE" 2>/dev/null || shasum -a 256 "$CONF_FILE" 2>/dev/null; } | cut -c1-16
+}
+
+render_env() {
+  [[ -f "$CONF_FILE" ]] || die "No $CONF_FILE — run ./setup.sh first."
+  [[ -f "$ENV_FILE"  ]] || die "No $ENV_FILE — run ./setup.sh first."
+  local marker="# ── generated from my-hq.yml by ./setup.sh, do not edit ──"
+  local tmp k pat=""; tmp="$(stage_file "$ENV_FILE")"
+  for k in "${RENDERED_ENV_KEYS[@]}"; do pat="${pat:+$pat|}^${k}="; done
+  # Match the marker by PREFIX: an exact match meant renaming the script left the
+  # old marker unrecognised and appended a second region.
+  awk '/^# ── generated from my-hq\.yml/ { exit } { print }' "$ENV_FILE" | grep -vE "$pat" \
+    | awk 'BEGIN{b=0} /^[[:space:]]*$/{b++; next} {while(b>0){print ""; b--} print}' > "$tmp"
+  {
+    echo ""
+    echo "$marker"
+    printf 'HQ_CONFIG_SHA=%s\n' "$(conf_sha)"
+    render_projection
+  } >> "$tmp"
+  commit_file "$tmp" "$ENV_FILE" "$ENV_MODE"
+}
+
+
+# ── wizard ──► my-hq.yml ─────────────────────────────────────────────────────
+# The wizard collects choices into shell vars (FMODE, REACH, STORAGE, PROFILES
+# and the queued grants/defaults). This is the one place they land in the
+# config file, so there is a single seam between what was chosen and what is
+# written.
+
+# Settings that contradict the network mode. Lives here, not in the backend:
+# how compose wires the network is not something the API can verify, and it has
+# no business refusing to boot over it. Declaration -> this check -> the runtime
+# audit in verify_loopback_only, which is the only one that proves anything.
+check_network_coherence() {
+  local mode reach bind problems=""
+  mode="$(yget deployment.network.mode)"
+  reach="$(yget deployment.network.reach)"
+  bind="$(yget deployment.network.bind)"
+  if [[ "$reach" == public ]]; then
+    [[ -n "$(yget deployment.network.acme_email)" ]] || problems="${problems}
+  network.acme_email is empty with reach: public — Caddy's email directive
+    cannot parse an empty value and the proxy will not start. Set a contact
+    address for the certificate authority."
+    local dom; dom="$(yget deployment.network.domain)"
+    [[ "$dom" == localhost || -z "$dom" ]] && problems="${problems}
+  network.domain is '$dom' with reach: public — Let's Encrypt cannot issue for
+    that. Set the domain whose A-record points at this host."
+  fi
+
+  if [[ "$mode" != host ]]; then
+    [[ -z "$problems" ]] && return 0
+    warn "Network config cannot hold:${problems}"
+    die "Fix $CONF_FILE and re-run."
+  fi
+
+  # Host networking is a Linux kernel feature. Docker Desktop emulates it only
+  # when explicitly switched on, and a stack that starts while nothing answers
+  # is the worst way to find that out. A warning, not a die: on a Mac with the
+  # setting enabled this works, and only the operator knows which Mac this is.
+  if [[ "$(uname -s)" != Linux ]]; then
+    warn "network.mode: host on $(uname -s) needs Docker Desktop's host networking
+  (Settings -> Resources -> Network -> Enable host networking). Without it the
+  containers start and nothing answers on 127.0.0.1. Set mode: bridge in
+  $CONF_FILE for published ports instead — bridge binds 127.0.0.1 too."
+  fi
+
+  if [[ "$reach" == local && -n "$bind" && "$bind" != 127.0.0.1 && "$bind" != ::1 && "$bind" != localhost ]]; then
+    problems="${problems}
+  network.bind: $bind with reach: local — that claims hardening it does not have.
+    Use 127.0.0.1, or set reach: public and let caddy be the front door."
+  fi
+
+  [[ -z "$problems" ]] && return 0
+  warn "Network config cannot hold:${problems}"
+  die "Fix $CONF_FILE and re-run."
+}
+
+apply_wizard_to_conf() {
+  yset stack.environment "$([[ "$FMODE" == dev ]] && echo local || echo production)"
+  yset deployment.network.mode  "$NETWORK_MODE"
+  yset deployment.network.reach "$([[ "$REACH" == public ]] && echo public || echo local)"
+  [[ -n "$DOMAIN_OPT"     ]] && yset deployment.network.domain     "$DOMAIN_OPT"
+  [[ -n "$ACME_EMAIL_OPT" ]] && yset deployment.network.acme_email "$ACME_EMAIL_OPT"
+  [[ -n "${BACKEND_WORKERS:-}"    ]] && yset deployment.services.backend.workers "$BACKEND_WORKERS"
+  [[ -n "${CELERY_CONCURRENCY:-}" ]] && yset deployment.services.celery.workers  "$CELERY_CONCURRENCY"
+  [[ -n "$STORAGE" ]] && yset deployment.storage.use "$STORAGE"
+
+  local c p l
+  while IFS='|' read -r c p l; do
+    [[ -n "$c" ]] && prov_set_grant "$c" "$p" "$l"
+  done < <(echo -e "$QUEUED_GRANTS")
+  while IFS='|' read -r c p; do
+    [[ -n "$c" ]] && cap_set_default "$c" "$p"
+  done < <(echo -e "$QUEUED_DEFAULTS")
+
+  # `run` is the truth for which containers start; PROFILES is the wizard's
+  # in-flight accumulator. Write every key so deselecting turns one off.
+  local p
+  for p in $(ykeys foundation.run); do
+    [[ ",$PROFILES," == *",$p,"* ]] && yset "foundation.run.$p" true || yset "foundation.run.$p" false
+  done
+  reconcile_use_with_run
+  return 0
+}
+
+# Drop any `use` entry whose container was just switched off, keeping the rest
+# of the ordered list. A capability left with nothing is removed entirely rather
+# than pointed at something the user did not choose.
+reconcile_use_with_run() {
+  local cap raw entry host keep changed=false
+  for cap in $(ykeys foundation.use); do
+    raw="$(yget "foundation.use.$cap")"
+    [[ -n "$raw" ]] || continue
+    keep=""
+    for entry in ${raw//,/ }; do
+      host="$(provider_host "$entry")"
+      # No host means in-process (tesseract, newspaper4k) — always usable.
+      if [[ -n "$host" ]] && ykeys foundation.run | grep -qFx "$host" && ! yon "foundation.run.$host"; then
+        changed=true; continue
+      fi
+      keep="${keep:+$keep, }$entry"
+    done
+    if [[ "$keep" != "$raw" ]]; then
+      yset "foundation.use.$cap" "$keep"
+      [[ -z "$keep" ]] && warn "  foundation.use.$cap cleared — nothing enabled can answer it."
+    fi
+  done
+  $changed && say "${DIM}  foundation.use updated to match the services you enabled${NC}"
+  return 0
+}
+
 # ── .config/hq/setup.conf (UX state, not deployment config) ───────────────────
 
 conf_get() {
@@ -478,15 +1331,14 @@ conf_get() {
 }
 
 conf_set() {
-  mkdir -p "$(dirname "$SETUP_CONF")"
-  local tmp; tmp="$(mktemp)"
+  local tmp; tmp="$(stage_file "$SETUP_CONF")"
   if [[ -f "$SETUP_CONF" ]] && grep -qE "^$1=" "$SETUP_CONF"; then
     awk -v k="$1" -v v="$2" 'BEGIN{FS=OFS="="} $1==k{print k"="v;next}{print}' "$SETUP_CONF" > "$tmp"
   else
     [[ -f "$SETUP_CONF" ]] && cat "$SETUP_CONF" > "$tmp"
     printf '%s=%s\n' "$1" "$2" >> "$tmp"
   fi
-  mv "$tmp" "$SETUP_CONF"
+  commit_file "$tmp" "$SETUP_CONF" "$SETUP_CONF_MODE"
 }
 
 # ── Config builder: four-step wizard ─────────────────────────────────────────
@@ -500,84 +1352,65 @@ conf_set() {
 # Step 4  Optionals — domain/ACME if public, plus per-capability foundation
 #                     services (local container vs hosted via API key)
 
-PROFILES=""; PA_GRANTS=""; ENVIRONMENT="local"; STORAGE="local_fs"; FMODE="dev"
+PROFILES=""; QUEUED_GRANTS=""; QUEUED_DEFAULTS=""; ENVIRONMENT="local"; STORAGE="local_fs"; FMODE="dev"
 DOMAIN_OPT=""; ACME_EMAIL_OPT=""
 SU_EMAIL_OPT=""; SU_PASSWORD_OPT=""
 REACH="local"        # local | public | hardened — meaningful only when FMODE=prod
-NETWORK_MODE="bridge" # bridge | host — flipped to host by REACH=hardened
-MODE_SET=false; REACH_SET=false; SERVICES_SET=false; STORAGE_SET=false; USER_SET=false
+NETWORK_MODE="host"   # host | bridge — host is the default; bridge is the opt-out
+MODE_SET=false; REACH_SET=false; NET_SET=false; SERVICES_SET=false; STORAGE_SET=false; USER_SET=false
 LANG_LOCAL=false; EMB_LOCAL=false  # for summary display
 
 add_profile() { [[ ",$PROFILES," == *",$1,"* ]] || PROFILES="${PROFILES:+$PROFILES,}$1"; }
-# Deferred env-write queue. Both grants (PROVIDER_ACCESS_*) and capability
-# defaults (*_PROVIDER_TYPE) ride the same KEY=VALUE list — ensure_env flushes
-# them at config-write time. Kept under the PA_GRANTS name for backwards
-# compatibility with the rest of the wizard plumbing.
-add_grant()   { PA_GRANTS="${PA_GRANTS}${1}\n"; }
-add_setting() { PA_GRANTS="${PA_GRANTS}${1}\n"; }  # alias for readability
+# The wizard asks its questions before my-hq.yml is written, so answers queue
+# here and apply_wizard_to_conf flushes them. They are (capability, provider)
+# pairs — not env-var names to be decoded again later.
+add_grant()   { QUEUED_GRANTS="${QUEUED_GRANTS}$1|$2|$3\n"; }    # CAP PROV LEVEL
+add_default() { QUEUED_DEFAULTS="${QUEUED_DEFAULTS}$1|$2\n"; }   # CAP PROV
 
 apply_mode() {
   case "$1" in
     dev|development|local) FMODE=dev;  ENVIRONMENT=local ;;
     prod|production|run|running) FMODE=prod; ENVIRONMENT=production ;;
-    *) die "Unknown --mode: '$1' (dev|production)" ;;
+    *) die "Unknown mode: '$1' (dev|production)" ;;
   esac
+  MODE_SET=true
 }
 
 # Apply the reach choice (CLI: --reach NAME, or chosen interactively in step 2).
 # Only meaningful when FMODE=prod. Sets REACH, NETWORK_MODE, and side-effects
 # like adding the caddy profile.
+# Network mode is its OWN axis — reach says who can get to HQ, network mode says
+# how the containers are wired, and caddy-in-front is a valid combination with
+# both. So an explicit --secure-network is never undone by a reach default that
+# happens to be applied afterwards (e.g. the interactive step 2).
+set_net() { [[ "$NET_SET" == true ]] || NETWORK_MODE="$1"; }
+
 apply_reach() {
   case "$1" in
     local|just|computer)
-      REACH=local; NETWORK_MODE=bridge ;;
+      REACH=local; set_net bridge ;;
     public|published|domain)
-      REACH=public; NETWORK_MODE=bridge
+      REACH=public; set_net bridge
       add_profile caddy ;;
     hardened|host|secure)
-      REACH=hardened; NETWORK_MODE=host ;;
+      REACH=hardened; set_net host ;;
     *) die "Unknown --reach: '$1' (local|public|hardened)" ;;
   esac
   REACH_SET=true
 }
 
 # Apply a non-interactive --with NAME flag (mirrors the interactive y/n choices).
-apply_with() {
-  case "$1" in
-    ollama|language)
-      add_profile ollama
-      add_grant "PROVIDER_ACCESS_LANGUAGE_ollama=all"
-      LANG_LOCAL=true ;;
-    embeddings|embedding)
-      add_profile ollama
-      add_grant "PROVIDER_ACCESS_EMBEDDING_ollama=all"
-      EMB_LOCAL=true ;;
-    searxng|search|web-search)
-      add_profile searxng
-      add_grant   "PROVIDER_ACCESS_WEB_SEARCH_searxng=all"
-      add_setting "WEB_SEARCH_PROVIDER_TYPE=searxng" ;;
-    nominatim|geocoding|geocoder)
-      add_profile nominatim
-      add_grant   "PROVIDER_ACCESS_GEOCODING_local=all"
-      add_setting "GEOCODING_PROVIDER_TYPE=local" ;;
-    minio)
-      add_profile minio; STORAGE=minio; STORAGE_SET=true ;;
-    caddy)
-      add_profile caddy ;;
-    *) die "Unknown --with target: '$1' (ollama|embeddings|searxng|nominatim|minio|caddy)" ;;
-  esac
-}
-
 apply_storage() {
   case "$1" in
     local_fs|local|files)
       STORAGE=local_fs
-      add_grant "PROVIDER_ACCESS_STORAGE_local_fs=all" ;;
-    minio)
-      STORAGE=minio; add_profile minio ;;
+      : ;;   # storage has no grant — it is never a user-facing credential
+    s3|garage|minio)
+      # minio accepted as the old spelling; it was always just an S3 bucket.
+      STORAGE=s3; add_profile garage ;;
     s3|external)
       STORAGE=s3 ;;
-    *) die "Unknown --storage: '$1' (local_fs|minio|s3)" ;;
+    *) die "Unknown --storage: '$1' (local_fs|s3)" ;;
   esac
   STORAGE_SET=true
 }
@@ -706,9 +1539,22 @@ choose_user_interactive() {
   [[ -n "$email" ]] || die "Email is required."
   SU_EMAIL_OPT="$email"
 
+  # The email question offers the existing value as a default; the password one
+  # must too, or a re-run forces the operator to invent a new password for an
+  # account that already works. An empty SU_PASSWORD_OPT is already the "leave
+  # it alone" signal — ensure_env only writes the var when it is non-empty.
+  local cur_pw keep_ok=false
+  cur_pw="$(get_env FIRST_SUPERUSER_PASSWORD)"
+  is_placeholder "$cur_pw" || keep_ok=true
+
   local pw1 pw2
   while true; do
-    read -rsp "  Password (min 8 chars): " pw1; echo
+    if $keep_ok; then
+      read -rsp "  Password (min 8 chars, Enter keeps the current one): " pw1; echo
+      [[ -z "$pw1" ]] && { SU_PASSWORD_OPT=""; return 0; }
+    else
+      read -rsp "  Password (min 8 chars): " pw1; echo
+    fi
     [[ ${#pw1} -ge 8 ]] || { warn "Too short."; continue; }
     read -rsp "  Confirm password:        " pw2; echo
     [[ "$pw1" == "$pw2" ]] && break
@@ -720,6 +1566,14 @@ choose_user_interactive() {
 # Step 4 — optionals.
 # (a) Domain + ACME email, but only if reach=public.
 # (b) Foundation services: per-capability local-vs-hosted toggles + storage.
+# Defaults for the service questions come from the CURRENT .env, not from "off".
+# Re-running the wizard (especially with -y) must not silently disable services
+# you already had — the answer to "do you want ollama?" defaults to "you already
+# do". Same principle as conf_get last_mode seeding the mode question.
+profile_default() {
+  yon "foundation.run.$1" && echo y || echo n
+}
+
 choose_optionals_interactive() {
   local step; step=$([[ "$FMODE" == prod ]] && echo 4 || echo 3)
   wizard_step "$step" "$(wizard_total_steps)" "Optional choices"
@@ -747,10 +1601,10 @@ choose_optionals_interactive() {
   echo
   say "${BOLD}AI chat models${NC}  ${DIM}(annotation, agents, chat)${NC}"
   say "  ${DIM}Local container:${NC}  Ollama — runs open models on your hardware"
-  say "  ${DIM}Hosted (API key):${NC} OpenAI, Anthropic, Google Gemini, …"
-  if ask_yn "Run Ollama locally?" n; then
+  say "  ${DIM}Hosted (API key):${NC} OpenAI, Anthropic, Mistral, …"
+  if ask_yn "Run Ollama locally?" "$(profile_default ollama)"; then
     add_profile ollama
-    add_grant "PROVIDER_ACCESS_LANGUAGE_ollama=all"
+    add_grant language ollama all
     LANG_LOCAL=true
   fi
 
@@ -758,11 +1612,11 @@ choose_optionals_interactive() {
   say "${BOLD}Embeddings${NC}  ${DIM}(semantic search, retrieval)${NC}"
   say "  ${DIM}Local container:${NC}  Ollama (same container as above if enabled)"
   say "  ${DIM}Hosted (API key):${NC} OpenAI, Voyage, Jina, …"
-  local emb_default=n
+  local emb_default; emb_default="$(profile_default ollama)"
   $LANG_LOCAL && emb_default=y
   if ask_yn "Use Ollama for embeddings?" "$emb_default"; then
     add_profile ollama
-    add_grant "PROVIDER_ACCESS_EMBEDDING_ollama=all"
+    add_grant embedding ollama all
     EMB_LOCAL=true
   fi
 
@@ -770,10 +1624,10 @@ choose_optionals_interactive() {
   say "${BOLD}Web search${NC}  ${DIM}(live news, agent browsing)${NC}"
   say "  ${DIM}Local container:${NC}  SearXNG — meta-searches DuckDuckGo, Brave, Bing…"
   say "  ${DIM}Hosted (API key):${NC} Tavily, Serper, Exa (future)"
-  if ask_yn "Run SearXNG locally?" n; then
+  if ask_yn "Run SearXNG locally?" "$(profile_default searxng)"; then
     add_profile searxng
-    add_grant   "PROVIDER_ACCESS_WEB_SEARCH_searxng=all"
-    add_setting "WEB_SEARCH_PROVIDER_TYPE=searxng"
+    add_grant   web_search searxng all
+    add_default web_search searxng
   fi
 
   echo
@@ -781,19 +1635,19 @@ choose_optionals_interactive() {
   say "  ${DIM}Local container:${NC}  Nominatim — OpenStreetMap on your hardware"
   say "                    ${DIM}(needs ~5GB disk + ~2h initial import)${NC}"
   say "  ${DIM}Hosted (API key):${NC} external geocoders"
-  if ask_yn "Run Nominatim locally?" n; then
+  if ask_yn "Run Nominatim locally?" "$(profile_default nominatim)"; then
     add_profile nominatim
-    add_grant   "PROVIDER_ACCESS_GEOCODING_local=all"
-    add_setting "GEOCODING_PROVIDER_TYPE=local"
+    add_grant   geocoding nominatim_local all
+    add_default geocoding nominatim_local
   fi
 
   echo
   if ! $STORAGE_SET; then
     say "${BOLD}File storage${NC}  ${DIM}(uploads, dataset blobs, exports)${NC}"
     say "  ${DIM}1) Local files${NC}    Just a directory on this machine (./.store/local_fs)"
-    say "  ${DIM}2) MinIO${NC}          S3-compatible container running in Docker"
+    say "  ${DIM}2) Object storage${NC} S3 — Garage in Docker, or your own bucket"
     say "  ${DIM}3) External S3${NC}    AWS S3 or compatible — credentials added later"
-    local d=1   # local_fs is the safe default for everyone — minio opt-in
+    local d=1   # local_fs is the safe default for everyone — s3 opt-in
     if [[ "${ASSUME_YES:-false}" == true ]]; then
       apply_storage local_fs
     else
@@ -801,7 +1655,7 @@ choose_optionals_interactive() {
       s="${s:-$d}"
       case "$s" in
         1|local_fs|local|files) apply_storage local_fs ;;
-        2|minio)                apply_storage minio ;;
+        2|s3|garage|minio)      apply_storage s3 ;;
         3|s3|external)          apply_storage s3 ;;
         *) die "Invalid storage choice: '$s'" ;;
       esac
@@ -820,11 +1674,11 @@ choose_local_services_interactive() {
 
   echo
   say "${BOLD}Language models${NC}  ${DIM}(chat, annotation, agents)${NC}"
-  say "  ${DIM}Local:${NC}  Ollama — open models on your hardware (8GB+ VRAM recommended)"
-  say "  ${DIM}Hosted:${NC} OpenAI, Anthropic, Google Gemini, etc. via API keys"
-  if ask_yn "Run Ollama locally?" n; then
+  say "  ${DIM}Local:${NC}  Ollama — open models, in a container on this machine"
+  say "  ${DIM}Hosted:${NC} OpenAI, Anthropic, Mistral, etc. via API keys"
+  if ask_yn "Run Ollama locally?" "$(profile_default ollama)"; then
     add_profile ollama
-    add_grant "PROVIDER_ACCESS_LANGUAGE_ollama=all"
+    add_grant language ollama all
     LANG_LOCAL=true
   fi
 
@@ -832,11 +1686,11 @@ choose_local_services_interactive() {
   say "${BOLD}Embeddings${NC}  ${DIM}(semantic search, retrieval)${NC}"
   say "  ${DIM}Local:${NC}  Ollama (reuses the language container if enabled)"
   say "  ${DIM}Hosted:${NC} OpenAI, Voyage, Jina via API keys"
-  local emb_default=n
+  local emb_default; emb_default="$(profile_default ollama)"
   $LANG_LOCAL && emb_default=y
   if ask_yn "Use Ollama for embeddings?" "$emb_default"; then
     add_profile ollama
-    add_grant "PROVIDER_ACCESS_EMBEDDING_ollama=all"
+    add_grant embedding ollama all
     EMB_LOCAL=true
   fi
 
@@ -844,10 +1698,10 @@ choose_local_services_interactive() {
   say "${BOLD}Web search${NC}  ${DIM}(live news, agent browsing)${NC}"
   say "  ${DIM}Local:${NC}  SearXNG — meta-search across DuckDuckGo, Brave, Bing, etc."
   say "  ${DIM}Hosted:${NC} Tavily, Serper, Exa via API keys (future)"
-  if ask_yn "Run SearXNG locally?" n; then
+  if ask_yn "Run SearXNG locally?" "$(profile_default searxng)"; then
     add_profile searxng
-    add_grant   "PROVIDER_ACCESS_WEB_SEARCH_searxng=all"
-    add_setting "WEB_SEARCH_PROVIDER_TYPE=searxng"
+    add_grant   web_search searxng all
+    add_default web_search searxng
   fi
 
   echo
@@ -855,19 +1709,19 @@ choose_local_services_interactive() {
   say "  ${DIM}Local:${NC}  Nominatim — OpenStreetMap on your hardware"
   say "          ${DIM}(~5GB disk + ~2h import for world admin boundaries)${NC}"
   say "  ${DIM}Hosted:${NC} external geocoders via API keys"
-  if ask_yn "Run Nominatim locally?" n; then
+  if ask_yn "Run Nominatim locally?" "$(profile_default nominatim)"; then
     add_profile nominatim
-    add_grant   "PROVIDER_ACCESS_GEOCODING_local=all"
-    add_setting "GEOCODING_PROVIDER_TYPE=local"
+    add_grant   geocoding nominatim_local all
+    add_default geocoding nominatim_local
   fi
 
   echo
   if ! $STORAGE_SET; then
     say "${BOLD}Object storage${NC}  ${DIM}(uploaded files, dataset blobs, exports)${NC}"
     say "  ${DIM}1) Local files${NC}   Just a directory on disk (./.store/local_fs)"
-    say "  ${DIM}2) MinIO${NC}         S3-compatible container, runs in Docker"
+    say "  ${DIM}2) Object storage${NC} S3 — Garage in Docker, or your own bucket"
     say "  ${DIM}3) External S3${NC}   AWS S3 or compatible — credentials in dashboard"
-    local d=1   # local_fs is the safe default for everyone — minio opt-in
+    local d=1   # local_fs is the safe default for everyone — s3 opt-in
     if [[ "${ASSUME_YES:-false}" == true ]]; then
       apply_storage local_fs
     else
@@ -875,7 +1729,7 @@ choose_local_services_interactive() {
       s="${s:-$d}"
       case "$s" in
         1|local_fs|local|files) apply_storage local_fs ;;
-        2|minio)                apply_storage minio ;;
+        2|s3|garage|minio)      apply_storage s3 ;;
         3|s3|external)          apply_storage s3 ;;
         *) die "Invalid storage choice: '$s'" ;;
       esac
@@ -887,29 +1741,28 @@ choose_local_services_interactive() {
 
 ensure_store_dirs() {
   mkdir -p ./.store ./.config
-  if [[ ",$PROFILES," == *",minio,"* ]]; then
-    if [[ -d ./.store/minio ]]; then
-      say "${DIM}keeping existing minio data ($(find ./.store/minio -maxdepth 1 | wc -l) entries)${NC}"
+  if yon foundation.run.garage; then
+    if [[ -d ./.store/garage ]]; then
+      say "${DIM}keeping existing garage data ($(find ./.store/garage -maxdepth 1 | wc -l) entries)${NC}"
     else
-      mkdir -p ./.store/minio; chmod 700 ./.store/minio; ok "created ./.store/minio (0700)"
+      mkdir -p ./.store/garage/meta ./.store/garage/data; chmod -R 700 ./.store/garage
+      ok "created ./.store/garage (0700)"
     fi
   fi
-  if [[ ",$PROFILES," == *",nominatim,"* ]]; then
-    [[ -d ./.store/nominatim ]] || { mkdir -p ./.store/nominatim; chmod 755 ./.store/nominatim; ok "created ./.store/nominatim"; }
-  fi
-  if [[ ",$PROFILES," == *",caddy,"* ]]; then
+  # nominatim keeps its data in named volumes; nothing bind-mounts .store/nominatim.
+  if [[ "$(yget deployment.network.reach)" == public ]]; then
     [[ -f ./.config/caddy/Caddyfile ]] || die ".config/caddy/Caddyfile missing — repo state is inconsistent."
   fi
-  # ensure_local_fs_path handles the local_fs host dir (only when active).
+  return 0
 }
 
 ensure_local_fs_path() {
-  [[ "$STORAGE" == "local_fs" ]] || return 0
+  [[ "$(yget deployment.storage.use)" == "local_fs" ]] || return 0
   # Host-side path (LOCAL_STORAGE_HOST_PATH) lives under .store/ alongside
-  # minio/nominatim — same convention, no sudo needed on fresh clones.
+  # garage/nominatim — same convention, no sudo needed on fresh clones.
   # Container-side path (LOCAL_STORAGE_BASE_PATH) stays /data/storage; the
   # compose bind maps one to the other.
-  local host; host="$(get_env LOCAL_STORAGE_HOST_PATH)"; host="${host:-./.store/local_fs}"
+  local host; host="$(yget deployment.storage.user_uploads.host_path)"; host="${host:-./.store/local_fs}"
   if [[ ! -d "$host" ]]; then
     mkdir -p "$host" 2>/dev/null \
       || die "$host does not exist and is not creatable. Run: sudo mkdir -p $host && sudo chown $(id -u) $host"
@@ -948,7 +1801,7 @@ effective_fmode() {
   # the dashboard/settings menu reflect persisted choice rather than the
   # script-init default of "dev".
   if "${MODE_SET:-false}"; then echo "$FMODE"; return; fi
-  [[ -f "$ENV_FILE" ]] && [[ "$(get_env ENVIRONMENT)" == "production" ]] && echo prod || echo dev
+  [[ "$(yget stack.environment)" == "production" ]] && echo prod || echo dev
 }
 effective_profiles() {
   if [[ -n "$PROFILES" ]]; then echo "$PROFILES"; return; fi
@@ -976,7 +1829,7 @@ needed_host_ports() {
   [[ ",$profs," == *",caddy,"* ]] && { echo 80; echo 443; }
 
   # Ollama when active — bridge: 127.0.0.1:11434; host: 11434 directly.
-  [[ ",$profs," == *",ollama,"* ]] && echo 11434
+  [[ ",$profs," == *",ollama,"* ]] && provider_port ollama
 
   # Host network mode adds everything else.
   if [[ "$net" == host ]]; then
@@ -984,15 +1837,22 @@ needed_host_ports() {
     bp="$(get_env BACKEND_PORT)";  echo "${bp:-8022}"
     pp="$(get_env POSTGRES_PORT)"; echo "${pp:-5432}"
     rp="$(get_env REDIS_PORT)";    echo "${rp:-6379}"
-    [[ ",$profs," == *",searxng,"* ]] && echo 8888
-    [[ ",$profs," == *",minio,"* ]] && { echo 9000; echo 9001; }
-    [[ ",$profs," == *",nominatim,"* ]] && echo 8080
+    [[ ",$profs," == *",searxng,"* ]] && provider_port searxng
+    [[ ",$profs," == *",nominatim,"* ]] && provider_port nominatim_local
+    # garage also holds rpc 3901 and admin 3903; those are fixed in garage.toml.
+    [[ ",$profs," == *",garage,"* ]] && { url_port "$(yget deployment.services.s3.endpoint)"; echo 3901; echo 3903; }
   fi
+  # Every emit above is a conditional `[[ ]] && echo`, so the last one deciding
+  # NOT to emit would make this function return 1. Under `set -e` + pipefail
+  # that kills the caller's `ports="$(needed_host_ports | ...)"` assignment
+  # before it prints anything — a silent exit. Always succeed; emitting nothing
+  # is a valid answer.
+  return 0
 }
 
 # For movable ports (BACKEND/POSTGRES/REDIS/FRONTEND), pick the next free
 # port upward from the current value. Caller updates .env. Fixed-port
-# services (caddy/ollama/minio/searxng/nominatim) can't be auto-moved —
+# services (caddy/ollama/garage/searxng/nominatim) can't be auto-moved —
 # their wire protocols expect specific ports.
 next_free_port() {
   local p=$(( $1 + 1 ))
@@ -1018,6 +1878,15 @@ port_to_env_var() {
 }
 
 precheck_ports() {
+  # Ports held by our OWN stack are not conflicts. `up -d` recreates containers
+  # in place and each listener moves with its container, so restarting a running
+  # deployment is a normal operation — without this it reports every one of its
+  # own ports as taken by "another process" and refuses to start. The precheck
+  # exists to catch a FIRST start colliding with something unrelated on the box.
+  if stack_has_any_container; then
+    say "${DIM}stack already present — skipping port precheck (its ports are its own).${NC}"
+    return 0
+  fi
   local ports; ports="$(needed_host_ports | sort -u | tr '\n' ' ')"
   say "${DIM}checking host ports: ${ports}${NC}"
   local conflicts=() p
@@ -1050,7 +1919,7 @@ precheck_ports() {
       80|443) fixed_blockers+=("$p  ${DIM}(caddy — likely nginx/apache running)${NC}") ;;
       11434)  fixed_blockers+=("$p  ${DIM}(ollama — local ollama already running)${NC}") ;;
       8888)   fixed_blockers+=("$p  ${DIM}(searxng)${NC}") ;;
-      9000|9001) fixed_blockers+=("$p  ${DIM}(minio)${NC}") ;;
+      3900|3901|3903) fixed_blockers+=("$p  ${DIM}(garage)${NC}") ;;
       8080)   fixed_blockers+=("$p  ${DIM}(nominatim)${NC}") ;;
       *)      fixed_blockers+=("$p  ${DIM}(unknown — fixed)${NC}") ;;
     esac
@@ -1113,164 +1982,196 @@ assert_no_stray_public_binds() {
 }
 
 # Generate the host-network override fragment under .config/hq/.
-# This file is NOT checked into the repo; it lives next to setup.conf as
+# This file is NOT checked into the repo; it lives next to setup.conf as a
 # UX/state artifact. compose_cmd appends `-f $HOST_NET_FRAGMENT` when active.
 #
 # What this does:
 #   • network_mode: host on every service, so containers share the host's
 #     network namespace. No docker bridge, no NAT, no port mappings.
-#   • extra_hosts maps every service name (db, redis, backend, ...) to
-#     127.0.0.1, so existing in-app URLs like redis://redis:6379 still resolve.
-#   • Every listener is overridden to bind 127.0.0.1 explicitly. Postgres,
-#     redis, ollama, minio, searxng, backend — all loopback. Caddy (when
-#     active) intentionally keeps 0.0.0.0:80,443 — the only public surface.
+#   • extra_hosts maps every service name (db, redis, backend, ...) to the
+#     bind address, so in-app URLs like redis://redis:6379 still resolve.
+#   • Every listener is pinned to that same address. One value, one name:
+#     ${HQ_BIND_HOST}. Each service spells it in whatever key its own server
+#     reads — postgres wants listen_addresses, redis --bind, uvicorn HOST,
+#     granian GRANIAN_HOST, garage's config file. Those names belong to the
+#     vendors, so they are annotated here rather than renamed.
+#
+# Two compose merge tags are load-bearing:
+#   • `ports: !reset null` and `networks: !reset null` on EVERY service.
+#     Both are incompatible with network_mode: host. Resetting unconditionally
+#     means a `ports:` added to compose.yml later cannot silently break this
+#     mode — it is removed whether or not anyone remembered this file.
+#   • `extra_hosts: !override`. Compose MERGES extra_hosts across files, so
+#     without it compose.override.yml's `host.docker.internal:host-gateway`
+#     survives alongside ours and /etc/hosts ends up with two conflicting
+#     entries for the same name.
 write_host_net_fragment() {
-  mkdir -p "$(dirname "$HOST_NET_FRAGMENT")"
-  cat > "$HOST_NET_FRAGMENT" <<'YAML'
+  local tmp; tmp="$(stage_file "$HOST_NET_FRAGMENT")"
+
+  # Every address comes from my-hq.yml. Hardcoding them here is what let the
+  # fragment drift from the config it is supposed to implement.
+  local sx_port ol_port nm_port s3_host s3_port
+  sx_port="$(provider_port searxng)"
+  ol_port="$(provider_port ollama)"
+  nm_port="$(provider_port nominatim_local)"
+  s3_host="$(url_host "$(yget deployment.services.s3.endpoint)")"
+  s3_port="$(url_port "$(yget deployment.services.s3.endpoint)")"
+
+  # One namespace means one port space. In bridge mode two services can both
+  # sit on 8080 because each has its own; here they cannot.
+  local seen="" svc port collide=""
+  for svc in "searxng:$sx_port" "ollama:$ol_port" "nominatim:$nm_port" \
+             "backend:$(yget deployment.services.backend.port)" \
+             "frontend:$(yget deployment.services.frontend.port)" \
+             "postgres:$(yget deployment.services.database.port)" \
+             "redis:$(yget deployment.services.redis.port)" \
+             "s3:$s3_port"; do
+    port="${svc##*:}"; [[ -z "$port" ]] && continue
+    [[ " $seen " == *" $port "* ]] && collide="${collide} ${svc%%:*}($port)"
+    seen="$seen $port"
+  done
+  [[ -n "$collide" ]] && die "Port collision in host mode:${collide}. Every service shares
+one namespace here — give them distinct ports in $CONF_FILE."
+
+  # Service names still resolve: extra_hosts points each at the bind address.
+  local hosts="" h
+  for h in host.docker.internal db redis backend frontend caddy \
+           "$(provider_host searxng)" "$(provider_host ollama)" \
+           "$(provider_host nominatim_local)" "$s3_host"; do
+    [[ -z "$h" ]] && continue
+    [[ " $hosts " == *" $h "* ]] && continue
+    hosts="$hosts $h"
+  done
+
+  {
+    cat <<'YAML'
 # Generated by ./setup.sh — DO NOT edit by hand.
 # Regenerate by re-running the wizard or toggling network mode in Settings.
 #
-# Hardened network override: every service shares the host's network
-# namespace (network_mode: host) and binds to 127.0.0.1. Service names
-# resolve to loopback via the extra_hosts anchor — existing in-app URLs
-# like redis://redis:6379 still work. Every `ports:` and `networks:`
-# declaration from the base is `!reset`-ed (they're mutually exclusive
-# with network_mode: host). The result: accidental network exposure is
-# structurally impossible. Caddy (profile-gated) intentionally binds
-# 0.0.0.0:80,443 — the only public surface.
+# Every service joins the host's network namespace and binds HQ_BIND_HOST.
+# `ports:` and `networks:` are !reset — meaningless without a namespace of your
+# own. Names still resolve through extra_hosts, so redis://redis:6379 keeps
+# working. Caddy is the only thing that binds the wildcard, and only when you
+# asked to publish. Ports and hostnames below are derived from my-hq.yml.
 
-x-extra-hosts: &extra_hosts
-  - "host.docker.internal:127.0.0.1"
-  - "db:127.0.0.1"
-  - "redis:127.0.0.1"
-  - "backend:127.0.0.1"
-  - "frontend:127.0.0.1"
-  - "minio:127.0.0.1"
-  - "ollama:127.0.0.1"
-  - "searxng:127.0.0.1"
-  - "nominatim:127.0.0.1"
-  - "caddy:127.0.0.1"
+x-extra-hosts: &extra_hosts !override
+YAML
+    for h in $hosts; do
+      printf '  - "%s:${HQ_BIND_HOST:-127.0.0.1}"\n' "$h"
+    done
+    cat <<'YAML'
+
+x-host-net: &host_net
+  network_mode: "host"
+  networks: !reset null
+  ports: !reset null
+  extra_hosts: *extra_hosts
+YAML
+    cat <<YAML
+
+x-searxng-url: &searxng_url
+  SEARXNG_BASE_URL: http://$(provider_host searxng):${sx_port}/
 
 services:
   db:
-    network_mode: "host"
-    networks: !reset null
-    extra_hosts: *extra_hosts
-    # Override the base command so postgres listens on loopback only.
-    command:
+    <<: *host_net
+    command:                                          # postgres: listen_addresses
       - postgres
       - -c
-      - listen_addresses=127.0.0.1
+      - listen_addresses=\${HQ_BIND_HOST:-127.0.0.1}
       - -c
-      - port=${POSTGRES_PORT}
+      - port=\${POSTGRES_PORT:-5432}
 
   backend:
-    network_mode: "host"
-    networks: !reset null
-    extra_hosts: *extra_hosts
+    <<: *host_net
     environment:
-      - BACKEND_BIND_HOST=127.0.0.1
+      <<: *searxng_url
+      BACKEND_BIND_HOST: \${HQ_BIND_HOST:-127.0.0.1}   # prod: compose.yml command
+      HOST: \${HQ_BIND_HOST:-127.0.0.1}                # dev:  start-reload.sh
 
   redis:
-    network_mode: "host"
-    networks: !reset null
-    extra_hosts: *extra_hosts
-    # --bind on the CLI takes precedence over redis.conf's bind directive.
-    command: >
+    <<: *host_net
+    command: >                                        # redis: --bind
       redis-server /usr/local/etc/redis/redis.conf
-      --bind 127.0.0.1
-      --port ${REDIS_PORT:-6379}
+      --bind \${HQ_BIND_HOST:-127.0.0.1}
+      --port \${REDIS_PORT:-6379}
       --appendonly yes
-      --requirepass ${REDIS_PASSWORD}
+      --requirepass \${REDIS_PASSWORD}
       --rename-command REPLICAOF ""
       --rename-command SLAVEOF ""
 
   frontend:
-    network_mode: "host"
-    networks: !reset null
-    ports: !reset null
-    extra_hosts: *extra_hosts
+    <<: *host_net
     environment:
-      - HOSTNAME=127.0.0.1
-      - PORT=3000
+      # prod runs the standalone server.js, which honours HOSTNAME.
+      # dev runs \`next dev\`, which does NOT — it only takes -H, passed by
+      # Dockerfile.dev's CMD from FRONTEND_BIND_HOST. Both are set so the
+      # frontend binds loopback whichever command is in play.
+      HOSTNAME: \${HQ_BIND_HOST:-127.0.0.1}
+      FRONTEND_BIND_HOST: \${HQ_BIND_HOST:-127.0.0.1}
+      PORT: \${FRONTEND_PORT:-3000}
 
   celery_worker:
-    network_mode: "host"
-    networks: !reset null
-    extra_hosts: *extra_hosts
+    <<: *host_net
+    environment: *searxng_url
+
+  celery_worker_processing:
+    <<: *host_net
+    environment: *searxng_url
 
   celery_beat:
-    network_mode: "host"
-    networks: !reset null
-    extra_hosts: *extra_hosts
+    <<: *host_net
 
   # Optional services — only materialize when their profile is active.
-  minio:
-    network_mode: "host"
-    networks: !reset null
-    extra_hosts: *extra_hosts
-    command:
-      - minio
-      - server
-      - /data
-      - --address
-      - 127.0.0.1:9000
-      - --console-address
-      - 127.0.0.1:9001
-
   ollama:
-    network_mode: "host"
-    networks: !reset null
-    ports: !reset null
-    extra_hosts: *extra_hosts
-    environment:
-      - OLLAMA_HOST=127.0.0.1:11434
-      - OLLAMA_NUM_PARALLEL=2
-      - OLLAMA_MAX_LOADED_MODELS=2
+    <<: *host_net
+    environment:                                      # ollama: OLLAMA_HOST
+      OLLAMA_HOST: \${HQ_BIND_HOST:-127.0.0.1}:${ol_port}
 
   searxng:
-    network_mode: "host"
-    networks: !reset null
-    extra_hosts: *extra_hosts
-    # SearXNG default port is 8080; hardened mode moves it to 8888 to avoid
-    # potential conflicts on the host (and pins the bind to loopback).
-    environment:
-      - BIND_ADDRESS=127.0.0.1:8888
-      - SEARXNG_BASE_URL=http://127.0.0.1:8888/
+    <<: *host_net
+    environment:                                      # granian: the server searxng runs on
+      <<: *searxng_url
+      GRANIAN_HOST: \${HQ_BIND_HOST:-127.0.0.1}
+      GRANIAN_PORT: ${sx_port}
 
+  # Garage's binds come from the generated garage.toml (written with
+  # HQ_BIND_HOST in host mode), so there is nothing to override here beyond
+  # joining the namespace. Listed so the reset of ports:/networks: applies.
+  garage:
+    <<: *host_net
+
+  # mediagis/nominatim hardcodes \`--bind :8080\` in /app/start.sh — no env var
+  # reaches it (GUNICORN_CMD_ARGS loses to the CLI flag, verified). In a shared
+  # namespace that is every interface, so the flag is rewritten before the real
+  # entrypoint runs. If the upstream line ever moves, this refuses to start
+  # rather than quietly binding the wildcard.
   nominatim:
-    network_mode: "host"
-    networks: !reset null
-    extra_hosts: *extra_hosts
+    <<: *host_net
+    command:
+      - sh
+      - -c
+      - |
+        grep -q -- '--bind :${nm_port}' /app/start.sh || {
+          echo "nominatim: expected '--bind :${nm_port}' in /app/start.sh and did not find it."
+          echo "Refusing to start: in host network mode that would bind every interface."
+          exit 1
+        }
+        sed -i "s|--bind :${nm_port}|--bind \${HQ_BIND_HOST:-127.0.0.1}:${nm_port}|" /app/start.sh
+        exec /app/start.sh
 
   caddy:
-    network_mode: "host"
-    networks: !reset null
-    ports: !reset null
-    extra_hosts: *extra_hosts
+    <<: *host_net
     # Caddy intentionally binds 0.0.0.0:80,443 — the only public surface.
 YAML
+  } > "$tmp"
+  commit_file "$tmp" "$HOST_NET_FRAGMENT" "$HOST_NET_MODE"
   ok "wrote $HOST_NET_FRAGMENT"
-}
-
-ensure_minio_secrets() {
-  local mu mp
-  mu="$(get_env MINIO_ROOT_USER)"; mp="$(get_env MINIO_ROOT_PASSWORD)"
-  if [[ "${REGEN:-false}" == true ]] || is_placeholder "$mu" || is_placeholder "$mp"; then
-    mu="hq_minio_$(openssl rand -hex 3)"; mp="$(gen_secret)"
-    set_env MINIO_ROOT_USER "$mu"; set_env MINIO_ROOT_PASSWORD "$mp"
-    say "  generated MINIO_ROOT_USER / MINIO_ROOT_PASSWORD"
-  else
-    say "${DIM}  kept existing MINIO_ROOT_USER / MINIO_ROOT_PASSWORD${NC}"
-  fi
-  # MINIO_ACCESS_KEY / MINIO_SECRET_KEY mirror root for client compat — many
-  # SDKs read these names. Setting them in addition to ROOT_* is harmless.
-  set_env MINIO_ACCESS_KEY "$mu"; set_env MINIO_SECRET_KEY "$mp"
 }
 
 ensure_env() {
   if [[ ! -f "$ENV_FILE" ]]; then
-    cp "$EXAMPLE_FILE" "$ENV_FILE"; ok "created $ENV_FILE from $EXAMPLE_FILE"
+    install -m "$ENV_MODE" "$EXAMPLE_FILE" "$ENV_FILE"; ok "created $ENV_FILE from $EXAMPLE_FILE"
   else
     backup_env
   fi
@@ -1279,35 +2180,17 @@ ensure_env() {
   ensure_secret ENCRYPTION_MASTER_KEY gen_fernet
   ensure_postgres_password   # special-cased — see comment in fn for why
   ensure_secret REDIS_PASSWORD        gen_secret
-  # MinIO secrets are gated on whether the profile is active. If user picks
-  # local_fs (or external S3) we don't generate them — saves noise, and any
-  # later toggle in the foundation menu (cap_menu_storage / provider_enable)
-  # materializes them on demand.
-  if [[ ",$PROFILES," == *",minio,"* ]]; then
-    ensure_minio_secrets
-  fi
 
-  set_env ENVIRONMENT "$ENVIRONMENT"
-  set_env STORAGE_PROVIDER_TYPE "$STORAGE"
-  set_env COMPOSE_PROFILES "$PROFILES"
-  set_env BACKEND_WORKERS "${BACKEND_WORKERS:-4}"
-  set_env CELERY_CONCURRENCY "${CELERY_CONCURRENCY:-4}"
-  # Hardened reach mode binds uvicorn directly to 127.0.0.1 on the host (since
-  # the container shares the host network namespace). All other modes stay on
-  # 0.0.0.0 inside the container — the docker bridge is what isolates them.
-  if [[ "$NETWORK_MODE" == host ]]; then
-    set_env BACKEND_BIND_HOST "127.0.0.1"
-  else
-    set_env BACKEND_BIND_HOST "0.0.0.0"
-  fi
-  # DOMAIN / ACME_EMAIL come from step 4 when reach=public.
-  [[ -n "$DOMAIN_OPT"     ]] && set_env DOMAIN     "$DOMAIN_OPT"
-  [[ -n "$ACME_EMAIL_OPT" ]] && set_env ACME_EMAIL "$ACME_EMAIL_OPT"
+  # Everything non-secret the wizard collected goes to my-hq.yml, never here.
+  # ENVIRONMENT / STORAGE_PROVIDER_TYPE / COMPOSE_PROFILES / BACKEND_BIND_HOST
+  # are rendered into the generated region by render_env, from the yaml.
   # Superuser identity collected in step 3.
   [[ -n "$SU_EMAIL_OPT"    ]] && set_env FIRST_SUPERUSER          "$SU_EMAIL_OPT"
   [[ -n "$SU_PASSWORD_OPT" ]] && set_env FIRST_SUPERUSER_PASSWORD "$SU_PASSWORD_OPT"
   # Non-interactive fallback for callers that skip the wizard (e.g. -y without --su-email).
   # Password field uses silent read so it isn't echoed to the terminal/scrollback.
+  [[ -n "${HQ_SUPERUSER_EMAIL:-}"    ]] && set_env FIRST_SUPERUSER          "$HQ_SUPERUSER_EMAIL"
+  [[ -n "${HQ_SUPERUSER_PASSWORD:-}" ]] && set_env FIRST_SUPERUSER_PASSWORD "$HQ_SUPERUSER_PASSWORD"
   for k in FIRST_SUPERUSER FIRST_SUPERUSER_PASSWORD; do
     local cur; cur="$(get_env "$k")"
     if is_placeholder "$cur" && [[ "${ASSUME_YES:-false}" != true ]]; then
@@ -1320,12 +2203,6 @@ ensure_env() {
       [[ -n "$v" ]] && set_env "$k" "$v"
     fi
   done
-  if [[ -n "$PA_GRANTS" ]]; then
-    while IFS='=' read -r gk gv; do
-      [[ -z "$gk" ]] && continue
-      set_env "$gk" "$gv"
-    done < <(echo -e "$PA_GRANTS")
-  fi
 }
 
 summary() {
@@ -1353,28 +2230,97 @@ summary() {
   [[ -n "$SU_EMAIL_OPT" ]] && say "  admin:     ${SU_EMAIL_OPT}"
   say "  workers:   backend=${BACKEND_WORKERS:-4} celery=${CELERY_CONCURRENCY:-4}"
   [[ "${ASSUME_YES:-false}" == true ]] && return 0
+  # Nothing was asked this run — every value came from a flag or from the
+  # existing configuration — so there is nothing here the operator has not
+  # already stated. The confirmation exists for the wizard, which makes choices
+  # on their behalf; echoing their own command back at them is just friction.
+  if $MODE_SET && $USER_SET && $SERVICES_SET && $STORAGE_SET \
+     && { [[ "$FMODE" != prod ]] || $REACH_SET; }; then
+    return 0
+  fi
   read -rp $'\nProceed? [Y/n] ' a; [[ "${a:-Y}" =~ ^[Yy]?$ ]] || die "Aborted."
 }
 
 # ── Compose / stack ───────────────────────────────────────────────────────────
 
+# The compose invocation, from the same COMPOSE_FILE a bare `docker compose`
+# would read. Deriving it twice is how the script and the user's own command
+# end up disagreeing about which files are in play; there is one list now, in
+# .env, rendered from the yaml.
 compose_cmd() {
-  local mode; mode="$(effective_fmode)"
-  local base
-  if [[ "$mode" == "prod" ]]; then base="docker compose -f compose.yml"; else base="docker compose"; fi
-  # Hardened network mode adds the generated host-net override fragment.
-  # NETWORK_MODE state-var wins (during wizard); falls back to setup.conf
-  # so the dashboard reflects persisted state on re-entry.
-  local net="${NETWORK_MODE:-$(conf_get network_mode bridge)}"
-  if [[ "$net" == host && -f "$HOST_NET_FRAGMENT" ]]; then
-    base="$base -f $HOST_NET_FRAGMENT"
-  fi
+  local files; files="$(get_env COMPOSE_FILE)"
+  [[ -z "$files" ]] && files="$(derived_compose_file)"
+  local f base="docker compose"
+  local IFS=:
+  for f in $files; do [[ -f "$f" ]] && base="$base -f $f"; done
   echo "$base"
 }
 
-active_network_mode() { echo "${NETWORK_MODE:-$(conf_get network_mode bridge)}"; }
+# The network mode in effect. An explicit choice made THIS run wins
+# (--secure-network, or a --reach that implies it); otherwise the choice
+# persisted in setup.conf, because a later invocation — logs, down, the
+# dashboard — must address the stack the way it was actually started.
+#
+# NETWORK_MODE cannot be tested for emptiness here: it is seeded to "bridge" at
+# the top of the script, so `${NETWORK_MODE:-$(conf_get ...)}` never consults
+# setup.conf at all. That silently handed bridge-mode compose commands to a
+# hardened stack, which `docker compose up` then recreates un-hardened.
+# The mode my-hq.yml declares — the same value derived_compose_file, render_env
+# and write_garage_config read. A wizard run in flight wins, because the yaml
+# has not been written yet at that point.
+active_network_mode() {
+  if [[ "${NET_SET:-false}" == true || "${REACH_SET:-false}" == true ]]; then
+    echo "$NETWORK_MODE"
+  else
+    local m; m="$(yget deployment.network.mode)"
+    echo "${m:-bridge}"
+  fi
+}
 
-active_profiles() { echo "${PROFILES:-$(get_env COMPOSE_PROFILES)}"; }
+active_profiles() { echo "${PROFILES:-$(derived_profiles)}"; }
+
+# After a host-network start, assert that what is ACTUALLY listening matches what
+# the fragment declared. Reading the YAML cannot tell you this — a bind knob can
+# be inert (searxng listens via granian, which ignores the BIND_ADDRESS this
+# script used to write) or simply absent (`next dev` ignores HOSTNAME). Both look
+# correct in review and both produce a public port on a machine the operator was
+# told is loopback-only. Caddy is the one service expected to bind the wildcard.
+#
+# The expectation is HQ_BIND_HOST, not a hardcoded 127.0.0.1, so the check
+# follows the declaration rather than drifting from it.
+verify_loopback_only() {
+  command -v ss >/dev/null 2>&1 || { warn "ss unavailable — skipping loopback audit."; return 0; }
+  local want; want="$(get_env HQ_BIND_HOST)"; want="${want:-127.0.0.1}"
+  local profs; profs="$(effective_profiles)"
+  local ours; ours="$(needed_host_ports | sort -u | tr '\n' ' ')"
+  local offenders=() addr host port
+
+  # Walk what is actually bound, not what we hoped would be. Column 4 of
+  # `ss -ltnH` is Local Address:Port — "127.0.0.1:8022", "*:3000", "[::]:80".
+  while read -r _ _ _ addr _; do
+    [[ -z "$addr" ]] && continue
+    port="${addr##*:}"
+    host="${addr%:*}"
+    # Only judge ports this deployment claims; the box may run unrelated things.
+    [[ " $ours " == *" $port "* ]] || continue
+    # Caddy is deliberately public — it is the only front door.
+    if [[ ",$profs," == *",caddy,"* ]] && [[ "$port" == 80 || "$port" == 443 ]]; then continue; fi
+    [[ "$host" == "$want" ]] || offenders+=("port $port is bound on $host")
+  done < <(ss -ltnH 2>/dev/null)
+
+  if [[ ${#offenders[@]} -gt 0 ]]; then
+    echo
+    warn "Hardened network is NOT holding. These listeners are not on $want:"
+    for addr in "${offenders[@]}"; do echo "    $addr"; done
+    echo
+    say "  Each is a service whose bind setting did not take effect. Identify it with:"
+    say "    ${DIM}sudo ss -ltnp | grep ':<port>'${NC}"
+    say "  Re-check with: ${BOLD}./setup.sh audit${NC}"
+    return 1
+  fi
+  ok "loopback audit passed — every HQ listener is on $want."
+  return 0
+}
 
 # All stack ops follow the same pattern: leave the dashboard's alt-screen
 # buffer (if active) so docker compose's progress writer doesn't overdraw
@@ -1382,8 +2328,67 @@ active_profiles() { echo "${PROFILES:-$(get_env COMPOSE_PROFILES)}"; }
 # alt-screen. Outside the dashboard (e.g. fresh-clone wizard, CLI init)
 # alt-screen is off and the pause/restore steps are no-ops.
 
-stack_up() {
-  [[ "${NO_UP:-false}" == true ]] && { warn "--no-up: configuration written, stack not started."; return 0; }
+# Modes are declared next to the paths; this applies them to whatever is already
+# on disk. A file written before the modes were stated — or by an older setup.sh —
+# keeps its old bits until something rewrites it, and .env backups are the case
+# that matters: they are full copies of .env.
+enforce_modes() {
+  local spec f m
+  for spec in "$ENV_FILE|$ENV_MODE" "$CONF_FILE|$CONF_MODE" \
+              "$SETUP_CONF|$SETUP_CONF_MODE" "$HOST_NET_FRAGMENT|$HOST_NET_MODE" \
+              "$GARAGE_CONFIG|$GARAGE_CONFIG_MODE"; do
+    f="${spec%|*}"; m="${spec##*|}"
+    [[ -e "$f" ]] && chmod "$m" "$f"
+  done
+  if [[ -d "$ENV_BACKUP_DIR" ]]; then
+    chmod "$ENV_BACKUP_DIR_MODE" "$ENV_BACKUP_DIR"
+    find "$ENV_BACKUP_DIR" -maxdepth 1 -type f -name '.env.bak.*' -exec chmod "$ENV_MODE" {} +
+  fi
+  return 0
+}
+
+# Everything derived from my-hq.yml, regenerated. No prompts, no dashboard, safe
+# to run at any time — this is the half of setup.sh that is not a wizard, and
+# `./setup.sh render && docker compose up -d` is a complete story without it.
+do_render() {
+  ensure_conf
+  enforce_modes
+  check_network_coherence
+  ensure_store_dirs
+  ensure_local_fs_path
+  if yon foundation.run.garage || [[ "$(yget deployment.storage.use)" == s3 ]]; then
+    ensure_s3_secrets
+  fi
+  yon foundation.run.garage && write_garage_config
+  if [[ "$(active_network_mode)" == host ]]; then
+    write_host_net_fragment
+  else
+    rm -f "$HOST_NET_FRAGMENT"
+  fi
+  prune_env
+  render_env
+  return 0
+}
+
+# .env's generated region is derived from my-hq.yml; if the yaml moved since, the
+# derived files are stale and compose would run on the old ones. Regenerate
+# rather than refuse: the inputs are all on disk, so there is nothing to ask.
+ensure_derived_current() {
+  [[ -f "$CONF_FILE" && -f "$ENV_FILE" ]] || return 0
+  local want have
+  want="$(conf_sha)"; have="$(get_env HQ_CONFIG_SHA)"
+  [[ "$want" == "$have" ]] && return 0
+  say "${DIM}$CONF_FILE changed since .env was rendered — re-rendering.${NC}"
+  do_render
+  return 0
+}
+
+stack_up() {                       # stack_up [strict]
+  local strict="${1:-}"
+  # compose.yml must never bind the wildcard outside caddy. Cheap, and the
+  # guarantee it protects is one we make on every start, not only on init.
+  assert_no_stray_public_binds
+  ensure_derived_current
   local was_alt="${ALT_SCREEN_ON:-false}"
   [[ "$was_alt" == "true" ]] && leave_alt_screen
   # Precheck runs AFTER alt-screen leave so its output / conflict prompt
@@ -1428,16 +2433,24 @@ stack_up() {
 
   if [[ $rc -eq 0 ]]; then
     ok "Up. Open: $(login_url)"
-    # Compose says "up" only means containers started — backend may still
-    # restart-loop on a config error (most commonly postgres password
-    # mismatch with the data volume). Poll briefly, diagnose if bad.
-    if verify_backend_started; then
-      # Backend is Up — actively check that the superuser login actually works.
-      # Catches: seed script didn't run, password got hashed wrong, email case
-      # mismatch, etc. Anything that lets the container be "Up" but breaks login.
-      verify_login || rc=$?
-    else
-      rc=1
+    # Compose saying "up" only means the containers started — the backend can
+    # still restart-loop on a config error (usually a postgres password that
+    # doesn't match the data volume). Poll briefly, diagnose if bad.
+    # Whether the superuser can actually log in is the user's to check; the
+    # script has no business holding up the start to try it for them.
+    verify_backend_started || rc=1
+    # Garage serves nothing until a layout and bucket exist. Idempotent, so
+    # running it on every start is simpler than tracking whether it ran.
+    if [[ $rc -eq 0 ]] && yon foundation.run.garage; then
+      garage_bootstrap
+    fi
+    # Hardening is a claim until something checks it. Only meaningful in host
+    # mode — in bridge mode docker's port publishing decides the bind address.
+    if [[ "$(active_network_mode)" == host ]] && ! verify_loopback_only; then
+      # The stack IS up; only the claim failed. A CLI run must refuse to report
+      # success. The dashboard must not: "Start failed" would be false, and the
+      # finding is on screen for the user to act on.
+      [[ "$strict" == strict ]] && die "Refusing to report a hardened stack that is publicly bound."
     fi
   else
     warn "Start failed (exit $rc). See output above for the failing service."
@@ -1479,72 +2492,7 @@ verify_backend_started() {
   return 1
 }
 
-# Actively verify the superuser can log in. Backend container being "Up" only
-# means uvicorn started — it doesn't mean the prestart seed actually created
-# the user. This catches: seed script silently failed, password got hashed
-# differently than what's in .env, email case mismatch on storage, etc.
-verify_login() {
-  if ! command -v curl >/dev/null 2>&1; then
-    say "${DIM}  (curl not found — skipping login verify)${NC}"
-    return 0
-  fi
-  local email pw port; email="$(get_env FIRST_SUPERUSER)"; pw="$(get_env FIRST_SUPERUSER_PASSWORD)"
-  port="$(get_env BACKEND_PORT)"; port="${port:-8022}"
-  if [[ -z "$email" ]] || is_placeholder "$email" \
-     || [[ -z "$pw" ]] || is_placeholder "$pw"; then
-    warn "  superuser credentials in .env are still placeholders — skipping login verify."
-    return 0
-  fi
 
-  # Attempt login with backoff. Connection errors mean uvicorn isn't serving
-  # yet — retry. Any HTTP response (200/4xx) means backend answered, treat
-  # that as the real verdict (no separate health endpoint needed).
-  say "${DIM}  verifying superuser login…${NC}"
-  local i code
-  for i in 1 2 3 4 5 6 7 8 9 10; do
-    sleep 1
-    code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 3 -X POST \
-          --data-urlencode "username=${email}" \
-          --data-urlencode "password=${pw}" \
-          "http://localhost:${port}/api/v1/login/access-token" 2>/dev/null || echo 000)"
-    case "$code" in
-      000|"") continue ;;  # connect error — backend not serving yet
-      200)    ok "  superuser login verified ($email)"; return 0 ;;
-      *)      warn "  superuser login failed (HTTP $code) for $email"
-              diagnose_login_failure
-              return 1 ;;
-    esac
-  done
-  warn "  backend HTTP not responsive on :${port} after 10s — verify login manually."
-  return 0  # don't hard-fail; user can investigate
-}
-
-# Login failed despite backend being up. Peek at logs to figure out whether
-# the seed ran at all, then offer concrete recovery actions.
-diagnose_login_failure() {
-  local c profs logs; c="$(compose_cmd)"; profs="$(active_profiles)"
-  logs="$(COMPOSE_PROFILES="$profs" $c logs --tail 200 backend 2>/dev/null)"
-  echo
-  if echo "$logs" | grep -qiE "creating.*superuser|superuser.*created|initial.*user"; then
-    warn "  Seed reports the user was created, but login fails."
-    say   "  Most likely the .env password doesn't match what was hashed during init."
-    say   "  Update the live password without re-seeding:"
-    say "    ${BOLD}$c exec backend python -m app.cli.set_superuser \\"
-    say "      --identify '$(get_env FIRST_SUPERUSER)' \\"
-    say "      --email '$(get_env FIRST_SUPERUSER)' \\"
-    say "      --password '$(get_env FIRST_SUPERUSER_PASSWORD)'${NC}"
-  elif echo "$logs" | grep -qi "initial_data\|init_db\|prestart"; then
-    warn "  Seed ran but didn't create the user — check backend logs for errors:"
-    say   "    ${BOLD}$c logs --tail 100 backend${NC}"
-  else
-    warn "  Seed script doesn't appear to have run. Possible causes:"
-    say   "    • prestart.sh skipped initial_data.py (recently fixed; pull latest)"
-    say   "    • db wasn't ready when seed ran (race)"
-    say   "  Run seed manually:"
-    say   "    ${BOLD}$c exec backend python /app/app/initial_data.py${NC}"
-    say   "  Then verify login at: $(login_url)"
-  fi
-}
 
 # Postgres password in .env doesn't match what's in the data volume — most
 # often because .env was hand-edited or restored from a backup. Offer the
@@ -1574,7 +2522,7 @@ handle_postgres_password_mismatch() {
       while IFS= read -r v; do
         [[ -z "$v" ]] && continue
         docker volume rm "$v" >/dev/null 2>&1 && removed=$((removed + 1))
-      done < <(docker volume ls --format '{{.Name}}' | grep -E '(^|_)app-db-data$')
+      done < <(docker volume ls --format '{{.Name}}' | grep -Fx "$(project_volume app-db-data)")
       if [[ "$removed" -eq 0 ]]; then
         warn "Could not remove the postgres volume. Run manually:"
         warn "    $c down  &&  docker volume rm <volume-name>"
@@ -1640,13 +2588,43 @@ stack_logs() {
   sleep 1
 }
 
-do_init() {
-  # Regression guard: compose.yml must never bind 0.0.0.0 except inside the
-  # caddy service block. If this ever fires, somebody added a public port
-  # without going through caddy — and we tell users "internally" mode keeps
-  # them safe. Fail loud, fail early.
-  assert_no_stray_public_binds
+# A CLI invocation against an already-configured deployment is a CHANGE, not a
+# setup. `./setup.sh dev secure` means "apply these two words and start" — it
+# has no business re-interrogating the operator about an account that already
+# works or services already chosen. Whatever is genuinely absent is still asked
+# for; whatever exists is inherited.
+#
+# Inheriting is not a convenience, it is required for correctness: PROFILES
+# drives foundation.run, so skipping the optionals step with PROFILES empty
+# would turn off every optional service the deployment had.
+#
+# Called only from the CLI dispatch path. The bare-command wizard and the
+# dashboard's "re-run setup" both deliberately want every question asked, and
+# they reach do_init without passing through here.
+inherit_existing_config() {
+  [[ -f "$ENV_FILE" ]] || return 0
 
+  local email pw
+  email="$(get_env FIRST_SUPERUSER)"
+  pw="$(get_env FIRST_SUPERUSER_PASSWORD)"
+  if ! is_placeholder "$email" && ! is_placeholder "$pw"; then
+    USER_SET=true
+  fi
+
+  # Both come from my-hq.yml now, not from a comma string in .env.
+  if ! $SERVICES_SET; then
+    PROFILES="$(derived_profiles)"
+    SERVICES_SET=true
+  fi
+
+  if ! $STORAGE_SET; then
+    local st; st="$(yget deployment.storage.use)"
+    if [[ -n "$st" ]]; then STORAGE="$st"; STORAGE_SET=true; fi
+  fi
+}
+
+do_init() {
+  ensure_conf              # the wizard reads its defaults from it
   $MODE_SET     || choose_usage_interactive
   if [[ "$FMODE" == prod ]] && ! $REACH_SET; then
     choose_reach_interactive
@@ -1654,25 +2632,18 @@ do_init() {
   $USER_SET     || choose_user_interactive
   $SERVICES_SET || choose_optionals_interactive
   # Sensible default when storage wasn't set (interactively or via CLI):
-  # production → minio, dev → local files. Keeps `--mode production --with X -y`
+  # local files by default; object storage is opt-in. Keeps `-y`
   # from silently leaving prod on local_fs.
   if ! $STORAGE_SET; then
     apply_storage local_fs
   fi
-  ensure_store_dirs
-  ensure_local_fs_path
-  ensure_env
-  # Hardened mode: generate the host-network override fragment under .config/hq/
-  # so compose_cmd can pick it up. Removed for non-hardened modes (idempotent).
-  if [[ "$NETWORK_MODE" == host ]]; then
-    write_host_net_fragment
-  else
-    rm -f "$HOST_NET_FRAGMENT"
-  fi
+  apply_wizard_to_conf     # the wizard's choices land in the yaml…
+  ensure_env               # …secrets land in .env…
+  do_render                # …and everything derived is regenerated from both
   summary
-  stack_up   # precheck_ports runs inside stack_up — covers all start paths
-  # Tell the user the direct compose command — they don't need setup.sh to
-  # restart the stack day-to-day. `docker compose up -d` is sufficient.
+  # strict: a CLI run must refuse to report success on a hardened stack that is
+  # publicly bound. The dashboard passes no flag and keeps the finding on screen.
+  stack_up strict
   echo
   say "${DIM}You can manage the stack directly with:${NC}"
   say "  ${BOLD}$(compose_cmd) up -d${NC}     ${DIM}# start / restart${NC}"
@@ -1682,7 +2653,6 @@ do_init() {
   # Remember for next run — UX state lives in setup.conf, not .env.
   conf_set last_mode "$([[ "$FMODE" == dev ]] && echo dev || echo running)"
   conf_set last_reach "$REACH"
-  conf_set network_mode "$NETWORK_MODE"
   conf_set setup_completed_at "$(date +%Y-%m-%dT%H:%M:%S)"
 }
 
@@ -1722,20 +2692,29 @@ rotate_postgres() {
   backup_env
   warn "Altering Postgres password for role '$user' (db container stays up, volume untouched)."
   echo "ALTER USER \"$user\" WITH PASSWORD '$new';" \
-    | $c exec -T db psql -U "$user" -d "$(get_env POSTGRES_DB)" \
+    | $c exec -T db psql -U "$user" -d "$(yget deployment.services.database.name)" \
     || die "ALTER USER failed; .env NOT changed (backup kept)."
   set_env POSTGRES_PASSWORD "$new"
   rotate_restart
   ok "Postgres password rotated."
 }
 
-rotate_minio() {
-  local mp; mp="$(gen_secret)"
+# The S3 key is a garage key, so rotating it means re-importing it there —
+# .env and the node have to agree or every upload 403s.
+rotate_s3() {
   backup_env
-  set_env MINIO_ROOT_PASSWORD "$mp"; set_env MINIO_SECRET_KEY "$mp"
-  warn "Recreating minio (data in ./.store/minio is bind-mounted and preserved)."
-  rotate_restart minio
-  ok "MinIO secret rotated."
+  set_env S3_SECRET_ACCESS_KEY "$(openssl rand -hex 32)"
+  local c; c="$(compose_cmd)"
+  if yon foundation.run.garage; then
+    COMPOSE_PROFILES="$(active_profiles)" $c exec -T garage /garage key import --yes \
+      -n hq "$(get_env S3_ACCESS_KEY_ID)" "$(get_env S3_SECRET_ACCESS_KEY)" \
+      || die "Could not re-import the key into garage. .env now holds a secret the
+node does not — restore from $ENV_BACKUP_DIR before starting anything."
+  else
+    warn "storage is external S3 — update the key at your provider to match .env."
+  fi
+  rotate_restart
+  ok "S3 secret rotated."
 }
 
 rotate_redis() {
@@ -1755,16 +2734,16 @@ rotate_secret_key() {
 }
 
 do_rotate() {
-  [[ -f "$ENV_FILE" ]] || die "No $ENV_FILE — run ./setup.sh first."
+  [[ -f "$CONF_FILE" && -f "$ENV_FILE" ]] || die "No $CONF_FILE / $ENV_FILE — run ./setup.sh first."
   local did=false
   for a in "${ROTATE_TARGETS[@]}"; do
     case "$a" in
       --fernet)     rotate_fernet; did=true ;;
       --postgres)   rotate_postgres; did=true ;;
-      --minio)      rotate_minio; did=true ;;
+      --s3|--minio) rotate_s3; did=true ;;
       --redis)      rotate_redis; did=true ;;
       --secret-key) rotate_secret_key; did=true ;;
-      --all)        rotate_postgres; rotate_minio; rotate_redis; rotate_secret_key; rotate_fernet; did=true ;;
+      --all)        rotate_postgres; rotate_s3; rotate_redis; rotate_secret_key; rotate_fernet; did=true ;;
       *) die "Unknown rotate target: $a" ;;
     esac
   done
@@ -1848,7 +2827,8 @@ service_name() {
   case "$1" in
     db) echo "Postgres" ;; backend) echo "Backend API" ;; frontend) echo "Frontend UI" ;;
     redis) echo "Redis" ;; celery_worker) echo "Celery worker" ;; celery_beat) echo "Celery scheduler" ;;
-    minio) echo "MinIO" ;; ollama) echo "Ollama" ;; searxng) echo "SearXNG" ;;
+    garage) echo "Garage" ;;
+    ollama) echo "Ollama" ;; searxng) echo "SearXNG" ;;
     nominatim) echo "Nominatim" ;; caddy) echo "Caddy" ;;
     *) echo "$1" ;;
   esac
@@ -1857,7 +2837,8 @@ service_name() {
 service_desc() {
   case "$1" in
     db) echo "database" ;; redis) echo "queue + cache" ;;
-    minio) echo "object storage" ;; ollama) echo "local LLM + embeddings" ;;
+    garage) echo "object storage (S3)" ;;
+    ollama) echo "local LLM + embeddings" ;;
     searxng) echo "web search" ;; nominatim) echo "geocoder" ;;
     caddy) echo "HTTPS reverse proxy + auto-TLS" ;;
     *) echo "" ;;
@@ -1865,7 +2846,7 @@ service_desc() {
 }
 
 bool_show() { local v; v="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"; [[ "$v" == "true" || "$v" == "1" || "$v" == "yes" ]] && echo "yes" || echo "no"; }
-is_dev_mode() { [[ "$(get_env ENVIRONMENT)" != "production" ]]; }
+is_dev_mode() { [[ "$(yget stack.environment)" != "production" ]]; }
 
 mode_display() {
   if is_dev_mode; then
@@ -1881,37 +2862,25 @@ mode_display() {
 
 email_line() {
   local host port from
-  host="$(get_env SMTP_HOST)"; port="$(get_env SMTP_PORT)"; from="$(get_env EMAILS_FROM_EMAIL)"
+  host="$(yget deployment.email.host)"; port="$(yget deployment.email.port)"; from="$(yget deployment.email.from_email)"
   if [[ -z "$host" ]]; then echo "${DIM}not configured${NC}"
   else echo "${host}:${port:-587}  ${DIM}sends as ${from:-<unset>}${NC}"; fi
 }
 
 signup_display() {
   local r v rs vs
-  r="$(bool_show "$(get_env USERS_OPEN_REGISTRATION)")"
-  v="$(bool_show "$(get_env REQUIRE_EMAIL_VERIFICATION)")"
+  r="$(bool_show "$(yget deployment.users.open_registration)")"
+  v="$(bool_show "$(yget deployment.users.require_email_verification)")"
   [[ "$r" == "yes" ]] && rs="open" || rs="closed"
   [[ "$v" == "yes" ]] && vs="email verification required" || vs="no email verification"
   echo "${rs}  ${DIM}·${NC}  ${vs}"
 }
 
-profile_active() { [[ ",$(get_env COMPOSE_PROFILES)," == *",$1,"* ]]; }
+profile_active() { yon "foundation.run.$1"; }
 
-add_profile_persist() {
-  local cur; cur="$(get_env COMPOSE_PROFILES)"
-  [[ ",$cur," == *",$1,"* ]] && return 0
-  set_env COMPOSE_PROFILES "${cur:+$cur,}$1"
-}
+add_profile_persist() { yset "foundation.run.$1" true; render_env; }
 
-remove_profile_persist() {
-  local cur new=""; cur="$(get_env COMPOSE_PROFILES)"
-  IFS=, read -ra a <<< "$cur"
-  for p in "${a[@]}"; do
-    [[ -z "$p" || "$p" == "$1" ]] && continue
-    new="${new:+$new,}$p"
-  done
-  set_env COMPOSE_PROFILES "$new"
-}
+remove_profile_persist() { yset "foundation.run.$1" false; render_env; }
 
 # ── Capability / provider toggle (the single source of truth) ─────────────────
 # Every menu path that enables or disables a provider goes through these — so
@@ -1921,13 +2890,11 @@ remove_profile_persist() {
 # True when PROVIDER is the active default for some *other* capability — i.e.
 # turning it off here must not yank the compose profile from another menu.
 provider_other_grants_present() {  # CAP PROVIDER
-  local cap="$1" prov="$2" row this_cap this_prov this_genv v
-  for row in "${PROVIDER_MATRIX[@]}"; do
-    IFS='|' read -r this_cap this_prov _ _ _ _ this_genv _ <<< "$row"
-    [[ "$this_cap" == "$cap" ]]   && continue   # only count OTHER capabilities
-    [[ "$this_prov" != "$prov" ]] && continue
-    [[ -n "$this_genv" ]] || continue
-    v="$(get_env "$this_genv")"
+  local cap="$1" prov="$2" other v
+  for other in $(printf '%s\n' "$PROVIDERS_FOR" | awk '{print $1}'); do
+    [[ -z "$other" || "$other" == "$cap" ]] && continue   # only OTHER capabilities
+    providers_for_cap "$other" | grep -qFx "$prov" || continue
+    v="$(yget "foundation.access.$other.$prov")"
     [[ -n "$v" && "$v" != "none" ]] && return 0
   done
   return 1
@@ -1958,11 +2925,9 @@ cap_fallback_provider() {  # CAP [EXCLUDE_PROVIDER]
 # only triggers one restart).
 provider_enable() {  # CAP PROVIDER
   local cap="$1" prov="$2"
-  local kind prof grant_env type_env
+  local kind prof
   kind="$(prov_field "$cap" "$prov" kind)"
   prof="$(prov_field "$cap" "$prov" profile)"
-  grant_env="$(prov_field "$cap" "$prov" grant_env)"
-  type_env="$(cap_field "$cap" type_env)"
 
   # Compose profile for container-kind providers.
   if [[ "$kind" == "container" && -n "$prof" ]]; then
@@ -1970,9 +2935,9 @@ provider_enable() {  # CAP PROVIDER
     # On-disk pre-reqs that the wizard's ensure_store_dirs handles for new
     # installs but that a dashboard-driven enable also needs.
     case "$prof" in
-      minio)
-        [[ -d ./.store/minio ]] || { mkdir -p ./.store/minio; chmod 700 ./.store/minio; }
-        ensure_minio_secrets ;;
+      garage)
+        [[ -d ./.store/garage ]] || { mkdir -p ./.store/garage/meta ./.store/garage/data; chmod -R 700 ./.store/garage; }
+        ensure_s3_secrets; write_garage_config ;;
       nominatim)
         [[ -d ./.store/nominatim ]] || { mkdir -p ./.store/nominatim; chmod 755 ./.store/nominatim; } ;;
     esac
@@ -1980,14 +2945,15 @@ provider_enable() {  # CAP PROVIDER
 
   # Access grant: share the deployment-level provider with everyone by default.
   # Sharing menus can narrow this to admins-only or back to blocked.
-  [[ -n "$grant_env" ]] && set_env "$grant_env" "all"
+  prov_set_grant "$cap" "$prov" "all"
 
   # System default for capabilities that pick one provider at resolve time.
   # Only set if currently unset — never overwrite an operator's explicit choice.
-  if [[ -n "$type_env" ]]; then
-    local cur; cur="$(get_env "$type_env")"
-    [[ -z "$cur" ]] && set_env "$type_env" "$prov"
+  if cap_has_default "$cap"; then
+    local cur; cur="$(cap_default "$cap")"
+    [[ -z "$cur" ]] && cap_set_default "$cap" "$prov"
   fi
+  render_env
 }
 
 # Disable a provider for a capability. Removes the grant; removes the profile
@@ -1995,21 +2961,20 @@ provider_enable() {  # CAP PROVIDER
 # the same container.
 provider_disable() {  # CAP PROVIDER
   local cap="$1" prov="$2"
-  local kind prof grant_env type_env
+  local kind prof
   kind="$(prov_field "$cap" "$prov" kind)"
   prof="$(prov_field "$cap" "$prov" profile)"
-  grant_env="$(prov_field "$cap" "$prov" grant_env)"
-  type_env="$(cap_field "$cap" type_env)"
 
-  [[ -n "$grant_env" ]] && set_env "$grant_env" ""
+  prov_set_grant "$cap" "$prov" "none"
 
   # If this provider was the system default, hand it off to a safe fallback
   # before anything else picks it up. Pass `$prov` as the exclude so the
   # fallback search doesn't recommend the very provider we're disabling
   # (its compose profile is still active for one more step).
-  if [[ -n "$type_env" && "$(get_env "$type_env")" == "$prov" ]]; then
-    set_env "$type_env" "$(cap_fallback_provider "$cap" "$prov")"
+  if cap_has_default "$cap" && [[ "$(cap_default "$cap")" == "$prov" ]]; then
+    cap_set_default "$cap" "$(cap_fallback_provider "$cap" "$prov")"
   fi
+  render_env
 
   # Compose profile — keep it on if another capability still wants this
   # container. Stop + remove the container otherwise so docker actually
@@ -2029,7 +2994,7 @@ provider_disable() {  # CAP PROVIDER
 
 # Drift: what's running vs what's configured.
 configured_profiles() {
-  echo "$(get_env COMPOSE_PROFILES)" | tr ',' '\n' | grep -v '^$' | sort -u
+  derived_profiles | tr ',' '\n' | grep -v '^$' | sort -u
 }
 running_optional() {
   docker_ok || return 0
@@ -2049,7 +3014,7 @@ has_drift() {
 
 frontend_url() {
   local d port; d="$(get_env DOMAIN)"; port="$(get_env FRONTEND_PORT)"; port="${port:-3000}"
-  if [[ "$(get_env ENVIRONMENT)" == "production" && -n "$d" && "$d" != "localhost" ]]; then
+  if [[ "$(yget stack.environment)" == "production" && -n "$d" && "$d" != "localhost" ]]; then
     echo "https://$d"
   else
     echo "http://localhost:${port}"
@@ -2063,7 +3028,7 @@ login_url() { echo "$(frontend_url)/accounts/login"; }
 
 backend_url() {
   local d port; d="$(get_env DOMAIN)"; port="$(get_env BACKEND_PORT)"; port="${port:-8022}"
-  if [[ "$(get_env ENVIRONMENT)" == "production" && -n "$d" && "$d" != "localhost" ]]; then
+  if [[ "$(yget stack.environment)" == "production" && -n "$d" && "$d" != "localhost" ]]; then
     echo "https://$d/api"
   else
     echo "http://localhost:${port}"
@@ -2072,13 +3037,13 @@ backend_url() {
 
 email_status() {  # one-line, used in submenus
   local host port from
-  host="$(get_env SMTP_HOST)"; port="$(get_env SMTP_PORT)"; from="$(get_env EMAILS_FROM_EMAIL)"
+  host="$(yget deployment.email.host)"; port="$(yget deployment.email.port)"; from="$(yget deployment.email.from_email)"
   if [[ -z "$host" ]]; then echo "not configured"
   else echo "${host}:${port:-587} from <${from:-?}>"; fi
 }
 
 storage_status() {
-  local t; t="$(get_env STORAGE_PROVIDER_TYPE)"
+  local t; t="$(yget deployment.storage.use)"
   case "$t" in
     local_fs) local h; h="$(get_env LOCAL_STORAGE_HOST_PATH)"; echo "local files at ${h:-./.store/local_fs}" ;;
     minio)    echo "MinIO at $(get_env MINIO_ENDPOINT)" ;;
@@ -2110,11 +3075,18 @@ pick_menu() { # pick_menu VAR
   echo
 }
 
-prompt_set() {
+prompt_set() {           # a secret, or anything else whose home is .env
   local cur new
   cur="$(get_env "$1")"
   read -rp "  $2 [${cur:-empty}]: " new
   if [[ -n "$new" ]]; then backup_env; set_env "$1" "$new"; ok "  $1 set."; fi
+}
+
+prompt_yset() {          # prompt_yset yaml.path "Label"  — config, so it goes to the yaml
+  local cur new
+  cur="$(yget "$1")"
+  read -rp "  $2 [${cur:-empty}]: " new
+  if [[ -n "$new" ]]; then yset "$1" "$new"; render_env; ok "  $1 set."; fi
 }
 
 prompt_set_password() {
@@ -2123,11 +3095,11 @@ prompt_set_password() {
   if [[ -n "$new" ]]; then backup_env; set_env "$1" "$new"; ok "  $1 set."; fi
 }
 
-toggle_bool() {
-  local key="$1" cur new lc; cur="$(get_env "$key")"
+toggle_bool() {          # toggle_bool yaml.path
+  local key="$1" cur new lc; cur="$(yget "$key")"
   lc="$(printf '%s' "$cur" | tr '[:upper:]' '[:lower:]')"
   case "$lc" in true|1|yes) new=false ;; *) new=true ;; esac
-  backup_env; set_env "$key" "$new"
+  yset "$key" "$new"; render_env
   ok "  $key = $new"
   if confirm "Restart backend to apply?"; then
     docker_ok && ( $(compose_cmd) restart backend ) || warn "Restart skipped."
@@ -2299,11 +3271,14 @@ sync_features() {
   pick_menu r
   case "$r" in
     1) backup_env
-       local new=""
-       local svc
+       local new="" svc
        for svc in $(running_optional); do new="${new:+$new,}$svc"; done
-       set_env COMPOSE_PROFILES "$new"
-       ok "Saved: COMPOSE_PROFILES=${new:-<empty>}"
+       # foundation.run is the truth; COMPOSE_PROFILES is rendered from it.
+       for svc in $(ykeys foundation.run); do
+         [[ ",$new," == *",$svc,"* ]] && yset "foundation.run.$svc" true || yset "foundation.run.$svc" false
+       done
+       render_env
+       ok "Saved: running services recorded in $CONF_FILE"
        pause
        ;;
     2) confirm_y "Stop [${extras:-<none>}] and start [${missing:-<none>}]?" || { warn "Cancelled."; pause; return; }
@@ -2326,7 +3301,7 @@ sync_features() {
 
 # ── Capability-first foundation menus ─────────────────────────────────────────
 # The foundation menu is the umbrella for everything HQ talks to: local
-# containers (Ollama, MinIO, SearXNG, Nominatim) and cloud APIs (OpenAI,
+# containers (Ollama, Garage, SearXNG, Nominatim) and cloud APIs (OpenAI,
 # Anthropic, …). It's structured by *capability* rather than by implementation
 # (container-vs-cloud) so the user thinks in terms of "I want chat models",
 # not "I want to flip a docker profile and also paste an API key over there".
@@ -2337,7 +3312,7 @@ sync_features() {
 # stay aligned.
 
 foundation_menu() {
-  [[ -f "$ENV_FILE" ]] || { warn "Run setup first."; pause; return; }
+  [[ -f "$CONF_FILE" && -f "$ENV_FILE" ]] || { warn "Run setup first."; pause; return; }
   while true; do
     clear 2>/dev/null || true
     say "${GREEN}Foundation service providers${NC}"
@@ -2380,17 +3355,16 @@ capability_menu() {  # CAP
 # Generic per-capability screen for multi-provider capabilities (language,
 # embedding, ocr, geocoding, web_search).
 cap_menu_multi() {  # CAP
-  local cap="$1" cap_label_v cap_desc_v type_env
+  local cap="$1" cap_label_v cap_desc_v
   cap_label_v="$(cap_field "$cap" label)"
   cap_desc_v="$(cap_field "$cap" desc)"
-  type_env="$(cap_field "$cap" type_env)"
   local need_restart=false
 
   while true; do
     clear 2>/dev/null || true
     say "${GREEN}${cap_label_v}${NC}  ${DIM}${cap_desc_v}${NC}"
-    if [[ -n "$type_env" ]]; then
-      local cur_type; cur_type="$(get_env "$type_env")"
+    if cap_has_default "$cap"; then
+      local cur_type; cur_type="$(cap_default "$cap")"
       printf "  ${DIM}default provider when none specified: %s${NC}\n" "${cur_type:-<unset>}"
     fi
     echo
@@ -2456,7 +3430,7 @@ cap_menu_storage() {
   while true; do
     clear 2>/dev/null || true
     say "${GREEN}File storage${NC}  ${DIM}uploads, dataset blobs, exports${NC}"
-    local cur; cur="$(get_env STORAGE_PROVIDER_TYPE)"
+    local cur; cur="$(yget deployment.storage.use)"
     printf "  current provider: ${BOLD}%s${NC}\n" "${cur:-<unset>}"
     say "  ${DIM}Storage is one-at-a-time — all assets live in the active provider.${NC}"
     say "  ${DIM}Switching does not move existing files.${NC}"
@@ -2479,7 +3453,7 @@ cap_menu_storage() {
 
     case "$r" in
       0|"") return 0 ;;
-      p|P)  prompt_set LOCAL_STORAGE_HOST_PATH "Local storage host path (default ./.store/local_fs)"; pause ;;
+      p|P)  prompt_yset deployment.storage.user_uploads.host_path "Local storage host path (default ./.store/local_fs)"; pause ;;
       *)
         if [[ "$r" =~ ^[1-9][0-9]*$ && "$r" -le "${#opts_prov[@]}" ]]; then
           local new="${opts_prov[$((r-1))]}"
@@ -2543,10 +3517,9 @@ cap_action_container() {  # CAP PROVIDER  → 0 if changed, 1 otherwise
 
 # Cloud provider actions: set/change key, sharing, clear.
 cap_action_cloud() {  # CAP PROVIDER
-  local cap="$1" prov="$2" label kenv genv
+  local cap="$1" prov="$2" label kenv
   label="$(prov_field "$cap" "$prov" label)"
   kenv="$(prov_field "$cap" "$prov" key_env)"
-  genv="$(prov_field "$cap" "$prov" grant_env)"
 
   clear 2>/dev/null || true
   say "${GREEN}${label}${NC}  ${DIM}cloud provider for $(cap_field "$cap" label)${NC}"
@@ -2555,7 +3528,7 @@ cap_action_cloud() {  # CAP PROVIDER
   else
     say "  ${DIM}no API key needed — keyless public endpoint${NC}"
   fi
-  printf "  shared with: %b\n" "$(grant_pretty "$(get_env "$genv")")"
+  printf "  shared with: %b\n" "$(grant_pretty "$(prov_grant "$cap" "$prov")")"
   echo
 
   local actions_label="" set_clear_visible=false
@@ -2583,21 +3556,20 @@ cap_action_cloud() {  # CAP PROVIDER
 # built-ins compete with containerized alternatives) offer to make this the
 # default explicitly.
 cap_action_builtin() {  # CAP PROVIDER
-  local cap="$1" prov="$2" label type_env
+  local cap="$1" prov="$2" label
   label="$(prov_field "$cap" "$prov" label)"
-  type_env="$(cap_field "$cap" type_env)"
 
   clear 2>/dev/null || true
   say "${GREEN}${label}${NC}  ${DIM}built-in for $(cap_field "$cap" label)${NC}"
   say "  ${DIM}$(prov_field "$cap" "$prov" notes)${NC}"
   echo
 
-  if [[ -n "$type_env" ]]; then
-    local cur; cur="$(get_env "$type_env")"
+  if cap_has_default "$cap"; then
+    local cur; cur="$(cap_default "$cap")"
     if [[ "$cur" == "$prov" ]]; then
       ok "Already the default for this capability."
     elif confirm "Make $label the default for $(cap_field "$cap" label)?"; then
-      backup_env; set_env "$type_env" "$prov"
+      backup_env; cap_set_default "$cap" "$prov"; render_env
       ok "Default set to $label."
     fi
   else
@@ -2609,10 +3581,8 @@ cap_action_builtin() {  # CAP PROVIDER
 # Sharing — wraps the existing explainer + level picker for one specific
 # (capability, provider) pair so the user doesn't have to fuzzy-pick a row.
 cap_set_sharing() {  # CAP PROVIDER
-  local cap="$1" prov="$2" label genv
+  local cap="$1" prov="$2" label
   label="$(prov_field "$cap" "$prov" label)"
-  genv="$(prov_field "$cap" "$prov" grant_env)"
-  [[ -n "$genv" ]] || { warn "No sharing setting for this provider."; return 0; }
 
   clear 2>/dev/null || true
   sharing_explainer
@@ -2622,7 +3592,7 @@ cap_set_sharing() {  # CAP PROVIDER
     "Everyone     — any signed-in user" \
     "Admins only  — superusers" \
     "Blocked      — no one on this HQ can use this provider" \
-    "Not shared   — default; users bring their own key" \
+    "Bring your own — usable, but our key is never handed over" \
     | fzf_pick "Level:" "What level should the deployment-level key be shared at?")" || return 0
   [[ -z "$level" ]] && return 0
   local val
@@ -2630,10 +3600,12 @@ cap_set_sharing() {  # CAP PROVIDER
     Everyone*)    val=all ;;
     Admins*)      val=superuser ;;
     Blocked*)     val=none ;;
-    Not\ shared*) val="" ;;
+    # Was an empty value, which now means the opposite: an unlisted keyed
+    # provider is denied, so "users bring their own" has to say so.
+    Bring*)       val=byok ;;
     *)            return 0 ;;
   esac
-  backup_env; set_env "$genv" "$val"
+  backup_env; prov_set_grant "$cap" "$prov" "$val"; render_env
   ok "  ${label} → $(grant_pretty "$val")"
 }
 
@@ -2651,12 +3623,13 @@ storage_data_summary() {  # PROVIDER  → echoes a one-line description of exist
       local n; n="$(find "$path" -type f 2>/dev/null | wc -l | tr -d ' ')"
       [[ "$n" -gt 0 ]] && echo "$n file(s) under $path"
       ;;
-    minio)
-      [[ -d ./.store/minio ]] || { echo ""; return; }
-      local n; n="$(find ./.store/minio -type f 2>/dev/null | wc -l | tr -d ' ')"
-      [[ "$n" -gt 0 ]] && echo "$n file(s) under ./.store/minio (MinIO data)"
+    s3)
+      # Objects live inside garage's own store, not as browsable files, so
+      # there is no count to give — only whether a node has data at all.
+      [[ -d ./.store/garage ]] || { echo ""; return; }
+      local n; n="$(du -sh ./.store/garage 2>/dev/null | cut -f1)"
+      [[ -n "$n" ]] && echo "$n in ./.store/garage (garage store)"
       ;;
-    s3) echo "" ;;
   esac
 }
 
@@ -2680,10 +3653,12 @@ storage_switch_safe() {  # OLD_PROVIDER NEW_PROVIDER
   case "$new" in
     local_fs)
       say "  Files will live under ${BOLD}$(get_env LOCAL_STORAGE_HOST_PATH || echo './.store/local_fs')${NC}." ;;
-    minio)
-      say "  MinIO will run as a Docker container, data under ${BOLD}./.store/minio${NC}." ;;
     s3)
-      say "  You'll need an AWS-style bucket + access keys (configured next)." ;;
+      if yon foundation.run.garage; then
+        say "  Garage runs as a container, its store under ${BOLD}./.store/garage${NC}."
+      else
+        say "  Point ${BOLD}deployment.services.s3${NC} at your bucket, keys go in .env."
+      fi ;;
   esac
   echo
   confirm "Switch storage to ${new}?" || { warn "Cancelled."; pause; return 1; }
@@ -2692,26 +3667,25 @@ storage_switch_safe() {  # OLD_PROVIDER NEW_PROVIDER
   # First: stop and remove the OLD provider's container if it had one. Doing
   # this BEFORE switching the env vars means the running container still sees
   # consistent credentials during shutdown.
-  if [[ "$old" == "minio" ]] && profile_active minio; then
-    say "${DIM}stopping minio container…${NC}"
+  if [[ "$old" == "s3" ]] && profile_active garage; then
+    say "${DIM}stopping garage container…${NC}"
     if docker_ok; then
       local c; c="$(compose_cmd)"
-      $c stop minio  >/dev/null 2>&1 || true
-      $c rm -f minio >/dev/null 2>&1 || true
+      $c stop garage  >/dev/null 2>&1 || true
+      $c rm -f garage >/dev/null 2>&1 || true
     fi
-    remove_profile_persist minio
-    set_env PROVIDER_ACCESS_STORAGE_minio ""
+    remove_profile_persist garage
   fi
 
   # Now flip to the new provider via the canonical helper.
   provider_enable storage "$new"
-  set_env STORAGE_PROVIDER_TYPE "$new"   # provider_enable only sets when unset
+  yset deployment.storage.use "$new"     # provider_enable only sets when unset
 
   # New provider-specific follow-ups.
   case "$new" in
     s3)
-      prompt_set S3_BUCKET_NAME "S3 bucket"
-      prompt_set S3_REGION "Region"
+      prompt_yset deployment.services.s3.bucket "S3 bucket"
+      prompt_yset deployment.services.s3.region "Region"
       prompt_set S3_ACCESS_KEY_ID "Access key id"
       prompt_set_password S3_SECRET_ACCESS_KEY "Secret access key" ;;
   esac
@@ -2872,10 +3846,10 @@ email_menu() {
     clear 2>/dev/null || true
     say "${GREEN}Email${NC}"
     printf "  smtp:      %s\n" "$(email_status)"
-    printf "  tls=%s   ssl=%s\n" "$(bool_show "$(get_env SMTP_TLS)")" "$(bool_show "$(get_env SMTP_SSL)")"
-    printf "  from:      %s <%s>\n" "$(get_env EMAILS_FROM_NAME)" "$(get_env EMAILS_FROM_EMAIL)"
-    printf "  verify:    %s\n" "$(bool_show "$(get_env REQUIRE_EMAIL_VERIFICATION)")"
-    printf "  open reg:  %s\n" "$(bool_show "$(get_env USERS_OPEN_REGISTRATION)")"
+    printf "  tls=%s   ssl=%s\n" "$(bool_show "$(yget deployment.email.tls)")" "$(bool_show "$(yget deployment.email.ssl)")"
+    printf "  from:      %s <%s>\n" "$(yget deployment.email.from_name)" "$(yget deployment.email.from_email)"
+    printf "  verify:    %s\n" "$(bool_show "$(yget deployment.users.require_email_verification)")"
+    printf "  open reg:  %s\n" "$(bool_show "$(yget deployment.users.open_registration)")"
     echo
     say "  ${GREEN}1${NC}  Configure SMTP (host, port, user, password, tls/ssl)"
     say "  ${GREEN}2${NC}  From name & address"
@@ -2887,12 +3861,12 @@ email_menu() {
     case "$r" in
       1) configure_smtp ;;
       2) backup_env
-         prompt_set EMAILS_FROM_NAME "Sender name (e.g. \"Open Politics\")"
-         prompt_set EMAILS_FROM_EMAIL "Sender email"
+         prompt_yset deployment.email.from_name  "Sender name (e.g. \"Open Politics\")"
+         prompt_yset deployment.email.from_email "Sender email"
          confirm "Restart backend?" && { docker_ok && ( $(compose_cmd) restart backend ) || warn "Skipped."; }
          pause ;;
-      3) toggle_bool REQUIRE_EMAIL_VERIFICATION ;;
-      4) toggle_bool USERS_OPEN_REGISTRATION ;;
+      3) toggle_bool deployment.users.require_email_verification ;;
+      4) toggle_bool deployment.users.open_registration ;;
       5) if confirm "Clear all SMTP settings?"; then
            backup_env
            local k
@@ -2910,13 +3884,13 @@ email_menu() {
 
 configure_smtp() {
   backup_env
-  prompt_set SMTP_HOST "SMTP host (e.g. smtp.protonmail.ch)"
-  prompt_set SMTP_PORT "SMTP port (587 STARTTLS / 465 SSL)"
-  prompt_set SMTP_USER "SMTP user"
+  prompt_yset deployment.email.host "SMTP host (e.g. smtp.protonmail.ch)"
+  prompt_yset deployment.email.port "SMTP port (587 STARTTLS / 465 SSL)"
+  prompt_yset deployment.email.user "SMTP user"
   prompt_set_password SMTP_PASSWORD "SMTP password"
   local r
-  read -rp "  Use STARTTLS (TLS)? [Y/n] " r; [[ "${r:-Y}" =~ ^[Yy]$ ]] && set_env SMTP_TLS true || set_env SMTP_TLS false
-  read -rp "  Use SSL (port 465)? [y/N] " r; [[ "$r" =~ ^[Yy]$ ]] && set_env SMTP_SSL true || set_env SMTP_SSL false
+  read -rp "  Use STARTTLS (TLS)? [Y/n] " r; [[ "${r:-Y}" =~ ^[Yy]$ ]] && yset deployment.email.tls true || yset deployment.email.tls false
+  read -rp "  Use SSL (port 465)? [y/N] " r; [[ "$r" =~ ^[Yy]$ ]] && yset deployment.email.ssl true || yset deployment.email.ssl false
   ok "SMTP configured."
   confirm "Restart backend to apply?" && { docker_ok && ( $(compose_cmd) restart backend ) || warn "Skipped."; }
   pause
@@ -2969,8 +3943,8 @@ workers_prompt() {
     warn "  In dev mode, the backend runs as a single uvicorn process via start-reload.sh."
     warn "  BACKEND_WORKERS only takes effect under ENVIRONMENT=production."
   fi
-  prompt_set BACKEND_WORKERS  "Backend uvicorn workers (prod only)"
-  prompt_set CELERY_CONCURRENCY "Celery prefork concurrency"
+  prompt_yset deployment.services.backend.workers "Backend uvicorn workers (number, or auto)"
+  prompt_yset deployment.services.celery.workers  "Celery prefork concurrency (number, or auto)"
   if confirm "Restart stack to apply?"; then
     docker_ok && ( stack_restart ) || warn "Restart skipped."
   fi
@@ -2981,7 +3955,7 @@ domain_prompt() {
   clear 2>/dev/null || true
   say "${GREEN}Domain${NC}"
   printf "  current:  %s\n\n" "$(get_env DOMAIN)"
-  prompt_set DOMAIN "Domain (e.g. open-politics.org or localhost)"
+  prompt_yset deployment.network.domain "Domain (e.g. open-politics.org or localhost)"
   if profile_active caddy; then
     warn "  Caddy is active — restart to pick up the new domain."
     confirm "Restart caddy now?" && { docker_ok && ( $(compose_cmd) up -d --force-recreate --no-deps caddy ) || warn "Skipped."; }
@@ -2992,7 +3966,7 @@ domain_prompt() {
 # ── Settings ──────────────────────────────────────────────────────────────────
 
 settings_menu() {
-  [[ -f "$ENV_FILE" ]] || { warn "Run setup first."; pause; return; }
+  [[ -f "$CONF_FILE" && -f "$ENV_FILE" ]] || { warn "Run setup first."; pause; return; }
   while true; do
     clear 2>/dev/null || true
     say "${GREEN}Settings${NC}"
@@ -3008,7 +3982,7 @@ settings_menu() {
     say "  ${GREEN}3${NC}  Storage              ${DIM}provider and local_fs path${NC}"
     say "  ${GREEN}4${NC}  Workers              ${DIM}backend and celery counts${NC}"
     say "  ${GREEN}5${NC}  Domain"
-    say "  ${GREEN}6${NC}  Network mode         ${DIM}bridge (default) ↔ host (hardened, advanced)${NC}"
+    say "  ${GREEN}6${NC}  Network mode         ${DIM}host (default) ↔ bridge (cross-platform)${NC}"
     say "  ${GREEN}7${NC}  Re-run setup wizard"
     say "  ${GREEN}8${NC}  Edit any single .env value"
     say "  ${GREEN}0${NC}  Back"
@@ -3020,9 +3994,9 @@ settings_menu() {
       4) workers_prompt ;;
       5) domain_prompt ;;
       6) network_mode_menu ;;
-      7) ( PROFILES=""; PA_GRANTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; \
-           SU_EMAIL_OPT=""; SU_PASSWORD_OPT=""; REACH=local; NETWORK_MODE=bridge; \
-           MODE_SET=false; REACH_SET=false; SERVICES_SET=false; STORAGE_SET=false; USER_SET=false; \
+      7) ( PROFILES=""; QUEUED_GRANTS=""; QUEUED_DEFAULTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; \
+           SU_EMAIL_OPT=""; SU_PASSWORD_OPT=""; REACH=local; NETWORK_MODE=host; \
+           MODE_SET=false; REACH_SET=false; NET_SET=false; SERVICES_SET=false; STORAGE_SET=false; USER_SET=false; \
            LANG_LOCAL=false; EMB_LOCAL=false; do_init ) || warn "Wizard did not complete."; pause ;;
       8) edit_value ;;
       0|"") return 0 ;;
@@ -3036,11 +4010,11 @@ network_mode_menu() {
   clear 2>/dev/null || true
   say "${GREEN}Network mode${NC}"
   printf "  current:  ${BOLD}%s${NC}\n\n" "$cur"
-  say "  ${BOLD}bridge${NC}   ${DIM}(default — cross-platform, safe)${NC}"
+  say "  ${BOLD}bridge${NC}   ${DIM}(the opt-out — cross-platform)${NC}"
   say "           Standard docker network. Frontend on 127.0.0.1:3000, every"
   say "           other service docker-internal. Nothing exposed to the network."
   say
-  say "  ${BOLD}host${NC}     ${DIM}(advanced — security-focused)${NC}"
+  say "  ${BOLD}host${NC}     ${DIM}(default — no port mappings)${NC}"
   say "           Containers share the host network namespace; every service"
   say "           binds 127.0.0.1 on the host directly. No \`ports:\` mappings"
   say "           anywhere, so accidental exposure is structurally impossible."
@@ -3053,10 +4027,11 @@ network_mode_menu() {
     bridge)
       [[ "$cur" == bridge ]] && { say "Already bridge."; pause; return; }
       NETWORK_MODE=bridge
-      rm -f "$HOST_NET_FRAGMENT"
-      conf_set network_mode bridge
       backup_env
-      set_env BACKEND_BIND_HOST "0.0.0.0"
+      yset deployment.network.mode bridge
+      rm -f "$HOST_NET_FRAGMENT"
+      yon foundation.run.garage && write_garage_config
+      render_env
       ok "Switched to bridge."
       # Network topology change — needs down + up, not restart. Down releases
       # the old ports so the up's port precheck sees the real free/busy state.
@@ -3070,10 +4045,11 @@ network_mode_menu() {
     host)
       [[ "$cur" == host ]] && { say "Already host."; pause; return; }
       NETWORK_MODE=host
-      write_host_net_fragment
-      conf_set network_mode host
       backup_env
-      set_env BACKEND_BIND_HOST "127.0.0.1"
+      yset deployment.network.mode host
+      write_host_net_fragment
+      yon foundation.run.garage && write_garage_config
+      render_env
       ok "Switched to host (hardened)."
       warn "Mac/Windows: enable Docker Desktop's host networking feature first."
       if confirm "Apply now? (stops + restarts the stack)"; then
@@ -3095,7 +4071,7 @@ rotate_menu() {
     say "${GREEN}Rotate passwords & keys${NC}  ${DIM}(.env backed up; data volumes preserved)${NC}"
     say "  ${GREEN}1${NC}  Encryption key (Fernet)   ${DIM}re-encrypts all stored credentials${NC}"
     say "  ${GREEN}2${NC}  Postgres password"
-    say "  ${GREEN}3${NC}  MinIO secret"
+    say "  ${GREEN}3${NC}  S3 / garage secret"
     say "  ${GREEN}4${NC}  Redis password"
     say "  ${GREEN}5${NC}  JWT SECRET_KEY            ${DIM}(forces re-login)${NC}"
     say "  ${GREEN}6${NC}  ALL of the above"
@@ -3104,10 +4080,10 @@ rotate_menu() {
     case "$r" in
       1) confirm "Rotate the encryption key now?"        && { ( rotate_fernet )      || warn "Rotation aborted."; } ;;
       2) confirm "Rotate the Postgres password now?"     && { ( rotate_postgres )    || warn "Rotation aborted."; } ;;
-      3) confirm "Rotate the MinIO secret now?"          && { ( rotate_minio )       || warn "Rotation aborted."; } ;;
+      3) confirm "Rotate the S3 secret now?"             && { ( rotate_s3 )         || warn "Rotation aborted."; } ;;
       4) confirm "Rotate the Redis password now?"        && { ( rotate_redis )       || warn "Rotation aborted."; } ;;
       5) confirm "Rotate SECRET_KEY (logs everyone out)?" && { ( rotate_secret_key ) || warn "Rotation aborted."; } ;;
-      6) confirm "Rotate ALL secrets now?"               && { ( rotate_postgres; rotate_minio; rotate_redis; rotate_secret_key; rotate_fernet ) || warn "Rotation aborted."; } ;;
+      6) confirm "Rotate ALL secrets now?"               && { ( rotate_postgres; rotate_s3; rotate_redis; rotate_secret_key; rotate_fernet ) || warn "Rotation aborted."; } ;;
       0|"") return 0 ;;
       *) warn "Invalid." ;;
     esac
@@ -3124,7 +4100,7 @@ detect_public_ip() {
 }
 
 deploy_wizard() {
-  [[ -f "$ENV_FILE" ]] || { warn "Run setup first — .env must exist."; pause; return; }
+  [[ -f "$CONF_FILE" && -f "$ENV_FILE" ]] || { warn "Run setup first — $CONF_FILE and .env must exist."; pause; return; }
   clear 2>/dev/null || true
   say "${BLUE}┌─ Publish to a public domain ────────────────────────────────────────${NC}"
   say "${BLUE}│${NC}  Switches HQ to production mode and adds Caddy in front for HTTPS."
@@ -3146,25 +4122,33 @@ deploy_wizard() {
     [[ "$domain" =~ ^[A-Za-z0-9.-]+\.[A-Za-z]{2,}$ ]] && break
     warn "  That doesn't look like a domain."
   done
-  read -rp "  ACME contact email (for Let's Encrypt expiry notices): " acme
+  while true; do
+    read -rp "  ACME contact email (required by the certificate authority): " acme
+    [[ "$acme" =~ ^[^@[:space:]]+@[^@[:space:]]+\.[A-Za-z]{2,}$ ]] && break
+    warn "  Caddy will not start without a valid contact address."
+  done
 
   warn "  Make sure A-record for ${BOLD}${domain}${NC} points to ${BOLD}${pubip}${NC}."
   warn "  Caddy will fail to obtain a certificate if DNS hasn't propagated."
   confirm_y "DNS is set and you're ready?" || { warn "Cancelled — re-run when DNS is ready."; pause; return; }
 
   backup_env
-  set_env DOMAIN "$domain"
-  set_env ACME_EMAIL "$acme"
-  set_env ENVIRONMENT "production"
-  set_env STORAGE_PROVIDER_TYPE "minio"
-  add_profile_persist minio
-  add_profile_persist searxng
-  add_profile_persist caddy
-  local cors; cors="$(get_env BACKEND_CORS_ORIGINS)"
+  yset deployment.network.domain "$domain"
+  yset deployment.network.acme_email "$acme"
+  yset deployment.network.reach public
+  yset stack.environment production
+  # Storage is deliberately NOT changed here. Switching local_fs -> s3 as a side
+  # effect of adding TLS orphans every upload the deployment already has; that
+  # move belongs to the storage menu, which knows how to migrate.
+  local _store; _store="$(yget deployment.storage.use)"
+  say "  ${DIM}storage stays ${_store} — change it under Foundation → File storage.${NC}"
+  local cors; cors="$(yget deployment.network.cors.origins)"
   if [[ ",$cors," != *",https://$domain,"* ]]; then
-    set_env BACKEND_CORS_ORIGINS "${cors:+$cors,}https://$domain"
+    yset_list deployment.network.cors.origins "${cors:+$cors,}https://$domain"
   fi
-  ok "  .env updated: production + caddy + minio + searxng."
+  check_network_coherence
+  do_render
+  ok "  $CONF_FILE updated: production + caddy."
 
   FMODE="prod"
   if confirm_y "Bring the stack up now (this builds prod images)?"; then
@@ -3297,9 +4281,9 @@ dashboard() {
       "?")        show_help_overlay ;;
       1) if [[ ! -f "$ENV_FILE" ]]; then
            leave_alt_screen
-           ( PROFILES=""; PA_GRANTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; \
-             SU_EMAIL_OPT=""; SU_PASSWORD_OPT=""; REACH=local; NETWORK_MODE=bridge; \
-             MODE_SET=false; REACH_SET=false; SERVICES_SET=false; STORAGE_SET=false; USER_SET=false; \
+           ( PROFILES=""; QUEUED_GRANTS=""; QUEUED_DEFAULTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; \
+             SU_EMAIL_OPT=""; SU_PASSWORD_OPT=""; REACH=local; NETWORK_MODE=host; \
+             MODE_SET=false; REACH_SET=false; NET_SET=false; SERVICES_SET=false; STORAGE_SET=false; USER_SET=false; \
              LANG_LOCAL=false; EMB_LOCAL=false; do_init ) || warn "Setup did not complete."
            pause
            enter_alt_screen
@@ -3327,64 +4311,234 @@ dashboard() {
   say "Bye."
 }
 
+# ── audit ─────────────────────────────────────────────────────────────────────
+# Read-only. Prints what IS beside what was promised, and exits 1 on any
+# difference. Names, modes, ports and bind addresses only — never a value, not
+# even a masked one: mask() shows a secret's first three and last two
+# characters, which is fine in a menu and wrong in output whose purpose is being
+# pasted into a bug report.
+AUDIT_FINDINGS=0
+
+file_mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null || echo "?"; }
+
+# Colour wraps OUTSIDE the width specifier so padding counts visible characters.
+audit_row() {  # audit_row NAME ACTUAL [WANT]
+  local name="$1" actual="$2" want="${3:-}"
+  if [[ -z "$want" || "$actual" == "$want" ]]; then
+    printf "  %-34s %-10s ${GREEN}ok${NC}\n" "$name" "$actual"
+  else
+    printf "  %-34s %-10s want %-8s ${RED}FAIL${NC}\n" "$name" "$actual" "$want"
+    AUDIT_FINDINGS=$((AUDIT_FINDINGS + 1))
+  fi
+}
+
+audit_files() {
+  say "${BOLD}FILES${NC}"
+  local spec f want
+  for spec in "$ENV_FILE|$ENV_MODE" "$CONF_FILE|$CONF_MODE" \
+              "$SETUP_CONF|$SETUP_CONF_MODE" "$HOST_NET_FRAGMENT|$HOST_NET_MODE" \
+              "$GARAGE_CONFIG|$GARAGE_CONFIG_MODE"; do
+    f="${spec%|*}"; want="${spec##*|}"
+    if [[ ! -e "$f" ]]; then printf "  %-34s ${DIM}%s${NC}\n" "$f" "absent"; continue; fi
+    audit_row "$f" "$(file_mode "$f")" "$want"
+  done
+  if [[ -d "$ENV_BACKUP_DIR" ]]; then
+    audit_row "$ENV_BACKUP_DIR/" "$(file_mode "$ENV_BACKUP_DIR")" "$ENV_BACKUP_DIR_MODE"
+    local b
+    while IFS= read -r b; do
+      [[ -n "$b" ]] || continue
+      audit_row "  $(basename "$b")" "$(file_mode "$b")" "$ENV_MODE"
+    done < <(find "$ENV_BACKUP_DIR" -maxdepth 1 -type f -name '.env.bak.*' 2>/dev/null | sort)
+  fi
+  return 0
+}
+
+audit_config() {
+  say "${BOLD}CONFIG${NC}"
+  local want have
+  want="$(conf_sha)"; have="$(get_env HQ_CONFIG_SHA)"
+  if [[ "$want" == "$have" ]]; then
+    printf "  %-34s %-10s ${GREEN}ok${NC}\n" ".env matches $CONF_FILE" "$want"
+  else
+    printf "  %-34s %-10s want %-8s ${RED}FAIL${NC}\n" ".env matches $CONF_FILE" "${have:-unset}" "$want"
+    say "    ${DIM}run: ./setup.sh render${NC}"
+    AUDIT_FINDINGS=$((AUDIT_FINDINGS + 1))
+  fi
+  # A declared storage backend whose mount is missing loses every upload.
+  if [[ "$(yget deployment.storage.use)" == local_fs ]]; then
+    local base; base="$(yget deployment.storage.user_uploads.base_path)"
+    if $(compose_cmd) config 2>/dev/null | grep -q "target: ${base:-/data/storage}"; then
+      printf "  %-34s %-10s ${GREEN}ok${NC}\n" "local_fs mounted" "${base:-/data/storage}"
+    else
+      printf "  %-34s %-10s ${RED}FAIL${NC}\n" "local_fs mounted" "missing"
+      AUDIT_FINDINGS=$((AUDIT_FINDINGS + 1))
+    fi
+  fi
+  return 0
+}
+
+audit_ports() {
+  say "${BOLD}PORTS${NC}"
+  command -v ss >/dev/null 2>&1 || { printf "  ${DIM}%s${NC}\n" "(ss unavailable — skipped)"; return 0; }
+  local ports want profs p got
+  ports="$(needed_host_ports | sort -u)"
+  [[ -n "$ports" ]] || { printf "  ${DIM}%s${NC}\n" "(no host ports claimed)"; return 0; }
+  want="$(get_env HQ_BIND_HOST)"; want="${want:-127.0.0.1}"
+  profs="$(effective_profiles)"
+  local snapshot; snapshot="$(ss -ltnH 2>/dev/null | awk '{print $4}')"
+  while IFS= read -r p; do
+    [[ -n "$p" ]] || continue
+    local expect="$want"
+    [[ ",$profs," == *",caddy,"* ]] && [[ "$p" == 80 || "$p" == 443 ]] && expect="0.0.0.0"
+    got="$(printf '%s\n' "$snapshot" | awk -F: -v k="$p" '$NF==k{ sub(/:[^:]*$/,"",$0); print }' \
+           | sed 's/^\[//; s/\]$//' | sort -u | tr '\n' ' ')"
+    got="${got% }"
+    case "$got" in '*'|'0.0.0.0'|'::') got=0.0.0.0 ;; esac
+    if   [[ -z "$got"          ]]; then printf "  %-6s %-24s ${DIM}not listening${NC}\n" "$p" "-"
+    elif [[ "$got" == "$expect" ]]; then printf "  %-6s %-24s ${GREEN}ok${NC}\n" "$p" "$got"
+    else printf "  %-6s %-24s want %-10s ${RED}FAIL${NC}\n" "$p" "$got" "$expect"
+         AUDIT_FINDINGS=$((AUDIT_FINDINGS + 1))
+    fi
+  done <<< "$ports"
+  return 0
+}
+
+audit_secrets() {
+  say "${BOLD}SECRETS${NC}"
+  local k keys=(SECRET_KEY ENCRYPTION_MASTER_KEY POSTGRES_PASSWORD REDIS_PASSWORD
+                FIRST_SUPERUSER FIRST_SUPERUSER_PASSWORD)
+  yon foundation.run.garage && keys+=(S3_ACCESS_KEY_ID S3_SECRET_ACCESS_KEY GARAGE_RPC_SECRET GARAGE_ADMIN_TOKEN)
+  for k in "${keys[@]}"; do
+    if is_placeholder "$(get_env "$k")"; then
+      printf "  %-34s ${RED}%s${NC}\n" "$k" "placeholder"
+      AUDIT_FINDINGS=$((AUDIT_FINDINGS + 1))
+    else
+      printf "  %-34s ${GREEN}%s${NC}\n" "$k" "set"
+    fi
+  done
+  return 0
+}
+
+audit_grants() {
+  say "${BOLD}GRANTS${NC}  ${DIM}who may spend this deployment's keys${NC}"
+  local cap prov lvl any=false
+  for cap in $(ykeys foundation.access); do
+    for prov in $(ykeys "foundation.access.$cap"); do
+      lvl="$(yget "foundation.access.$cap.$prov")"
+      any=true
+      case "$lvl" in
+        all|superuser) printf "  %-34s ${YELLOW}%s${NC}\n" "$cap/$prov" "$lvl" ;;
+        byok)          printf "  %-34s ${DIM}%s${NC}\n"    "$cap/$prov" "$lvl" ;;
+        none)          printf "  %-34s ${DIM}%s${NC}\n"    "$cap/$prov" "blocked" ;;
+        *)             printf "  %-34s %-10s ${RED}FAIL${NC}  %s\n" "$cap/$prov" "$lvl" "not all|superuser|byok|none"
+                       AUDIT_FINDINGS=$((AUDIT_FINDINGS + 1)) ;;
+      esac
+    done
+  done
+  $any || printf "  ${DIM}%s${NC}\n" "(no grants — every keyed provider is BYOK)"
+  return 0
+}
+
+# Proves the addresses instead of trusting them. foundation.providers.searxng
+# said :8080 while searxng listens on :8888 — every declaration coherent, the
+# service unreachable, and web search silently dead for weeks. Only a probe from
+# inside the network the backend actually uses can tell the difference.
+#
+# Containers we run, and nothing else: an audit must not call OpenAI, spend a
+# token, or announce this deployment to a third party.
+audit_providers() {
+  say "${BOLD}PROVIDERS${NC}  ${DIM}base_url reachable from the backend${NC}"
+  local cmd; cmd="$(compose_cmd)"
+  if ! docker_ok || ! $cmd ps --format '{{.Service}}' 2>/dev/null | grep -qx backend; then
+    say "  ${DIM}backend not running — skipped${NC}"
+    return 0
+  fi
+  local prov url code probed=0
+  for prov in $(ykeys foundation.providers); do
+    url="$(yget "foundation.providers.$prov.base_url")"
+    [[ -z "$url" ]] && continue
+    local host; host="$(prov_profile "$prov")"
+    [[ -z "$host" ]] && continue
+    # A container this deployment does not start is not a finding — that is a
+    # declaration the coherence gate already speaks to. Probe what should be up.
+    yon "foundation.run.$host" || continue
+    probed=$((probed + 1))
+    # curl writes %{http_code} even when it cannot connect ("000") and exits
+    # non-zero; `|| true` keeps that value instead of appending a second one.
+    code="$($cmd exec -T backend curl -s -o /dev/null -w '%{http_code}' \
+            --max-time 5 "$url" 2>/dev/null || true)"
+    # Any HTTP reply proves the address resolves and something answers there;
+    # only a connection failure is a finding.
+    if [[ "$code" == 000 || -z "$code" ]]; then
+      printf "  %-34s %-10s ${RED}unreachable${NC}\n" "$prov" "$url"
+      AUDIT_FINDINGS=$((AUDIT_FINDINGS + 1))
+    else
+      printf "  %-34s %-10s ${GREEN}ok${NC} ${DIM}(%s)${NC}\n" "$prov" "$url" "$code"
+    fi
+  done
+  [[ "$probed" -eq 0 ]] && say "  ${DIM}no container-backed providers configured${NC}"
+  return 0
+}
+
+do_audit() {
+  AUDIT_FINDINGS=0
+  [[ -f "$ENV_FILE" ]] || warn "No $ENV_FILE — reporting what exists on a bare checkout."
+  audit_files;   echo
+  [[ -f "$CONF_FILE" ]] && { audit_config; echo; audit_grants; echo; }
+  audit_ports;   echo
+  [[ -f "$CONF_FILE" ]] && { audit_providers; echo; }
+  [[ -f "$ENV_FILE" ]] && { audit_secrets; echo; }
+  if [[ "$AUDIT_FINDINGS" -eq 0 ]]; then ok "0 findings"; return 0; fi
+  warn "${AUDIT_FINDINGS} finding(s) → exit 1"
+  return 1
+}
+
 # ── usage / arg parsing ───────────────────────────────────────────────────────
 
 usage() {
   cat <<EOF
 HQ setup & operations.
 
-Usage:
-  ./setup.sh                       interactive TUI dashboard (default)
-  ./setup.sh rotate                interactive rotate menu
-  ./setup.sh [init] [options]      non-interactive: configure and start
-  ./setup.sh rotate <targets>      non-interactive: rotate specific secrets
+  ./setup.sh                 dashboard — state, start/stop, logs, settings, secrets
+  ./setup.sh dev secure      dev mode, host network. the one shortcut worth having
+  ./setup.sh -y              unattended: take every default, ask nothing
+  ./setup.sh render          regenerate .env / garage.toml / host-net from my-hq.yml
+  ./setup.sh audit           read-only check: file modes, bind addresses, secrets
+  ./setup.sh logs [service]  tail the running stack (or: watch)
+  ./setup.sh rotate          interactive rotate menu
+  ./setup.sh rotate <target> --fernet | --postgres | --redis | --secret-key | --all
 
-The bare command opens a dashboard showing current state and offers menu
-options to start/stop, configure foundation service providers (local
-container services + cloud API providers), edit settings, publish to a
-public domain (Caddy + auto-TLS), and rotate secrets — no flags needed.
-UX state lives in .config/hq/setup.conf; deployment config lives in .env.
+Configuration is my-hq.yml, not flags. Edit it and re-run, or use the dashboard.
+Secrets are .env. Both are written for you on first run.
 
-init options:
-  --mode MODE            dev | production
-                         dev = developing live (source-bound + hot reload)
-                         production = running it (baked images + restart=always)
-  --reach KIND           local | public | hardened     (production only)
-                         local    = just this computer (frontend on 127.0.0.1)
-                         public   = published at a domain (caddy + auto-TLS)
-                         hardened = local + host-network override (advanced)
-  --domain FQDN          publish at this domain (implies --reach public)
-  --acme-email EMAIL     contact email for Let's Encrypt (with --domain)
-  --su-email EMAIL       superuser email (skips the interactive prompt)
-  --su-password PASS     superuser password (skips the interactive prompt)
-  --with SERVICE         enable a foundation service locally (repeatable):
-                         ollama | embeddings | searxng | nominatim | minio | caddy
-  --storage TYPE         object storage: local_fs | minio | s3
-  --profiles LIST        explicit comma-separated profile list (advanced)
-  --backend-workers N    uvicorn workers in prod (default 4)
-  --celery-concurrency N celery prefork concurrency (default 4)
-  --regenerate-secrets   force-regenerate ALL secrets
-  --no-up                write config only, do not start the stack
-  -y, --yes              non-interactive (use defaults for any unset choice)
-  -h, --help
+Unattended (-y) takes HQ_SUPERUSER_EMAIL and HQ_SUPERUSER_PASSWORD from the
+environment; without them the placeholder check refuses to start, by design.
 
-rotate targets:
-  --fernet  --postgres  --minio  --redis  --secret-key  --all
+After editing my-hq.yml by hand:  ./setup.sh render && docker compose up -d
+`render` is non-interactive and idempotent. The dashboard's start does it for
+you; a bare `docker compose up -d` does not, which is what the backend's
+"config changed" refusal is telling you.
+
+`audit` writes nothing and prints no secret value — only `set` or `placeholder`.
+Safe against a live deployment, safe to paste into a bug report, safe in CI.
+Exits 1 if anything is off.
+
+Once set up, plain docker compose works — COMPOSE_FILE, COMPOSE_PROFILES and
+COMPOSE_PROJECT_NAME are written into .env, so a bare \`docker compose up -d\`
+picks up the same files, profiles and network mode as ./setup.sh would.
 EOF
 }
 
 if [[ $# -eq 0 ]]; then
   migrate_old_env_backups
-  # Fresh clone → go straight into the wizard so the user isn't bounced
-  # through a dashboard that says "not configured yet."
   if [[ ! -f "$ENV_FILE" ]]; then
     say "\n${BOLD}Welcome to HQ.${NC}"
     say "${DIM}First-time setup. We'll ask which foundation services you want, a${NC}"
     say "${DIM}superuser email + password, then start HQ. Everything else is${NC}"
     say "${DIM}auto-generated — no API keys required for the local-only flavors.${NC}\n"
-    ( PROFILES=""; PA_GRANTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; \
-      SU_EMAIL_OPT=""; SU_PASSWORD_OPT=""; REACH=local; NETWORK_MODE=bridge; \
-      MODE_SET=false; REACH_SET=false; SERVICES_SET=false; STORAGE_SET=false; USER_SET=false; \
+    ( PROFILES=""; QUEUED_GRANTS=""; QUEUED_DEFAULTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; \
+      SU_EMAIL_OPT=""; SU_PASSWORD_OPT=""; REACH=local; NETWORK_MODE=host; \
+      MODE_SET=false; REACH_SET=false; NET_SET=false; SERVICES_SET=false; STORAGE_SET=false; USER_SET=false; \
       LANG_LOCAL=false; EMB_LOCAL=false; do_init ) \
       || { warn "Setup did not complete."; exit 1; }
     pause
@@ -3393,39 +4547,73 @@ if [[ $# -eq 0 ]]; then
   exit 0
 fi
 
-[[ "$1" == "rotate" ]] && { SUBCMD=rotate; shift; } || SUBCMD=init
-[[ "${1:-}" == "init" ]] && shift
+case "${1:-}" in
+  rotate)      SUBCMD=rotate; shift ;;
+  logs|watch)  SUBCMD=logs;   shift ;;
+  render)      SUBCMD=render; shift ;;
+  audit)       SUBCMD=audit;  shift ;;
+  *)           SUBCMD=init ;;
+esac
+
+# Both sit above the argument loop and above the init branch, so there is no
+# path from either to the wizard. That audit mutates nothing is structural.
+if [[ "$SUBCMD" == "render" ]]; then
+  [[ $# -eq 0 ]] || die "render takes no arguments."
+  [[ -f "$ENV_FILE" ]] || die "No $ENV_FILE — run ./setup.sh first."
+  do_render
+  ok "rendered from $CONF_FILE"
+  exit 0
+fi
+
+if [[ "$SUBCMD" == "audit" ]]; then
+  [[ $# -eq 0 ]] || die "audit takes no arguments."
+  audit_rc=0
+  do_audit || audit_rc=$?
+  exit "$audit_rc"
+fi
+
+# logs — everything after it is a service name, so this runs before the parser.
+# compose_cmd matters here: a bare `docker compose logs` omits the hardened
+# fragment, and a later bare `up` would then recreate everything in bridge mode.
+if [[ "$SUBCMD" == "logs" ]]; then
+  [[ -f "$CONF_FILE" && -f "$ENV_FILE" ]] || die "No $CONF_FILE / $ENV_FILE — run ./setup.sh first."
+  _c="$(compose_cmd)"
+  say "${DIM}${_c} logs -f${NC}"
+  say "${DIM}Ctrl-C stops watching — the stack keeps running.${NC}\n"
+  COMPOSE_PROFILES="$(active_profiles)" exec $_c logs -f --tail="${LOG_TAIL:-200}" "$@"
+fi
 
 ROTATE_TARGETS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --mode)               apply_mode "$2"; MODE_SET=true; shift 2 ;;
-    --reach)              apply_reach "$2"; shift 2 ;;
-    --with)               apply_with "$2"; SERVICES_SET=true; shift 2 ;;
-    --storage)            apply_storage "$2"; SERVICES_SET=true; shift 2 ;;
-    --domain)             DOMAIN_OPT="$2"; REACH=public; REACH_SET=true; add_profile caddy; shift 2 ;;
-    --acme-email)         ACME_EMAIL_OPT="$2"; shift 2 ;;
-    --su-email)           SU_EMAIL_OPT="$2"; USER_SET=true; shift 2 ;;
-    --su-password)        SU_PASSWORD_OPT="$2"; USER_SET=true; shift 2 ;;
-    --profiles)           PROFILES="$2"; SERVICES_SET=true; shift 2 ;;
-    --backend-workers)    BACKEND_WORKERS="$2"; shift 2 ;;
-    --celery-concurrency) CELERY_CONCURRENCY="$2"; shift 2 ;;
-    --regenerate-secrets) REGEN=true; shift ;;
-    --no-up)              NO_UP=true; shift ;;
-    -y|--yes)             ASSUME_YES=true; shift ;;
-    --fernet|--postgres|--minio|--redis|--secret-key|--all) ROTATE_TARGETS+=("$1"); shift ;;
-    *) die "Unknown option: $1 (see --help)" ;;
+    -y|--yes)  ASSUME_YES=true; shift ;;
+    --fernet|--postgres|--redis|--secret-key|--all) ROTATE_TARGETS+=("$1"); shift ;;
+    # The one shortcut. Everything else lives in my-hq.yml.
+    dev|development)          CLI_ENVIRONMENT=local;      shift ;;
+    prod|production|running)  CLI_ENVIRONMENT=production; shift ;;
+    secure|secure-network)    CLI_NETWORK_MODE=host;      shift ;;
+    *) die "Unknown argument: $1. Configuration lives in $CONF_FILE — see ./setup.sh --help" ;;
   esac
 done
 
 if [[ "$SUBCMD" == "rotate" ]]; then
   if [[ ${#ROTATE_TARGETS[@]} -eq 0 ]]; then
-    [[ -f "$ENV_FILE" ]] || die "No $ENV_FILE — run ./setup.sh first."
+    [[ -f "$CONF_FILE" && -f "$ENV_FILE" ]] || die "No $CONF_FILE / $ENV_FILE — run ./setup.sh first."
     rotate_menu
   else
     do_rotate
   fi
 else
+  ensure_conf
+  # Go through apply_mode, not a bare yset: the wizard's step 1 runs whenever
+  # MODE_SET is false and apply_wizard_to_conf then writes FMODE over whatever
+  # the flag just set — so `./setup.sh dev` silently produced production.
+  [[ "${CLI_ENVIRONMENT:-}" == local      ]] && apply_mode dev
+  [[ "${CLI_ENVIRONMENT:-}" == production ]] && apply_mode production
+  if [[ -n "${CLI_NETWORK_MODE:-}" ]]; then
+    NETWORK_MODE="$CLI_NETWORK_MODE"; NET_SET=true
+  fi
+  inherit_existing_config
   do_init
 fi

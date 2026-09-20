@@ -17,6 +17,11 @@ services:
     environment:
       - PGDATA=/var/lib/postgresql/data/pgdata
       - PGPORT=${POSTGRES_PORT:-5432}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-postgres} -d $${POSTGRES_DB:-postgres} -h 127.0.0.1 -p $${POSTGRES_PORT:-5432}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
 
   backend:
     image: '${DOCKER_IMAGE_BACKEND:-backend}:${TAG-latest}'
@@ -24,7 +29,7 @@ services:
     networks:
       - default
     depends_on:
-      - db
+      db: { condition: service_healthy }
     env_file:
       - .env
     environment:
@@ -33,7 +38,18 @@ services:
     # so BACKEND_BIND_HOST can be flipped to 127.0.0.1 by the hardened-network
     # override fragment without changing this file. Default 0.0.0.0 is correct
     # for bridge mode (docker's network isolation does the work).
-    command: ["sh", "-c", "bash /app/prestart.sh && exec uvicorn app.main:app --workers $${BACKEND_WORKERS:-4} --host $${BACKEND_BIND_HOST:-0.0.0.0} --port $${BACKEND_PORT}"]
+    command: ["sh", "-c", "bash /app/prestart.sh && exec uvicorn app.main:app --workers $${BACKEND_WORKERS:-4} --host $${BACKEND_BIND_HOST:-0.0.0.0} --port $${BACKEND_PORT:-8022}"]
+    # Deployment config, read directly by AppSettings. Same filename relative
+    # to the app root on host and in the container, so there's one path to know.
+    volumes:
+      - ./my-hq.yml:/app/my-hq.yml:ro
+      - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:$${BACKEND_PORT:-8022}/api/v1/healthz/liveness >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 90s
     build:
       context: ./backend
       args:
@@ -53,6 +69,14 @@ services:
       --requirepass ${REDIS_PASSWORD}
       --rename-command REPLICAOF ""
       --rename-command SLAVEOF ""
+    healthcheck:
+      # Single $ on purpose: redis gets its password by compose interpolation on
+      # the command line, not from env_file, so there is no $REDIS_PASSWORD
+      # inside the container for the container shell to expand.
+      test: ["CMD-SHELL", "redis-cli -p ${REDIS_PORT:-6379} -a '${REDIS_PASSWORD}' --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
     networks:
       - default
 
@@ -60,6 +84,10 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+    # next.config rewrites() proxies /api to the backend; it needs the port the
+    # backend actually binds, which is BACKEND_PORT, not a constant.
+    environment:
+      - BACKEND_PORT=${BACKEND_PORT:-8022}
     # Container always binds 3000 internally; FRONTEND_PORT is the host-side
     # mapping, configurable so setup.sh can bump it when 3000 is in use.
     ports:
@@ -77,9 +105,8 @@ services:
     networks:
       - default
     depends_on:
-      - db
-      - redis
-      - backend
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
     env_file:
       - .env
     # -Q matters: this pool used to serve ALL five queues, so four concurrent ingest
@@ -89,6 +116,9 @@ services:
     command: ["celery", "-A", "app.core.celery_app.celery", "worker", "--loglevel=info",
               "-P", "prefork", "--concurrency=${CELERY_CONCURRENCY:-4}",
               "-Q", "default,llm,embedding,external_api"]
+    volumes:
+      - ./my-hq.yml:/app/my-hq.yml:ro
+      - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
     # Source bind is dev-only (compose.override.yml).
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -103,9 +133,8 @@ services:
     networks:
       - default
     depends_on:
-      - db
-      - redis
-      - backend
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
     env_file:
       - .env
     # Ingestion and content processing only. Long, bursty, and safe to queue behind
@@ -113,6 +142,9 @@ services:
     command: ["celery", "-A", "app.core.celery_app.celery", "worker", "--loglevel=info",
               "-P", "prefork", "--concurrency=${CELERY_PROCESSING_CONCURRENCY:-4}",
               "-Q", "processing"]
+    volumes:
+      - ./my-hq.yml:/app/my-hq.yml:ro
+      - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
     # Source bind is dev-only (compose.override.yml).
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -127,9 +159,8 @@ services:
     networks:
       - default
     depends_on:
-      - db
-      - redis
-      - backend
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
     env_file:
       - .env
     command: >
@@ -137,20 +168,38 @@ services:
       --loglevel=info
       --pidfile=/tmp/celerybeat.pid
       --schedule=/tmp/celerybeat-schedule
+    volumes:
+      - ./my-hq.yml:/app/my-hq.yml:ro
+      - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
     # Source bind is dev-only (compose.override.yml).
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
   # ── Optional services (opt-in via COMPOSE_PROFILES; see setup.sh) ────────────
-  minio:
-    image: minio/minio:latest
-    profiles: ["minio"]
+  # Object storage. The backend talks plain S3, so this is one deployment
+  # option among several — point deployment.services.s3.endpoint at Hetzner or
+  # AWS instead and turn this off.
+  #
+  # Bootstrap (layout, key, bucket) is NOT a sidecar: this image is scratch
+  # plus one static binary — no shell to run a script with. ./setup.sh does it
+  # over `compose exec` instead, idempotently, on every start.
+  #
+  # No `ports:`. In bridge mode garage is reachable only as garage:3900 on the
+  # compose network; in host mode the generated garage.toml binds HQ_BIND_HOST.
+  # Binds live in that file because garage takes them nowhere else.
+  garage:
+    image: dxflrs/garage:v1.2.0
+    profiles: ["garage"]
     restart: always
-    env_file:
-      - .env
-    command: ["minio", "server", "/data", "--console-address", ":9001"]
+    # Named, not env_file: a third-party image has no business holding
+    # ENCRYPTION_MASTER_KEY or the provider API keys.
+    environment:
+      - GARAGE_RPC_SECRET=${GARAGE_RPC_SECRET}
+      - GARAGE_ADMIN_TOKEN=${GARAGE_ADMIN_TOKEN}
     volumes:
-      - ./.store/minio:/data
+      - ./.config/hq/garage.toml:/etc/garage.toml:ro
+      - ./.store/garage/meta:/var/lib/garage/meta
+      - ./.store/garage/data:/var/lib/garage/data
     networks:
       - default
 
@@ -162,14 +211,14 @@ services:
       - ./.config/searxng:/etc/searxng:ro
       - searxng_data:/var/cache/searxng
     environment:
-      - SEARXNG_BASE_URL=http://searxng:8080/
+      - SEARXNG_BASE_URL=http://searxng:${HQ_SEARXNG_PORT:-8888}/
+      - GRANIAN_PORT=${HQ_SEARXNG_PORT:-8888}
     networks:
       - default
 
   ollama:
     image: ollama/ollama:latest
     profiles: ["ollama"]
-    container_name: ollama
     ports:
       - "127.0.0.1:11434:11434"
     volumes:
@@ -181,10 +230,21 @@ services:
     networks:
       - default
 
+  # No `ports:` — deliberately. The image runs gunicorn on 0.0.0.0:8080 and
+  # ignores every attempt to change that from outside, so containment is done
+  # at the docker level: with nothing published, that 0.0.0.0 reaches no further
+  # than this container's own namespace, and the backend talks to it as
+  # nominatim:8080 on the compose network. `expose` documents the port without
+  # placing it on a host interface.
+  #
+  # Host network mode has no namespace to contain it — see the nominatim block
+  # in .config/hq/compose.host-net.yml for what happens there instead.
   nominatim:
     image: mediagis/nominatim:5.1
     profiles: ["nominatim"]
     restart: always
+    expose:
+      - "8080"
     shm_size: 4g
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8080/status || exit 1"]
@@ -208,13 +268,12 @@ services:
       - POSTGRES_MAINTENANCE_WORK_MEM=4GB
       - POSTGRES_WORK_MEM=50MB
       - POSTGRES_EFFECTIVE_CACHE_SIZE=8GB
+      - HQ_BIND_HOST=${HQ_BIND_HOST:-127.0.0.1}
     volumes:
       - nominatim-data:/var/lib/postgresql/16/main
       - nominatim-flatnode:/nominatim/flatnode
     networks:
       - default
-    env_file:
-      - .env
     # Admin: ~5GB download, ~2h import | Address (Europe): ~28GB, ~3h | Full: ~60GB, ~8h
 
   caddy:
@@ -248,6 +307,10 @@ volumes:
   app-db-data:
   redis_data:
   searxng_data:
+  # Deliberately unscoped: model weights are tens of GB, so every checkout on
+  # this host shares one cache instead of re-pulling. The cost is that it is NOT
+  # namespaced by project — `docker compose down -v` from any HQ checkout takes
+  # the models with it. Every other volume here is project-scoped.
   ollama_data:
     name: ollama_data
   nominatim-data:

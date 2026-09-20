@@ -9,14 +9,13 @@ services:
   backend:
     restart: "no"
     ports:
-      - "127.0.0.1:${BACKEND_PORT}:${BACKEND_PORT}"
+      - "127.0.0.1:${BACKEND_PORT:-8022}:${BACKEND_PORT:-8022}"
     volumes:
       - ./backend/:/app
       - ./backend/openapi.json:/app/openapi.json
-      # local_fs storage bind (when STORAGE_PROVIDER_TYPE=local_fs)
-      - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
+      - ./my-hq.yml:/app/my-hq.yml:ro
     environment:
-      - PORT=${BACKEND_PORT}
+      - PORT=${BACKEND_PORT:-8022}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: ["bash", "/app/start-reload.sh"]
@@ -31,18 +30,19 @@ services:
     restart: "no"
     volumes:
       - ./backend/:/app
-      - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
+      - ./my-hq.yml:/app/my-hq.yml:ro
 
   celery_worker_processing:
     restart: "no"
     volumes:
       - ./backend/:/app
-      - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
+      - ./my-hq.yml:/app/my-hq.yml:ro
 
   celery_beat:
     restart: "no"
     volumes:
       - ./backend/:/app
+      - ./my-hq.yml:/app/my-hq.yml:ro
 
   frontend:
     restart: "no"
@@ -53,7 +53,8 @@ services:
       - backend
     environment:
       - NODE_ENV=development
-      - NEXT_PUBLIC_API_URL=http://backend:${BACKEND_PORT}
+      # No NEXT_PUBLIC_API_URL: it is inlined into browser JS, where a compose
+      # hostname does not resolve. next.config rewrites() proxies /api server-side.
     env_file:
       - .env
     volumes:
@@ -76,7 +77,7 @@ services:
 
   # Thin dev overrides for optional services — only materialize when their
   # profile is active (selected in COMPOSE_PROFILES). Base defs are in compose.yml.
-  minio:
+  garage:
     restart: "no"
   searxng:
     restart: "no"
