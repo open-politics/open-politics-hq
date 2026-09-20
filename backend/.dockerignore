@@ -3,11 +3,33 @@ __pycache__
 app.egg-info
 *.pyc
 .mypy_cache
+.ruff_cache
+.pytest_cache
 .coverage
 htmlcov
 .venv
 
+# Tests and fixtures. 19MB, 16MB of it fixtures — a real PDF, an EU-parliament
+# CSV, urls.txt, a scale/ corpus — none of which belongs in an image published
+# to a registry. Dev still runs the suite: compose.override.yml bind-mounts
+# ./backend:/app, so app/tests is present at runtime, and CI runs it from the
+# checkout. This only removes it from the *built* artifact.
+app/tests
+
+# VCS. No-op while backend/ is a subdirectory, but a build context must never
+# be able to carry git history — it holds every secret ever committed.
+.git
+.gitignore
+
+# Secrets. Nothing here today; the entries are the guard, not the cleanup.
+.env
+.env.*
+!.env.example
+my-hq.yml
+
 # Docker
+Dockerfile
+.dockerignore
 *.log
 *.log.*
 *.log.*.*

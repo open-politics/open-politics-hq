@@ -128,8 +128,25 @@ from celery.signals import worker_process_init
 def reset_db_pool_on_fork(**kwargs):
     from app.core.db import engine
 
-    engine.dispose()
+    # close=False is the post-fork variant. Plain dispose() closes connections
+    # that are checked in — but after a fork those sockets are shared with the
+    # parent, so a child closing them yanks them out from under the parent and
+    # its siblings. SQLAlchemy added the flag for exactly this case: "replace
+    # the connection pool in a child process without interfering with the
+    # connections used by the parent process."
+    engine.dispose(close=False)
     logger.info("DB connection pool disposed after worker fork")
+
+    # Report which providers this deployment can actually reach, and which
+    # deployment API keys are genuinely shared with users vs BYOK-only. Defined
+    # since the provider registry existed and never once called — so nobody has
+    # ever seen this, and "why is my provider not configured" had no first
+    # place to look.
+    try:
+        from app.api.modules.foundation_service_providers import probe_providers
+        probe_providers()
+    except Exception as e:
+        logger.warning("Provider probe failed at worker start: %s", e)
 
     # Fail fast if FragmentCuration schema is mismatched (e.g. old code vs migrated DB)
     try:

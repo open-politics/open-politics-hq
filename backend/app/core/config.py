@@ -1,8 +1,14 @@
+import hashlib
+import logging
 import os
 import secrets
+from pathlib import Path
 import warnings
 from typing import Annotated, Any, Literal, Dict, List, Optional, Union
 from pydantic import (
+    AliasChoices,
+    AliasPath,
+    field_validator,
     AnyUrl,
     BeforeValidator,
     HttpUrl,
@@ -12,11 +18,103 @@ from pydantic import (
     Field,
 )
 from pydantic_core import MultiHostUrl
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    DotEnvSettingsSource,
+    EnvSettingsSource,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    YamlConfigSettingsSource,
+)
 from typing_extensions import Self
 import uuid
 
 
+# my-hq.yml holds everything non-secret. Same filename in the repo root on a
+# host and at /app in a container, so there is one path to know.
+#
+# Searched, not assumed: a bare relative path resolves against CWD, which is
+# /app for the API but not for alembic, a celery worker started elsewhere, or a
+# script run from the repo root. A config file that is found only when you
+# happen to be in the right directory is the kind of thing that works until it
+# quietly doesn't. Missing file falls through to field defaults.
+def _find_hq_config() -> str:
+    explicit = os.environ.get("HQ_CONFIG_FILE")
+    if explicit:
+        return explicit
+    here = Path(__file__).resolve()
+    candidates = [
+        Path.cwd() / "my-hq.yml",       # container /app, or repo root on a host
+        here.parents[2] / "my-hq.yml",  # <app root>/my-hq.yml   (/app)
+        here.parents[3] / "my-hq.yml",  # <repo root>/my-hq.yml  (host checkout)
+    ]
+    for c in candidates:
+        if c.is_file():
+            return str(c)
+    return "my-hq.yml"
+
+
+# The capability ceiling's vocabulary. access.Capability is the canonical
+# definition, but importing it here would be circular — its models import this
+# module. main.py asserts the two still agree at startup.
+KNOWN_CAPABILITIES = frozenset({"organize", "ingest", "compute", "delete", "setup"})
+
+HQ_CONFIG_FILE = _find_hq_config()
+
+# Whether someone named the file rather than letting it be discovered. The
+# HQ_CONFIG_SHA stamp in .env pairs that file with the .env rendered FROM it;
+# point the process at a different config and the pair no longer describes
+# anything, so the staleness gate has nothing to say. Tests and CI rely on this.
+HQ_CONFIG_EXPLICIT = bool(os.environ.get("HQ_CONFIG_FILE"))
+
+ACCESS_LEVELS = ("all", "superuser", "byok", "none")
+
+
+def is_yaml_backed(field) -> bool:
+    """True when this field's home is my-hq.yml.
+
+    Yaml-backed fields are declared ``AliasChoices("FIELD_NAME", AliasPath(...))``:
+    the path is where the value lives, the bare name is so an explicit
+    ``AppSettings(FIELD_NAME=...)`` still works. (A lone AliasPath would make
+    the field unreachable by name, and ``populate_by_name`` is not an option —
+    pydantic-settings 2.15 mixes it with AliasPath badly enough to KeyError on
+    the path's first segment.)
+    """
+    alias = getattr(field, "validation_alias", None)
+    if isinstance(alias, AliasPath):
+        return True
+    if isinstance(alias, AliasChoices):
+        return any(isinstance(c, AliasPath) for c in alias.choices)
+    return False
+
+
+class _SecretsOnlyEnvSource(EnvSettingsSource):
+    """An env source that refuses to serve yaml-backed fields.
+
+    One name, one reader — enforced here rather than by discipline. A field
+    carrying an ``AliasPath`` lives in my-hq.yml, so the environment must not
+    answer for it even when the same name happens to sit in .env because
+    compose needs to interpolate it (DOMAIN, POSTGRES_PORT, REDIS_HOST…).
+
+    Without this, pydantic treats an AliasPath field as *complex* and tries to
+    JSON-decode whatever the env holds — `DOMAIN=localhost` becomes
+    "Expecting value: line 1 column 1". The crash is a symptom; the disease is
+    two readers for one name.
+    """
+
+    def get_field_value(self, field, field_name):
+        if is_yaml_backed(field):
+            return None, field_name, False
+        return super().get_field_value(field, field_name)
+
+
+class _SecretsOnlyDotEnvSource(DotEnvSettingsSource):
+    """Same rule for the .env file source."""
+
+    def get_field_value(self, field, field_name):
+        if is_yaml_backed(field):
+            return None, field_name, False
+        return super().get_field_value(field, field_name)
 
 
 def parse_cors(v: Any) -> list[str] | str:
@@ -29,14 +127,61 @@ def parse_cors(v: Any) -> list[str] | str:
 
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env", env_ignore_empty=True, extra="ignore", case_sensitive=False
+        env_file=".env", yaml_file=HQ_CONFIG_FILE,
+        env_ignore_empty=True, extra="ignore", case_sensitive=False,
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls, settings_cls, init_settings, env_settings, dotenv_settings,
+        file_secret_settings,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        # init first: an explicit AppSettings(FOO=...) is code saying what it
+        # wants, and no file should quietly outrank it. Everything after is
+        # configuration, where the yaml is the only home for non-secrets — the
+        # two env sources hand back nothing for a field carrying an AliasPath.
+        return (
+            init_settings,
+            _SecretsOnlyEnvSource(settings_cls),
+            _SecretsOnlyDotEnvSource(settings_cls),
+            YamlConfigSettingsSource(settings_cls),
+        )
+
     API_V1_STR: str = "/api/v1"
     SECRET_KEY: str = secrets.token_urlsafe(32)
     # 60 minutes * 24 hours * 8 days = 8 days
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8
-    DOMAIN: str = "localhost"
-    ENVIRONMENT: Literal["local", "staging", "production"] = "local"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(validation_alias=AliasChoices("ACCESS_TOKEN_EXPIRE_MINUTES", AliasPath("deployment", "users", "token_expiry_minutes")), default=60 * 24 * 8, ge=1)
+    DOMAIN: str = Field(validation_alias=AliasChoices("DOMAIN", AliasPath("deployment", "network", "domain")), default="localhost")
+    ENVIRONMENT: Literal["local", "staging", "production"] = Field(validation_alias=AliasChoices("ENVIRONMENT", AliasPath("stack", "environment")), default="local")
+
+    # Compose owns these four — the backend never reads them at runtime. It
+    # declares them because it is the only process that parses my-hq.yml as a
+    # whole, so it is the only place a typo can be caught at all. `mode: hsot`
+    # is not a cosmetic slip: every consumer tests `== host`, so the typo reads
+    # as bridge and publishes the ports the operator meant to withhold. Failing
+    # to boot is the correct answer to "I asked for host and got bridge".
+    NETWORK_MODE: Literal["host", "bridge"] = Field(validation_alias=AliasPath("deployment", "network", "mode"), default="host")
+    NETWORK_REACH: Literal["local", "public"] = Field(validation_alias=AliasPath("deployment", "network", "reach"), default="local")
+    BACKEND_HOST_PORT: int = Field(validation_alias=AliasPath("deployment", "services", "backend", "port"), default=8022, ge=1, le=65535)
+    FRONTEND_HOST_PORT: int = Field(validation_alias=AliasPath("deployment", "services", "frontend", "port"), default=3000, ge=1, le=65535)
+
+    # "auto", or a positive integer. Compose interpolates these straight into a
+    # command line, so "lots" becomes `--workers lots` and the container dies
+    # with a traceback that names uvicorn rather than the config that caused it.
+    # Also compose-owned: it picks which OSM extract nominatim imports, and the
+    # wrong word means a multi-hour import produces the wrong dataset.
+    NOMINATIM_IMPORT_STYLE: Literal["admin", "address"] = Field(validation_alias=AliasPath("foundation", "providers", "nominatim_local", "import_style"), default="admin")
+
+    BACKEND_WORKERS: Union[Literal["auto"], int] = Field(validation_alias=AliasPath("deployment", "services", "backend", "workers"), default="auto")
+    CELERY_WORKERS: Union[Literal["auto"], int] = Field(validation_alias=AliasPath("deployment", "services", "celery", "workers"), default="auto")
+    CELERY_PROCESSING_WORKERS: Union[Literal["auto"], int] = Field(validation_alias=AliasPath("deployment", "services", "celery", "processing_workers"), default="auto")
+
+    @field_validator("BACKEND_WORKERS", "CELERY_WORKERS", "CELERY_PROCESSING_WORKERS")
+    @classmethod
+    def _worker_count_is_positive(cls, v: Any, info: Any) -> Any:
+        if isinstance(v, int) and v < 1:
+            raise ValueError(f"{info.field_name} is {v}; use a positive number or \"auto\".")
+        return v
 
     @computed_field  # type: ignore[misc]
     @property
@@ -49,25 +194,24 @@ class AppSettings(BaseSettings):
     
     BACKEND_CORS_ORIGINS: Annotated[
         list[AnyUrl] | str, BeforeValidator(parse_cors)
-    ] = ["http://localhost:3000", "http://localhost:8000"]
+    ] = Field(validation_alias=AliasPath("deployment", "network", "cors", "origins"),
+              default=["http://localhost:3000"])
     CORS_ALLOWED_METHODS: Annotated[
-        list[str],
-        BeforeValidator(parse_cors),
-        Field(default=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"], env="CORS_ALLOWED_METHODS"),
-    ]
+        list[str], BeforeValidator(parse_cors)
+    ] = Field(validation_alias=AliasPath("deployment", "network", "cors", "methods"),
+              default=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"])
     CORS_ALLOWED_HEADERS: Annotated[
-        list[str],
-        BeforeValidator(parse_cors),
-        Field(default=["*"], env="CORS_ALLOWED_HEADERS"),
-    ]
+        list[str], BeforeValidator(parse_cors)
+    ] = Field(validation_alias=AliasPath("deployment", "network", "cors", "headers"),
+              default=["*"])
 
-    PROJECT_NAME: str = "OSINT Kernel"
-    POSTGRES_SERVER: str
-    POSTGRES_PORT: int = 5432
-    POSTGRES_USER: str
+    PROJECT_NAME: str = Field(validation_alias=AliasChoices("PROJECT_NAME", AliasPath("stack", "project")), default="OSINT Kernel")
+    POSTGRES_SERVER: str = Field(validation_alias=AliasPath("deployment", "services", "database", "host"))
+    POSTGRES_PORT: int = Field(validation_alias=AliasChoices("POSTGRES_PORT", AliasPath("deployment", "services", "database", "port")), default=5432, ge=1, le=65535)
+    POSTGRES_USER: str = Field(validation_alias=AliasPath("deployment", "services", "database", "user"))
     POSTGRES_PASSWORD: str
-    POSTGRES_DB: str = ""
-    POSTGRES_SSL_MODE: Optional[str] = None
+    POSTGRES_DB: str = Field(validation_alias=AliasChoices("POSTGRES_DB", AliasPath("deployment", "services", "database", "name")), min_length=1)
+    POSTGRES_SSL_MODE: Optional[Literal["", "disable", "allow", "prefer", "require", "verify-ca", "verify-full"]] = Field(validation_alias=AliasChoices("POSTGRES_SSL_MODE", AliasPath("deployment", "services", "database", "ssl_mode")), default=None)
 
     @computed_field  # type: ignore[misc]
     @property
@@ -90,15 +234,15 @@ class AppSettings(BaseSettings):
             query=query,
         )
 
-    SMTP_TLS: bool = True
-    SMTP_SSL: bool = False
-    SMTP_PORT: Optional[int] = 587
-    SMTP_HOST: Optional[str] = None
-    SMTP_USER: Optional[str] = None
+    SMTP_TLS: bool = Field(validation_alias=AliasChoices("SMTP_TLS", AliasPath("deployment", "email", "tls")), default=True)
+    SMTP_SSL: bool = Field(validation_alias=AliasChoices("SMTP_SSL", AliasPath("deployment", "email", "ssl")), default=False)
+    SMTP_PORT: Optional[int] = Field(validation_alias=AliasChoices("SMTP_PORT", AliasPath("deployment", "email", "port")), default=587, ge=1, le=65535)
+    SMTP_HOST: Optional[str] = Field(validation_alias=AliasChoices("SMTP_HOST", AliasPath("deployment", "email", "host")), default=None)
+    SMTP_USER: Optional[str] = Field(validation_alias=AliasChoices("SMTP_USER", AliasPath("deployment", "email", "user")), default=None)
     SMTP_PASSWORD: Optional[str] = None
     # TODO: update type to EmailStr when sqlmodel supports it
-    EMAILS_FROM_EMAIL: Optional[str] = None
-    EMAILS_FROM_NAME: Optional[str] = None
+    EMAILS_FROM_EMAIL: Optional[str] = Field(validation_alias=AliasChoices("EMAILS_FROM_EMAIL", AliasPath("deployment", "email", "from_email")), default=None)
+    EMAILS_FROM_NAME: Optional[str] = Field(validation_alias=AliasChoices("EMAILS_FROM_NAME", AliasPath("deployment", "email", "from_name")), default=None)
 
     @model_validator(mode="after")
     def _set_default_emails_from(self) -> Self:
@@ -108,7 +252,7 @@ class AppSettings(BaseSettings):
             raise ValueError("EMAILS_FROM_EMAIL must be set if SMTP is configured.")
         return self
 
-    EMAIL_RESET_TOKEN_EXPIRE_HOURS: int = 48
+    EMAIL_RESET_TOKEN_EXPIRE_HOURS: int = Field(validation_alias=AliasChoices("EMAIL_RESET_TOKEN_EXPIRE_HOURS", AliasPath("deployment", "users", "password_reset_expiry_hours")), default=48, ge=1)
 
     @computed_field  # type: ignore[misc]
     @property
@@ -116,36 +260,35 @@ class AppSettings(BaseSettings):
         return bool(self.SMTP_HOST and self.SMTP_PORT and self.EMAILS_FROM_EMAIL)
 
     # TODO: update type to EmailStr when sqlmodel supports it
-    EMAIL_TEST_USER: str = "test@example.com"
     # TODO: update type to EmailStr when sqlmodel supports it
     FIRST_SUPERUSER: str
     FIRST_SUPERUSER_PASSWORD: str
-    USERS_OPEN_REGISTRATION: bool = False
-    REQUIRE_EMAIL_VERIFICATION: bool = True
+    USERS_OPEN_REGISTRATION: bool = Field(validation_alias=AliasChoices("USERS_OPEN_REGISTRATION", AliasPath("deployment", "users", "open_registration")), default=False)
+    REQUIRE_EMAIL_VERIFICATION: bool = Field(validation_alias=AliasChoices("REQUIRE_EMAIL_VERIFICATION", AliasPath("deployment", "users", "require_email_verification")), default=True)
 
     # Discourse Connect (SSO) Configuration
-    DISCOURSE_CONNECT_ENABLED: bool = Field(default=False, env="DISCOURSE_CONNECT_ENABLED")
+    DISCOURSE_CONNECT_ENABLED: bool = Field(validation_alias=AliasChoices("DISCOURSE_CONNECT_ENABLED", AliasPath("deployment", "sso", "discourse", "enabled")), default=False)
     DISCOURSE_CONNECT_SECRET: Optional[str] = Field(default=None, env="DISCOURSE_CONNECT_SECRET")
-    DISCOURSE_CONNECT_URL: Optional[str] = Field(default=None, env="DISCOURSE_CONNECT_URL")  # e.g., https://forum.open-politics.org
+    DISCOURSE_CONNECT_URL: Optional[str] = Field(validation_alias=AliasChoices("DISCOURSE_CONNECT_URL", AliasPath("deployment", "sso", "discourse", "url")), default=None)  # e.g., https://forum.open-politics.org
 
     # MinIO Configuration
-    MINIO_ENDPOINT: Optional[str] = Field(default="localhost:9000", env="MINIO_ENDPOINT")
-    MINIO_ACCESS_KEY: Optional[str] = Field(default="minioadmin", env="MINIO_ACCESS_KEY")
-    MINIO_SECRET_KEY: Optional[str] = Field(default="minioadmin", env="MINIO_SECRET_KEY")
-    MINIO_BUCKET_NAME: str = Field(default="osint-kernel-bucket", env="MINIO_BUCKET_NAME")
-    MINIO_USE_SSL: bool = Field(default=False, env="MINIO_USE_SSL")
     # S3 specific (examples)
-    S3_BUCKET_NAME: Optional[str] = Field(default=None, env="S3_BUCKET_NAME")
+    S3_BUCKET_NAME: Optional[str] = Field(validation_alias=AliasChoices("S3_BUCKET_NAME", AliasPath("deployment", "services", "s3", "bucket")), default=None)
     S3_ACCESS_KEY_ID: Optional[str] = Field(default=None, env="S3_ACCESS_KEY_ID")
     S3_SECRET_ACCESS_KEY: Optional[str] = Field(default=None, env="S3_SECRET_ACCESS_KEY")
-    S3_REGION: Optional[str] = Field(default=None, env="S3_REGION")
+    S3_REGION: Optional[str] = Field(validation_alias=AliasChoices("S3_REGION", AliasPath("deployment", "services", "s3", "region")), default=None)
+    S3_ENDPOINT: Optional[str] = Field(validation_alias=AliasChoices("S3_ENDPOINT", AliasPath("deployment", "services", "s3", "endpoint")), default=None)
+    S3_USE_SSL: bool = Field(validation_alias=AliasChoices("S3_USE_SSL", AliasPath("deployment", "services", "s3", "use_ssl")), default=False)
     # Local FS specific (example)
-    LOCAL_STORAGE_BASE_PATH: str = Field(default="/tmp/osint_storage", env="LOCAL_STORAGE_BASE_PATH")
+    LOCAL_STORAGE_BASE_PATH: str = Field(validation_alias=AliasChoices("LOCAL_STORAGE_BASE_PATH", AliasPath("deployment", "storage", "user_uploads", "base_path")), default="/tmp/osint_storage")
     # Whitelist of paths allowed for directory import (comma-separated)
     # Prevents import endpoint from reading arbitrary filesystem locations
-    ALLOWED_IMPORT_PATHS: str = Field(default="/data/import,/dataset_collection", env="ALLOWED_IMPORT_PATHS")
+    ALLOWED_IMPORT_PATHS: Annotated[
+        list[str], BeforeValidator(parse_cors)
+    ] = Field(validation_alias=AliasPath("deployment", "storage", "importable_paths"),
+              default=["/data/storage/datasets"])
     # Max files to scan per directory when include_counts=True; 0 = no cap (defense in depth for 400GB+ browse)
-    STORAGE_BROWSE_MAX_COUNT_FILES: int = Field(default=2000, env="STORAGE_BROWSE_MAX_COUNT_FILES")
+    STORAGE_BROWSE_MAX_COUNT_FILES: int = Field(validation_alias=AliasChoices("STORAGE_BROWSE_MAX_COUNT_FILES", AliasPath("deployment", "storage", "browse_max_files")), default=2000, ge=0)
 
     # Temporary folder for file downloads
     TEMP_FOLDER: str = Field(default="/tmp/osint_temp", env="TEMP_FOLDER")
@@ -154,26 +297,62 @@ class AppSettings(BaseSettings):
     INSTANCE_ID: str = Field(default_factory=lambda: str(uuid.uuid4()))
 
     # --- Connection pool (tuned for concurrent task workers) ---
-    DB_POOL_SIZE: int = Field(default=10, env="DB_POOL_SIZE")
-    DB_MAX_OVERFLOW: int = Field(default=20, env="DB_MAX_OVERFLOW")
-    DB_POOL_PRE_PING: bool = Field(default=True, env="DB_POOL_PRE_PING")
+    DB_POOL_SIZE: int = Field(validation_alias=AliasChoices("DB_POOL_SIZE", AliasPath("deployment", "services", "database", "pool", "size")), default=10, ge=1)
+    DB_MAX_OVERFLOW: int = Field(validation_alias=AliasChoices("DB_MAX_OVERFLOW", AliasPath("deployment", "services", "database", "pool", "max_overflow")), default=20, ge=0)
+    DB_POOL_PRE_PING: bool = Field(validation_alias=AliasChoices("DB_POOL_PRE_PING", AliasPath("deployment", "services", "database", "pool", "pre_ping")), default=True)
 
     # --- Upload / content limits (security) ---
-    MAX_UPLOAD_SIZE_BYTES: int = Field(default=1024 * 1024 * 1024, env="MAX_UPLOAD_SIZE_BYTES")  # 1GB default
+    MAX_UPLOAD_SIZE_BYTES: int = Field(validation_alias=AliasChoices("MAX_UPLOAD_SIZE_BYTES", AliasPath("deployment", "processing", "max_upload_size_bytes")), default=1024 * 1024 * 1024, ge=1)  # 1GB default
     # PDF processing: max pages per document (0 = no limit, for 400GB+ bulk deployments)
-    PDF_MAX_PAGES: int = Field(default=0, env="PDF_MAX_PAGES", description="Max pages to process per PDF; 0 = no limit")
-    # process_content Celery rate limit (e.g. "10/s", "100/m"); empty = no limit (prevents Redis queue flooding at import scale)
-    PROCESS_CONTENT_RATE_LIMIT: str = Field(default="10/s", env="PROCESS_CONTENT_RATE_LIMIT")
-    # Enrichers to dispatch: comma-separated names, "*" for all, empty = none.
-    # Values: hash, ocr, geocoding, language_detection, quality_score, embedding
-    ENABLED_ENRICHERS: str = Field(default="", env="ENABLED_ENRICHERS")
+    PDF_MAX_PAGES: int = Field(validation_alias=AliasChoices("PDF_MAX_PAGES", AliasPath("deployment", "processing", "pdf_max_pages")), default=0, ge=0, description="Max pages to process per PDF; 0 = no limit")
+    # One boolean per enricher. Replaces ENABLED_ENRICHERS, whose comma string
+    # carried three meanings in one value ("*" = all, "" = none, else a
+    # whitelist) — the sentinel protocol _get_enabled_enrichers had to decode.
+    # Read by the coherence gate: which containers this deployment starts, and
+    # where each provider lives. Not otherwise consulted at runtime.
+    FOUNDATION_RUN: Dict[str, bool] = Field(
+        default_factory=dict, validation_alias=AliasPath("foundation", "run")
+    )
+    FOUNDATION_PROVIDERS: Dict[str, Dict[str, Any]] = Field(
+        default_factory=dict, validation_alias=AliasPath("foundation", "providers")
+    )
+    HQ_CONFIG_SHA: Optional[str] = None
+
+    ENRICHERS: Dict[str, bool] = Field(
+        default_factory=dict,
+        validation_alias=AliasPath("deployment", "processing", "background_content_enrichers"),
+    )
     # Beat interval (seconds) for dispatch_tasks. Default 120 (2 min).
-    DISPATCH_REACTIVE_WORK_INTERVAL_SECONDS: int = Field(default=120, env="DISPATCH_REACTIVE_WORK_INTERVAL_SECONDS")
+    DISPATCH_REACTIVE_WORK_INTERVAL_SECONDS: int = Field(validation_alias=AliasChoices("DISPATCH_REACTIVE_WORK_INTERVAL_SECONDS", AliasPath("deployment", "processing", "dispatch_interval_seconds")), default=120, ge=1)
 
     # Deployment capability ceiling: comma-separated capability names, "*" for all, empty = readonly.
     # Intersected with per-user capabilities in Requires(). An owner on a readonly deployment gets no capabilities.
     # Values: organize, ingest, compute, delete, setup
-    DEPLOYMENT_CAPABILITIES: str = Field(default="*", env="DEPLOYMENT_CAPABILITIES")
+    DEPLOYMENT_CAPABILITIES: str = Field(validation_alias=AliasChoices("DEPLOYMENT_CAPABILITIES", AliasPath("deployment", "users", "allowed_actions")), default="*")
+
+    @field_validator("DEPLOYMENT_CAPABILITIES")
+    @classmethod
+    def _capability_names_exist(cls, v: str) -> str:
+        """A typo here silently produces a read-only deployment.
+
+        `allowed_actions: comput` parses to the frozenset {"comput"}, which
+        intersects nothing — every user loses every capability and MCP switches
+        itself off, with no line in the log saying why. Same reasoning as the
+        access grants: a control that decides what anyone may do must not fail
+        quietly.
+        """
+        raw = v.strip()
+        if raw in ("*", ""):
+            return v
+        unknown = [n.strip() for n in raw.split(",")
+                   if n.strip() and n.strip() not in KNOWN_CAPABILITIES]
+        if unknown:
+            raise ValueError(
+                f"deployment.users.allowed_actions names {', '.join(unknown)}, which "
+                f"grants nothing. Known: {', '.join(sorted(KNOWN_CAPABILITIES))}. "
+                f'Use "*" for all, or an empty value for a read-only deployment.'
+            )
+        return v
 
     @computed_field  # type: ignore[misc]
     @property
@@ -182,66 +361,107 @@ class AppSettings(BaseSettings):
         '*' = all known capabilities. Empty string = none (readonly)."""
         raw = self.DEPLOYMENT_CAPABILITIES.strip()
         if raw == "*":
-            return frozenset({"organize", "ingest", "compute", "delete", "setup"})
+            return frozenset(KNOWN_CAPABILITIES)
         if not raw:
             return frozenset()
         return frozenset(n.strip() for n in raw.split(",") if n.strip())
 
-    # === Provider Access Control ===
-    # Per-provider access levels, set via PROVIDER_ACCESS_<CAPABILITY>_<PROVIDER_KEY> env vars.
-    # Capability names: language, embedding, ocr, geocoding, storage, scraping, web_search.
-    # Values: "all" (any infospace owner), "superuser" (superuser owners only), "none" (blocked).
-    # Default (unset): env key is NOT shared — infospace owners must bring their own key.
-    # Examples:
-    #   PROVIDER_ACCESS_LANGUAGE_ollama=all         # share system Ollama with every infospace
-    #   PROVIDER_ACCESS_LANGUAGE_openai=superuser   # share system OpenAI with superuser-owned infospaces
-    #   PROVIDER_ACCESS_EMBEDDING_jina=all
-    #   PROVIDER_ACCESS_OCR_tesseract=all
-    # Legacy: PROVIDER_ACCESS_LLM_* is silently rewritten to LANGUAGE_* with a warning.
+    # === Provider access control ===
+    # Who may use THIS deployment's compute or API keys. Grants live in
+    # my-hq.yml, nested by capability so nothing is keyed by concatenation:
+    #   foundation:
+    #     access:
+    #       language:
+    #         ollama: all          # our compute/key, any infospace owner
+    #         openai: superuser    # our key, superuser-owned infospaces only
+    #         anthropic: byok      # usable, but our key is never handed over
+    #         mistral: none        # blocked outright
+    # Leaving a keyed provider out is the same as `none`: not configuring must
+    # never be the reason a deployment key gets spent. A user's own stored key
+    # always works for anything not explicitly `none`.
+    FOUNDATION_ACCESS: Dict[str, Dict[str, str]] = Field(
+        default_factory=dict, validation_alias=AliasPath("foundation", "access")
+    )
 
-    @computed_field  # type: ignore[misc]
-    @property
-    def provider_access(self) -> Dict[str, str]:
-        """Parse PROVIDER_ACCESS_* env vars into {capability_providerkey: access_level} dict."""
-        result: Dict[str, str] = {}
-        prefix = "PROVIDER_ACCESS_"
-        legacy_llm_seen = False
-        for key, value in os.environ.items():
-            if not key.startswith(prefix) or not value.strip():
-                continue
-            suffix = key[len(prefix):].lower()
-            level = value.strip().lower()
-            if level not in ("all", "superuser", "none"):
-                continue
-            # Legacy: PROVIDER_ACCESS_LLM_* → PROVIDER_ACCESS_LANGUAGE_*
-            if suffix.startswith("llm_"):
-                legacy_llm_seen = True
-                suffix = "language_" + suffix[len("llm_"):]
-            result[suffix] = level
-        if legacy_llm_seen:
-            import logging
-            logging.getLogger(__name__).warning(
-                "PROVIDER_ACCESS_LLM_* env vars are deprecated; rename to "
-                "PROVIDER_ACCESS_LANGUAGE_*."
+    @field_validator("FOUNDATION_ACCESS", mode="before")
+    @classmethod
+    def _normalise_access_keys(cls, v: Any) -> Any:
+        """Lowercase capability and provider keys once, at load.
+
+        The registry keys everything lowercase. Normalising here rather than at
+        every lookup means `LANGUAGE: {Anthropic: ALL}` is the same grant as
+        `language: {anthropic: all}` — writing it in caps must not silently
+        produce no grant at all.
+        """
+        if not isinstance(v, dict):
+            return v
+        return {
+            str(cap).lower(): (
+                {str(p).lower(): str(l).lower() for p, l in entries.items()}
+                if isinstance(entries, dict) else entries
             )
-        return result
+            for cap, entries in v.items()
+        }
+
+    @model_validator(mode="after")
+    def _validate_access_grants(self) -> Self:
+        """Reject a malformed grant instead of ignoring it.
+
+        This is a security control, so the only acceptable failure is a loud
+        one. The previous implementation scanned os.environ and `continue`d past
+        any value that wasn't all/superuser/none — so `openai: yes` read as "not
+        granted" while the operator believed they had granted it. Silently
+        reinterpreting a grant is how a deployment ends up sharing, or not
+        sharing, something nobody decided.
+        """
+        for cap, entries in (self.FOUNDATION_ACCESS or {}).items():
+            where = f"foundation.access.{cap}"
+            if not isinstance(entries, dict):
+                raise ValueError(
+                    f"{where} in {HQ_CONFIG_FILE} must be a map of provider -> "
+                    f"{'|'.join(ACCESS_LEVELS)}, got {type(entries).__name__}."
+                )
+            for provider, level in entries.items():
+                if str(level).lower() not in ACCESS_LEVELS:
+                    raise ValueError(
+                        f"{where}.{provider} is {level!r} in {HQ_CONFIG_FILE}. "
+                        f"Use one of {', '.join(ACCESS_LEVELS)}, or remove the line "
+                        f"so users bring their own key."
+                    )
+        return self
+
+    def access_level(self, capability: str, provider_key: str) -> Optional[str]:
+        """Grant for one (capability, provider), or None when ungranted.
+
+        Two nested lookups, no key built by concatenation. The old
+        f"{capability}_{provider_key}" form is what made `local_fs` and
+        `web_search` only parse by luck — the prefix happened to be anchored.
+        Read from the config FILE, so it answers the same in every process; the
+        env scan it replaces only saw what compose had injected, so every grant
+        silently vanished outside a container.
+        """
+        entries = (self.FOUNDATION_ACCESS or {}).get(capability.lower())
+        return entries.get(provider_key.lower()) if entries else None
 
     # === Provider Configurations ===
 
     # --- GeoCoding Provider ---
     # Default provider for geocoding - can be overridden per-request from frontend
-    GEOCODING_PROVIDER_TYPE: str = Field(default="local", env="GEOCODING_PROVIDER_TYPE")
-    NOMINATIM_BASE_URL: str = Field(default="http://nominatim:8080", env="NOMINATIM_BASE_URL")
+    GEOCODING_PROVIDER_TYPE: str = Field(validation_alias=AliasChoices("GEOCODING_PROVIDER_TYPE", AliasPath("foundation", "use", "geocoding")), default="nominatim_local")
+    NOMINATIM_BASE_URL: str = Field(validation_alias=AliasChoices("NOMINATIM_BASE_URL", AliasPath("foundation", "providers", "nominatim_local", "base_url")), default="http://nominatim:8080")
     # User agent for API requests (Nominatim requires this per usage policy, also used for archive downloads)
-    GEOCODING_USER_AGENT: str = Field(
-        default="Mozilla/5.0 (compatible; OpenPoliticsHQ/1.0; +https://open-politics.org)", 
-        env="GEOCODING_USER_AGENT"
+    # Read by the tesseract declaration via Setting("OCR_DEFAULT_LANGUAGE").
+    # Undeclared, it fell through to the env and then to "eng", so
+    # foundation.providers.tesseract.language was a knob wired to nothing.
+    OCR_DEFAULT_LANGUAGE: str = Field(validation_alias=AliasChoices("OCR_DEFAULT_LANGUAGE", AliasPath("foundation", "providers", "tesseract", "language")), default="eng")
+
+    GEOCODING_USER_AGENT: str = Field(validation_alias=AliasChoices("GEOCODING_USER_AGENT", AliasPath("stack", "user_agent")), default="Mozilla/5.0 (compatible; OpenPoliticsHQ/1.0; +https://open-politics.org)"
     )
     # Optional: Mapbox token as fallback (prefer runtime from frontend)
     MAPBOX_ACCESS_TOKEN: Optional[str] = Field(default=None, env="MAPBOX_ACCESS_TOKEN")
 
     # --- Storage Provider ---
-    STORAGE_PROVIDER_TYPE: str = Field(default="minio", env="STORAGE_PROVIDER_TYPE")
+    STORAGE_PROVIDER_TYPE: str = Field(validation_alias=AliasChoices("STORAGE_PROVIDER_TYPE", AliasPath("deployment", "storage", "use")), default="local_fs")
 
     # --- Encryption ---
     # Master key for encrypting user provider credentials
@@ -270,39 +490,49 @@ class AppSettings(BaseSettings):
         return [k.strip() for k in keys if k and k.strip()]
 
     # Credentials (ensure these environment variables are set for the chosen provider)
-    GOOGLE_API_KEY: Optional[str] = Field(default=None, env="GOOGLE_API_KEY")
     OPENAI_API_KEY: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
-    OPENAI_BASE_URL: Optional[str] = Field(default=None, env="OPENAI_BASE_URL")
+    OPENAI_BASE_URL: Optional[str] = Field(validation_alias=AliasChoices("OPENAI_BASE_URL", AliasPath("foundation", "providers", "openai", "base_url")), default=None)
     ANTHROPIC_API_KEY: Optional[str] = Field(default=None, env="ANTHROPIC_API_KEY")
-    ANTHROPIC_BASE_URL: Optional[str] = Field(default=None, env="ANTHROPIC_BASE_URL")
+    ANTHROPIC_BASE_URL: Optional[str] = Field(validation_alias=AliasChoices("ANTHROPIC_BASE_URL", AliasPath("foundation", "providers", "anthropic", "base_url")), default=None)
     MISTRAL_API_KEY: Optional[str] = Field(default=None, env="MISTRAL_API_KEY")
-    MISTRAL_BASE_URL: Optional[str] = Field(default=None, env="MISTRAL_BASE_URL")
+    MISTRAL_BASE_URL: Optional[str] = Field(validation_alias=AliasChoices("MISTRAL_BASE_URL", AliasPath("foundation", "providers", "mistral", "base_url")), default=None)
     # Ollama (native provider). Use host.docker.internal to reach the host's Ollama from a container.
-    OLLAMA_BASE_URL: Optional[str] = Field(default="http://host.docker.internal:11434", env="OLLAMA_BASE_URL")
+    OLLAMA_BASE_URL: Optional[str] = Field(validation_alias=AliasChoices("OLLAMA_BASE_URL", AliasPath("foundation", "providers", "ollama", "base_url")), default="http://host.docker.internal:11434")
 
     # --- Embedding settings (provider is per-infospace via enrichment_config.embedding) ---
     JINA_API_KEY: Optional[str] = Field(default=None, env="JINA_API_KEY")
-    JINA_EMBEDDING_MODEL: str = Field(default="jina-embeddings-v5-text-small", env="JINA_EMBEDDING_MODEL")
     VOYAGE_API_KEY: Optional[str] = Field(default=None, env="VOYAGE_API_KEY")
-    VOYAGE_BASE_URL: Optional[str] = Field(default=None, env="VOYAGE_BASE_URL")
+    VOYAGE_BASE_URL: Optional[str] = Field(validation_alias=AliasChoices("VOYAGE_BASE_URL", AliasPath("foundation", "providers", "voyage", "base_url")), default=None)
+
+    # Provider base URLs that providers.py reads by name. Declared here so
+    # my-hq.yml is their home: without a field, Setting.read falls through to
+    # os.environ and then the declaration's own default, so editing
+    # foundation.providers.<x>.base_url did nothing. searxng was the live case —
+    # the yaml said :8888, the default said :8080, and web search hit a closed port.
+    SEARXNG_BASE_URL: Optional[str] = Field(validation_alias=AliasChoices("SEARXNG_BASE_URL", AliasPath("foundation", "providers", "searxng", "base_url")), default="http://searxng:8888")
+    LLAMACPP_BASE_URL: Optional[str] = Field(validation_alias=AliasChoices("LLAMACPP_BASE_URL", AliasPath("foundation", "providers", "llamacpp", "base_url")), default="http://host.docker.internal:4000")
+    JINA_BASE_URL: Optional[str] = Field(validation_alias=AliasChoices("JINA_BASE_URL", AliasPath("foundation", "providers", "jina", "base_url")), default="https://api.jina.ai/v1/embeddings")
+    TAVILY_BASE_URL: Optional[str] = Field(validation_alias=AliasChoices("TAVILY_BASE_URL", AliasPath("foundation", "providers", "tavily", "base_url")), default="https://api.tavily.com")
+    MAPBOX_BASE_URL: Optional[str] = Field(validation_alias=AliasChoices("MAPBOX_BASE_URL", AliasPath("foundation", "providers", "mapbox", "base_url")), default="https://api.mapbox.com/geocoding/v5/mapbox.places")
+    NOMINATIM_API_URL: Optional[str] = Field(validation_alias=AliasChoices("NOMINATIM_API_URL", AliasPath("foundation", "providers", "nominatim_api", "base_url")), default="https://nominatim.openstreetmap.org")
 
     # --- Scraping Provider ---
-    SCRAPING_PROVIDER_TYPE: str = Field(default="newspaper4k", env="SCRAPING_PROVIDER_TYPE")
+    SCRAPING_PROVIDER_TYPE: str = Field(validation_alias=AliasChoices("SCRAPING_PROVIDER_TYPE", AliasPath("foundation", "use", "scraping")), default="newspaper4k")
 
     # --- Web Search Provider ---
-    WEB_SEARCH_PROVIDER_TYPE: str = Field(default="searxng", env="WEB_SEARCH_PROVIDER_TYPE")
+    WEB_SEARCH_PROVIDER_TYPE: str = Field(validation_alias=AliasChoices("WEB_SEARCH_PROVIDER_TYPE", AliasPath("foundation", "use", "web_search")), default="searxng")
 
     # --- OCR Provider ---
-    OCR_PROVIDER_TYPE: str = Field(default="tesseract", env="OCR_PROVIDER_TYPE")
-    OLLAMA_OCR_MODEL: str = Field(default="llava", env="OLLAMA_OCR_MODEL")
+    OCR_PROVIDER_TYPE: str = Field(validation_alias=AliasChoices("OCR_PROVIDER_TYPE", AliasPath("foundation", "use", "ocr")), default="tesseract")
+    OLLAMA_OCR_MODEL: str = Field(validation_alias=AliasChoices("OLLAMA_OCR_MODEL", AliasPath("foundation", "providers", "ollama", "ocr_model")), default="llava")
 
     # --- Redis Configuration ---
-    REDIS_HOST: str = Field(default="redis", env="REDIS_HOST")
-    REDIS_PORT: int = Field(default=6379, env="REDIS_PORT")
-    REDIS_DB: int = Field(default=0, env="REDIS_DB")
+    REDIS_HOST: str = Field(validation_alias=AliasChoices("REDIS_HOST", AliasPath("deployment", "services", "redis", "host")), default="redis")
+    REDIS_PORT: int = Field(validation_alias=AliasChoices("REDIS_PORT", AliasPath("deployment", "services", "redis", "port")), default=6379)
+    REDIS_DB: int = Field(validation_alias=AliasChoices("REDIS_DB", AliasPath("deployment", "services", "redis", "db")), default=0)
     REDIS_PASSWORD: Optional[str] = Field(default=None, env="REDIS_PASSWORD")
     # Optional: Override with full URL (takes precedence if set)
-    REDIS_URL: Optional[str] = Field(default=None, env="REDIS_URL")
+    REDIS_URL: Optional[str] = Field(validation_alias=AliasChoices("REDIS_URL", AliasPath("deployment", "services", "redis", "url")), default=None)
     
     @computed_field  # type: ignore[misc]
     @property
@@ -340,34 +570,190 @@ class AppSettings(BaseSettings):
 
     # --- Annotation Processing Configuration ---
     # Default concurrency for parallel annotation processing
-    DEFAULT_ANNOTATION_CONCURRENCY: int = Field(default=5, env="DEFAULT_ANNOTATION_CONCURRENCY")
+    DEFAULT_ANNOTATION_CONCURRENCY: int = Field(validation_alias=AliasChoices("DEFAULT_ANNOTATION_CONCURRENCY", AliasPath("deployment", "processing", "annotation", "default_concurrency")), default=5, ge=1)
     # Maximum allowed concurrency to prevent overwhelming external APIs
-    MAX_ANNOTATION_CONCURRENCY: int = Field(default=20, env="MAX_ANNOTATION_CONCURRENCY")
+    MAX_ANNOTATION_CONCURRENCY: int = Field(validation_alias=AliasChoices("MAX_ANNOTATION_CONCURRENCY", AliasPath("deployment", "processing", "annotation", "max_concurrency")), default=20, ge=1)
     # Chunk size for per-chunk commits in large runs (50K-asset run avoids single tx)
-    ANNOTATION_CHUNK_SIZE: int = Field(default=50, env="ANNOTATION_CHUNK_SIZE")
+    ANNOTATION_CHUNK_SIZE: int = Field(validation_alias=AliasChoices("ANNOTATION_CHUNK_SIZE", AliasPath("deployment", "processing", "annotation", "chunk_size")), default=50, ge=1)
     
 
-    def _check_default_secret(self, var_name: str, value: str | None) -> None:
-        if value == "changethis":
-            message = (
-                f'The value of {var_name} is "changethis", '
-                "for security, please change it, at least for deployments."
-            )
-            if self.ENVIRONMENT == "local":
-                warnings.warn(message, stacklevel=1)
-            else:
-                raise ValueError(message)
+
+    # ── boot gates ────────────────────────────────────────────────────────────
+    # Three ways to refuse, all here beside the placeholder check, so they fire
+    # at import in every process — API, all three celery workers, any CLI — and
+    # not just at the web entrypoint.
 
     @model_validator(mode="after")
-    def _enforce_non_default_secrets(self) -> Self:
-        self._check_default_secret("SECRET_KEY", self.SECRET_KEY)
-        self._check_default_secret("POSTGRES_PASSWORD", self.POSTGRES_PASSWORD)
-        self._check_default_secret("FIRST_SUPERUSER_PASSWORD", self.FIRST_SUPERUSER_PASSWORD)
-        if self.STORAGE_PROVIDER_TYPE == "minio":
-            if not self.MINIO_ACCESS_KEY or not self.MINIO_SECRET_KEY:
-                raise ValueError("MINIO_ACCESS_KEY and MINIO_SECRET_KEY must be set for MinIO storage.")
-            self._check_default_secret("MINIO_ACCESS_KEY", self.MINIO_ACCESS_KEY)
-            self._check_default_secret("MINIO_SECRET_KEY", self.MINIO_SECRET_KEY)
+    def _gate_config_is_current(self) -> Self:
+        """.env's generated region must match the yaml it was rendered from.
+
+        Hand-edit my-hq.yml, skip ./setup.sh, and compose publishes the old
+        port while the backend binds the new one. Precedence could never have
+        fixed that — only noticing can.
+        """
+        if not self.HQ_CONFIG_SHA or HQ_CONFIG_EXPLICIT:
+            return self          # nothing rendered yet, or a deliberately chosen file
+        try:
+            digest = hashlib.sha256(Path(HQ_CONFIG_FILE).read_bytes()).hexdigest()[:16]
+        except OSError:
+            return self
+        if digest != self.HQ_CONFIG_SHA:
+            raise ValueError(
+                f"{HQ_CONFIG_FILE} changed since .env was rendered "
+                f"(config {digest}, .env expects {self.HQ_CONFIG_SHA}).\n"
+                f"Run:  ./setup.sh render && docker compose up -d\n"
+                f"(`render` is non-interactive and idempotent; the dashboard's "
+                f"start does it for you.)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _gate_limits_are_coherent(self) -> Self:
+        """Bounds that only make sense relative to each other."""
+        if self.DEFAULT_ANNOTATION_CONCURRENCY > self.MAX_ANNOTATION_CONCURRENCY:
+            raise ValueError(
+                f"deployment.processing.annotation.default_concurrency "
+                f"({self.DEFAULT_ANNOTATION_CONCURRENCY}) exceeds max_concurrency "
+                f"({self.MAX_ANNOTATION_CONCURRENCY}); every run would be clamped "
+                f"to the max and the default would never be the default."
+            )
+        return self
+
+    @property
+    def chosen_providers(self) -> List[tuple]:
+        """(capability, value) for every `use` selection, including storage.
+
+        Storage is chosen under deployment.storage.use rather than foundation.use
+        because it is a deployment property, not a foundation one — but it is
+        served by a provider in the same registry, so it is checked with them.
+        """
+        return [
+            ("storage", self.STORAGE_PROVIDER_TYPE),
+            ("ocr", self.OCR_PROVIDER_TYPE),
+            ("geocoding", self.GEOCODING_PROVIDER_TYPE),
+            ("web_search", self.WEB_SEARCH_PROVIDER_TYPE),
+            ("scraping", self.SCRAPING_PROVIDER_TYPE),
+        ]
+
+    @model_validator(mode="after")
+    def _gate_providers_are_reachable(self) -> Self:
+        """Refuse a provider that points at a container we do not run.
+
+        Keyed on the ADDRESS, not the provider name: `use: ollama` with
+        base_url http://ollama:11434 and run.ollama false is broken, while the
+        same grant with host.docker.internal is Ollama on the host and fine.
+        That distinction is why "anything in use requires run" cannot be the
+        rule. A comma list passes if ANY entry is usable — `tesseract, ollama`
+        with Ollama off still has Tesseract to answer with.
+        """
+        run = {k.lower(): bool(v) for k, v in (self.FOUNDATION_RUN or {}).items()}
+        if not run:
+            return self
+        _dead_fallbacks: List[str] = []
+
+        def unreachable(provider: str) -> Optional[str]:
+            cfg = (self.FOUNDATION_PROVIDERS or {}).get(provider.lower()) or {}
+            addr = cfg.get("base_url") or cfg.get("endpoint")
+            if not addr:
+                return None                       # in-process, nothing to reach
+            host = str(addr).split("//")[-1].split("/")[0].split(":")[0]
+            if host in run and not run[host]:
+                return f"{addr} needs foundation.run.{host}: true"
+            return None
+
+        problems = []
+        for capability, chosen in self.chosen_providers:
+            entries = [c.strip() for c in str(chosen or "").split(",") if c.strip()]
+            if not entries:
+                continue
+            reasons = [(e, unreachable(e)) for e in entries]
+            if all(r for _, r in reasons):        # nothing in the list can answer
+                detail = "; ".join(f"{e}: {r}" for e, r in reasons)
+                problems.append(f"  use.{capability} = {chosen} -> {detail}")
+            else:
+                # Some entry answers, so the deployment works — but a dead
+                # fallback is still a fallback that will never fire, and
+                # silence about it is how you find out during an incident.
+                for entry, why in reasons:
+                    if why:
+                        _dead_fallbacks.append(f"use.{capability}: {entry} ({why})")
+
+        # storage is special: `s3` is served by services.s3, not a provider entry
+        if self.STORAGE_PROVIDER_TYPE == "s3" and self.S3_ENDPOINT:
+            host = str(self.S3_ENDPOINT).split("//")[-1].split("/")[0].split(":")[0]
+            if host in run and not run[host]:
+                problems.append(
+                    f"  storage.use = s3 -> services.s3.endpoint {self.S3_ENDPOINT} "
+                    f"needs foundation.run.{host}: true"
+                )
+
+        if problems:
+            raise ValueError(
+                "Config points at containers this deployment does not run:\n"
+                + "\n".join(problems)
+                + f"\nSet the run flag in {HQ_CONFIG_FILE}, or point the address at "
+                  "an instance you already have."
+            )
+        # Grants are checked too, but only warned about: granting a provider you
+        # intend to switch on later is legitimate, and refusing to boot over it
+        # would make `access` harder to use than it should be. Silence is the
+        # wrong answer though — this is the config that decides whose key gets
+        # spent, and a grant nobody can reach looks identical to one that works.
+        for cap, entries in (self.FOUNDATION_ACCESS or {}).items():
+            if not isinstance(entries, dict):
+                continue
+            for prov, level in entries.items():
+                if str(level).lower() == "none":
+                    continue
+                why = unreachable(prov)
+                if why:
+                    _dead_fallbacks.append(f"access.{cap}.{prov} ({why})")
+
+        if _dead_fallbacks:
+            logging.getLogger(__name__).warning(
+                "[CONFIG] configured but unreachable: %s",
+                "; ".join(_dead_fallbacks),
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _gate_secrets_are_real(self) -> Self:
+        """Refuse to run on a shipped placeholder. Every environment.
+
+        Three things were wrong with the check this replaces, and each one made
+        it pass exactly when it mattered:
+
+          - it compared to lowercase "changethis" while .env.example ships
+            "changeThis", so SECRET_KEY and both FIRST_SUPERUSER values sailed
+            through;
+          - it only raised when ENVIRONMENT != "local", and setup.sh writes
+            local for dev, so dev never rejected anything;
+          - it covered neither ENCRYPTION_MASTER_KEY (which encrypts every
+            stored user API key) nor REDIS_PASSWORD.
+
+        SECRET_KEY signs JWTs and ENCRYPTION_MASTER_KEY is the only thing
+        standing between a database dump and every user's provider credentials.
+        "It's only dev" is how a dev value reaches a machine with a public IP.
+        """
+        placeholders = {"changethis", "app_user", "app_user_password", ""}
+        offenders = [
+            name for name in (
+                "SECRET_KEY", "ENCRYPTION_MASTER_KEY", "POSTGRES_PASSWORD",
+                "FIRST_SUPERUSER", "FIRST_SUPERUSER_PASSWORD",
+            )
+            if str(getattr(self, name, "") or "").strip().lower() in placeholders
+        ]
+        # Redis is reachable from every container on the compose network and, in
+        # host mode, from anything on the box. An unset password is not a
+        # "development convenience", it is an open data store.
+        if str(self.REDIS_PASSWORD or "").strip().lower() in placeholders:
+            offenders.append("REDIS_PASSWORD")
+        if offenders:
+            raise ValueError(
+                "Unset or placeholder secrets: " + ", ".join(offenders) + ". "
+                "Run ./setup.sh — it generates strong values and never overwrites "
+                "one you already set."
+            )
         return self
 
 

@@ -28,7 +28,6 @@ dependencies = [
     "redis>=5.2",
     "croniter>=6.0",
     "sqlalchemy-celery-beat>=0.8",
-    "eventlet>=0.37",
 
     # --- http clients ---
     "httpx>=0.28",
@@ -47,7 +46,6 @@ dependencies = [
     # --- LLM / AI providers ---
     "anthropic>=0.40",
     "openai>=1.60",
-    "google-genai>=1.5",
 
     # --- search & scraping ---
     "tavily-python>=0.5",
@@ -58,8 +56,6 @@ dependencies = [
     # --- templating ---
     "jinja2>=3.1",
 
-    # --- data analysis ---
-    "pandas>=2.2",
 
     # --- mcp ---
     "fastmcp>=2.3",

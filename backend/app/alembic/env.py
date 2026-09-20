@@ -1,4 +1,3 @@
-import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -13,8 +12,12 @@ import pgvector.sqlalchemy
 config = context.config
 
 # Interpret the config file for Python logging.
-# This line sets up loggers basically.
-fileConfig(config.config_file_name)
+# disable_existing_loggers=False matters now that app/prestart.py runs the DB
+# wait, the migration and the seed in one process: the default (True) would
+# silence every logger configured before this point — i.e. all of app.* — so
+# the seed's output vanished after a migration ran.
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Import all models from the single models.py file
 from app.models import *  # This imports all models
@@ -34,14 +37,22 @@ target_metadata = [SQLModel.metadata, CeleryBeatModelBase.metadata]
 
 
 def get_url():
-    user = os.getenv("POSTGRES_USER", "postgres")
-    password = os.getenv("POSTGRES_PASSWORD", "")
-    server = os.getenv("POSTGRES_SERVER", "db")
-    port = os.getenv("POSTGRES_PORT", "5432")
-    db = os.getenv("POSTGRES_DB", "app").lstrip("/")
-    ssl_mode = os.getenv("POSTGRES_SSL_MODE")
-    query = f"?sslmode={ssl_mode}" if ssl_mode and ssl_mode.strip() else ""
-    return f"postgresql+psycopg://{user}:{password}@{server}:{port}/{db}{query}"
+    """The app's own URI — not a second derivation of it.
+
+    This used to rebuild the DSN from POSTGRES_* environment variables while the
+    application built its own from my-hq.yml. Two derivations of one fact, so
+    they could point at different databases — and did: .env said
+    `opp_app_users_dev`, my-hq.yml said `opp_app_users`, so `alembic upgrade
+    head` migrated a database the app never reads. Worse, POSTGRES_DB is not in
+    setup.sh's rendered region, so once .env stops carrying it this fell back to
+    the literal default "app".
+
+    settings.SQLALCHEMY_DATABASE_URI already builds exactly this string, scheme
+    and sslmode included. Migrations must target whatever the app will read.
+    """
+    from app.core.config import settings
+
+    return str(settings.SQLALCHEMY_DATABASE_URI)
 
 
 def run_migrations_offline():
