@@ -4,7 +4,7 @@ import React, { useMemo } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ArrowUpNarrowWide } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { HUD_SURFACE, HudButton, HudMeter, HudReadout } from '../chrome';
+import { HUD_SURFACE, HudButton, HudMeter, HudReadout } from '@/components/ui/chrome';
 import { resolveEntityColor, type ColorOverrides } from '@/lib/annotations/colors';
 import { buildDegreeMap, type GraphEdge, type GraphNode } from '../graphTypes';
 

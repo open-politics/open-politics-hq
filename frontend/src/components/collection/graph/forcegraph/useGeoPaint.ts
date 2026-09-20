@@ -57,9 +57,20 @@ let worldPromise: Promise<Ring[]> | null = null;
 function loadWorld(): Promise<Ring[]> {
   if (worldRings) return Promise.resolve(worldRings);
   if (!worldPromise) {
-    worldPromise = import('@amcharts/amcharts5-geodata/worldLow')
-      .then((mod) => {
-        const fc: any = (mod as any).default ?? mod;
+    // Natural Earth 110m via world-atlas (ISC; the data itself is public
+    // domain). Replaces amCharts geodata, which cost 344MB and ships under a
+    // linkware licence requiring a visible branding link on anything it
+    // renders - an obligation this underlay never met.
+    // Both imports stay dynamic, so the map is still fetched lazily and once.
+    worldPromise = Promise.all([
+      import('world-atlas/countries-110m.json'),
+      import('topojson-client'),
+    ])
+      .then(([topoMod, { feature }]) => {
+        const topo: any = (topoMod as any).default ?? topoMod;
+        // TopoJSON -> GeoJSON. `objects.countries` is a GeometryCollection, so
+        // feature() yields a FeatureCollection and the walk below is unchanged.
+        const fc: any = feature(topo, topo.objects.countries);
         const rings: Ring[] = [];
         for (const f of fc.features ?? []) {
           const g = f.geometry;

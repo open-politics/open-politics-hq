@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 import {
   HUD_PROSE, HUD_SURFACE, HudButton, HudChip, HudField, HudOverline,
   type HudSize,
-} from './chrome';
+} from '@/components/ui/chrome';
 import type { GraphViewConfig } from './graphTypes';
 import {
   ANCHOR_HINT, ANCHOR_LABEL, effectiveAnchors,

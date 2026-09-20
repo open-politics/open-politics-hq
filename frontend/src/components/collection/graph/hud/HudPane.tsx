@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ChevronDown, ChevronRight, Link2, Link2Off } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { PanelHeader } from '@/components/layout/PanelHeader';
 import type { PaneFollow } from './hudChannels';
 
 interface Props {
@@ -46,47 +47,53 @@ export function HudPane({
     <div
       className={cn(
         'pointer-events-auto flex min-h-0 flex-col overflow-hidden rounded-lg border',
-        'border-border/60 bg-background/85 backdrop-blur-sm shadow-sm',
+ 'surface-overlay',
         className,
       )}
     >
-      <div className="flex shrink-0 items-center gap-1.5 border-b border-border/50 px-2 py-1">
-        <button
-          type="button"
-          onClick={() => onCollapsedChange?.(!collapsed)}
-          className="flex items-center gap-1 text-xs font-medium text-foreground/90 hover:text-foreground"
-        >
-          {collapsed
-            ? <ChevronRight className="h-3.5 w-3.5" />
-            : <ChevronDown className="h-3.5 w-3.5" />}
-          {title}
-        </button>
-        <span className="tabular-nums text-[11px] text-muted-foreground">{count}</span>
-        <div className="ml-auto flex items-center gap-1">
-          {controls}
-          {onFollowChange && (
-            <TooltipProvider delayDuration={300}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-6 w-6"
-                    onClick={() => onFollowChange(follow === 'lens' ? 'selection' : 'lens')}
-                  >
-                    {follow === 'lens'
-                      ? <Link2 className="h-3.5 w-3.5" />
-                      : <Link2Off className="h-3.5 w-3.5 text-amber-500" />}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="left" className="max-w-[240px] text-xs">
-                  {FOLLOW_HINT[follow]}
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-        </div>
-      </div>
+      <PanelHeader
+        density="hud"
+        className="border-b border-border/50"
+        title={
+          <button
+            type="button"
+            onClick={() => onCollapsedChange?.(!collapsed)}
+            className="flex min-w-0 items-center gap-1 text-foreground/90 hover:text-foreground"
+          >
+            {collapsed
+              ? <ChevronRight className="h-3.5 w-3.5 shrink-0" />
+              : <ChevronDown className="h-3.5 w-3.5 shrink-0" />}
+            <span className="truncate">{title}</span>
+          </button>
+        }
+        meta={count}
+        actions={
+          <>
+            {controls}
+            {onFollowChange && (
+              <TooltipProvider delayDuration={300}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6"
+                      onClick={() => onFollowChange(follow === 'lens' ? 'selection' : 'lens')}
+                    >
+                      {follow === 'lens'
+                        ? <Link2 className="h-3.5 w-3.5" />
+                        : <Link2Off className="h-3.5 w-3.5 text-amber-500" />}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="left" className="max-w-[240px] text-xs">
+                    {FOLLOW_HINT[follow]}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )}
+          </>
+        }
+      />
       {!collapsed && (
         <div className="min-h-0 flex-1 overflow-y-auto">{children}</div>
       )}

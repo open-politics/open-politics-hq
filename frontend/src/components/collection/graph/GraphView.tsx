@@ -8,8 +8,9 @@ import { GraphSettingsPopover } from './GraphSettingsPopover';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Loader2, RefreshCw, X, Eye, EyeOff, Box, Square, Maximize2, Minimize2, Pin } from 'lucide-react';
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { HudBar, HudButton, HudGroup, HudReadout } from '@/components/ui/chrome';
 import { useFullscreen } from './forcegraph/useFullscreen';
+import { useWebGLSupport } from '@/hooks/useWebGLSupport';
 import { NodeDetailHUD } from './forcegraph/NodeDetailHUD';
 import { toast } from 'sonner';
 import { AnnotationsService, EntitiesService, KnowledgeGraphsService } from '@/client';
@@ -62,6 +63,7 @@ export function GraphView({
   const forceGraphRef = useRef<ForceGraphHandle>(null);
   const fullscreenRootRef = useRef<HTMLDivElement>(null);
   const { isFullscreen, toggle: toggleFullscreen } = useFullscreen(fullscreenRootRef);
+  const webglSupported = useWebGLSupport();
 
   const handleGraphConfigChange = useCallback((newConfig: GraphViewConfig) => {
     setGraphConfig(newConfig);
@@ -220,50 +222,56 @@ export function GraphView({
 
   return (
     <div ref={fullscreenRootRef} className={`h-full flex flex-col ${isFullscreen ? 'bg-background' : ''}`}>
-      {/* Toolbar */}
-      <div className="flex items-center gap-2 px-2 py-1.5 border-b bg-muted/20">
-        {/* View Mode Toggle (2D / 3D). 3D dynamic-imported on first flip. */}
-        <ToggleGroup
-          type="single"
-          value={graphConfig.viewMode ?? '2d'}
-          onValueChange={(value) => {
-            if (value !== '2d' && value !== '3d') return;
-            handleGraphConfigChange({ ...graphConfig, viewMode: value });
-          }}
-          size="sm"
-          className="h-7"
-          aria-label="Graph view mode"
-        >
-          <ToggleGroupItem value="2d" className="h-7 px-2 text-xs">
-            <Square className="h-3 w-3 mr-1" />
+      {/* Toolbar, in the graph's own chrome. It was stock shadcn — outline
+          buttons with shadows, a filled grey tray, a separate toggle-group
+          grammar for 2D/3D — sitting directly above panes drawn in the HUD
+          material, so the instrument changed language halfway down the screen.
+          `HudBar` wraps (the reason this bar stopped running off the edge below
+          ~900px), fill appears only on the chosen state, and the counts are a
+          readout rather than prose. */}
+      <HudBar>
+        {/* 2D / 3D. 3D is dynamic-imported on first flip, and offered only where
+            a WebGL context can be had — ForceGraph falls back to 2D regardless,
+            but a control that silently snaps back reads as broken, where a
+            disabled one that says why does not. */}
+        <HudGroup>
+          <HudButton
+            icon={Square}
+            active={webglSupported === false || (graphConfig.viewMode ?? '2d') === '2d'}
+            onClick={() => handleGraphConfigChange({ ...graphConfig, viewMode: '2d' })}
+            aria-label="2D view"
+          >
             2D
-          </ToggleGroupItem>
-          <ToggleGroupItem value="3d" className="h-7 px-2 text-xs">
-            <Box className="h-3 w-3 mr-1" />
+          </HudButton>
+          <HudButton
+            icon={Box}
+            active={webglSupported !== false && graphConfig.viewMode === '3d'}
+            disabled={webglSupported === false}
+            onClick={() => handleGraphConfigChange({ ...graphConfig, viewMode: '3d' })}
+            aria-label="3D view"
+            title={
+              webglSupported === false
+                ? 'This browser or machine cannot open a WebGL context, so 3D is unavailable. The graph reads the same in 2D.'
+                : undefined
+            }
+          >
             3D
-          </ToggleGroupItem>
-        </ToggleGroup>
+          </HudButton>
+        </HudGroup>
 
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => refetch()}
-          className="h-7 text-xs"
-        >
-          <RefreshCw className="h-3 w-3 mr-1" />
+        <HudButton icon={RefreshCw} onClick={() => refetch()} title="Reload the graph">
           Refresh
-        </Button>
+        </HudButton>
 
-        <Button
-          variant="outline"
-          size="sm"
+        <HudButton
+          icon={showDetailPanel ? EyeOff : Eye}
+          active={showDetailPanel}
           onClick={() => setShowDetailPanel(!showDetailPanel)}
           disabled={!selectedNode && !selectedEdge}
-          className="h-7 text-xs"
+          title="Show the selected node or edge"
         >
-          {showDetailPanel ? <EyeOff className="h-3 w-3 mr-1" /> : <Eye className="h-3 w-3 mr-1" />}
           Details
-        </Button>
+        </HudButton>
 
         <GraphSettingsPopover
           config={graphConfig}
@@ -288,32 +296,26 @@ export function GraphView({
         />
 
         {graphId != null && (
-          <Button
-            variant={showRelationshipsPanel ? 'default' : 'outline'}
-            size="sm"
+          <HudButton
+            icon={Pin}
+            active={showRelationshipsPanel}
             onClick={() => setShowRelationshipsPanel(v => !v)}
-            className="h-7 text-xs"
             title="Pin and tag entity pairs"
           >
-            <Pin className="h-3 w-3 mr-1" />
             Relationships
-          </Button>
+          </HudButton>
         )}
 
-        <div className="text-xs text-muted-foreground ml-auto">
-          {nodes.length} nodes, {edges.length} edges
-        </div>
+        <HudReadout className="ml-auto">
+          {nodes.length} nodes · {edges.length} edges
+        </HudReadout>
 
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-7 text-xs px-2"
+        <HudButton
+          icon={isFullscreen ? Minimize2 : Maximize2}
           onClick={toggleFullscreen}
           title={isFullscreen ? 'Exit fullscreen (Esc)' : 'Enter fullscreen'}
-        >
-          {isFullscreen ? <Minimize2 className="h-3 w-3" /> : <Maximize2 className="h-3 w-3" />}
-        </Button>
-      </div>
+        />
+      </HudBar>
 
       {/* Main content: graph with optional HUD overlay (no resizable side panel —
           the HUD floats over the canvas so it never shrinks the graph view). */}
@@ -355,7 +357,7 @@ export function GraphView({
           {/* Edge floating card (small overlay top-right) */}
           {showDetailPanel && selectedEdge && !selectedNode && (
             <div
-              className="absolute top-2 right-12 z-30 w-[320px] max-w-[40%] bg-background/95 backdrop-blur-sm border rounded-lg shadow-lg p-3"
+              className="absolute top-2 right-12 z-30 w-[320px] max-w-[40%] surface-overlay border rounded-lg p-3"
               style={{ pointerEvents: 'auto' }}
             >
               <div className="flex items-center justify-between mb-2">

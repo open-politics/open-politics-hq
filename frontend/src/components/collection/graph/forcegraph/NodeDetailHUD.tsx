@@ -418,7 +418,7 @@ export const NodeDetailHUD: React.FC<NodeDetailHUDProps> = ({
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 w-7 p-0 bg-background/80 backdrop-blur-sm border"
+ className="h-7 w-7 p-0 surface-overlay border"
           onClick={onClose}
           title="Close details"
         >

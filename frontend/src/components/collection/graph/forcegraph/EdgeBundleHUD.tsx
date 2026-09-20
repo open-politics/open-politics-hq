@@ -114,7 +114,7 @@ export const EdgeBundleHUD: React.FC<EdgeBundleHUDProps> = ({
       className={cn(
         'absolute top-2 right-12 z-30',
         'w-[340px] max-w-[44%] max-h-[calc(100%-1.5rem)]',
-        'rounded-lg border bg-background/95 backdrop-blur-sm shadow-lg',
+ 'rounded-lg border surface-overlay',
         'flex flex-col overflow-hidden',
       )}
       style={{ pointerEvents: 'auto' }}

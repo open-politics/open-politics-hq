@@ -35,7 +35,7 @@ import {
 import { cn } from '@/lib/utils';
 import {
   HUD_INPUT, HUD_LABEL, HUD_NUM, HUD_PROSE, HUD_SURFACE, HudButton, HudOverline,
-} from '../chrome';
+} from '@/components/ui/chrome';
 import {
   EMPTY_INDEX, applyCompletion, completions,
   type Completion, type GraphIndex,

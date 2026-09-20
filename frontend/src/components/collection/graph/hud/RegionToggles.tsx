@@ -17,7 +17,7 @@ import React, { useState } from 'react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { LayoutPanelLeft } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { HUD_SURFACE, HudButton, HudOption, HudOverline } from '../chrome';
+import { HUD_SURFACE, HudButton, HudOption, HudOverline } from '@/components/ui/chrome';
 import type { GraphViewConfig } from '../graphTypes';
 import type { HudConfig } from './hudChannels';
 

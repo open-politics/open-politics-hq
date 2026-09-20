@@ -86,7 +86,7 @@ export const RelationshipsPanel: React.FC<Props> = ({
   return (
     <>
       <div
-        className="absolute top-2 right-2 z-30 w-[400px] max-w-[40%] max-h-[calc(100%-1rem)] flex flex-col bg-background/95 backdrop-blur-sm border rounded-lg shadow-lg"
+ className="absolute top-2 right-2 z-30 w-[400px] max-w-[40%] max-h-[calc(100%-1rem)] flex flex-col surface-overlay border rounded-lg"
         style={{ pointerEvents: 'auto' }}
       >
         <div className="border-b px-3 py-2 flex items-center justify-between">

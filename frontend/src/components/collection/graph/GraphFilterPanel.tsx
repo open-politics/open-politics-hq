@@ -7,7 +7,7 @@ import { Filter, Eye, EyeOff, Search } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   HUD_INPUT, HUD_SURFACE, HudButton, HudGroup, HudOverline, HudReadout,
-} from './chrome';
+} from '@/components/ui/chrome';
 
 interface EntityTypeEntry {
   type: string;

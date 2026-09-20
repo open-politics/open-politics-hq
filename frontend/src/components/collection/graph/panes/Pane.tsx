@@ -16,11 +16,12 @@
  */
 import React, { useState } from 'react';
 import { cn } from '@/lib/utils';
+import { PanelHeader } from '@/components/layout/PanelHeader';
 import { Input } from '@/components/ui/input';
 import {
   ChevronDown, ChevronRight, Link2, Link2Off, SlidersHorizontal, X,
 } from 'lucide-react';
-import { HUD_INPUT, HUD_SURFACE, HudButton, HudReadout } from '../chrome';
+import { HUD_INPUT, HUD_SURFACE, HudButton, HudReadout } from '@/components/ui/chrome';
 import { QueryBar, type QueryWarning } from './QueryBar';
 import { Surface } from './Surface';
 import type { PaneSpec, Surface as SurfaceData, SurfaceRow } from './paneTypes';
@@ -76,16 +77,19 @@ export function Pane({
           canvas is something you READ; four permanently-lit icons on every
           pane is four times the chrome and none of it is the finding. The
           name, the count and the collapse arrow stay — those are state. */}
-      <header className="group/hdr flex shrink-0 items-center gap-1 px-1.5 py-1">
-        <HudButton
-          size="sm"
-          icon={spec.collapsed ? ChevronRight : ChevronDown}
-          onClick={() => onUpdate({ collapsed: !spec.collapsed })}
-          title={spec.collapsed ? 'Expand' : 'Collapse'}
-          className="border-transparent hover:border-transparent"
-        />
-
-        {renaming ? (
+      <PanelHeader
+        density="hud"
+        className="group/hdr"
+        lead={
+          <HudButton
+            size="sm"
+            icon={spec.collapsed ? ChevronRight : ChevronDown}
+            onClick={() => onUpdate({ collapsed: !spec.collapsed })}
+            title={spec.collapsed ? 'Expand' : 'Collapse'}
+            className="border-transparent hover:border-transparent"
+          />
+        }
+        title={renaming ? (
           <Input
             autoFocus
             value={nameDraft}
@@ -95,65 +99,67 @@ export function Pane({
               if (e.key === 'Enter') { e.preventDefault(); commitName(); }
               if (e.key === 'Escape') { setNameDraft(spec.name); setRenaming(false); }
             }}
-            className={cn(HUD_INPUT, 'h-6 flex-1 px-1.5 text-[11px] font-medium')}
+            className={cn(HUD_INPUT, 'h-6 w-full px-1.5 text-[11px] font-medium')}
           />
         ) : (
           <button
             type="button"
             onDoubleClick={() => setRenaming(true)}
-            className="min-w-0 flex-1 truncate text-left text-[11px] font-medium text-hud-fg"
+            className="min-w-0 truncate text-left text-hud-fg"
             title="Double-click to rename — the name picks the starting binding"
           >
             {spec.name}
           </button>
         )}
+        meta={<HudReadout>{surface.rows.length}</HudReadout>}
+        actions={
+          <>
+            {/* Unlinked is the one state here worth a colour: the pane has stopped
+                following the panel, so what it shows and what the query says can
+                now disagree. It stays lit when the others fade. */}
+            <HudButton
+              size="sm"
+              icon={spec.linked ? Link2 : Link2Off}
+              tone={spec.linked ? 'neutral' : 'warn'}
+              onClick={() => onUpdate(spec.linked
+                // Forking inherits what you were reading. Unlinking to an EMPTY
+                // bar threw the current view away and made the pane jump, so the
+                // gesture cost you your place to gain an edit.
+                ? { linked: false, q: spec.q ?? inheritedQ ?? '' }
+                : { linked: true, q: undefined })}
+              title={spec.linked
+                ? 'Following the panel query — click to give this pane its own'
+                : 'Independent query — click to follow the panel again'}
+              className={cn(
+                'border-transparent hover:border-transparent',
+                spec.linked && 'opacity-0 transition-opacity focus-visible:opacity-100 group-hover/hdr:opacity-100 [@media(pointer:coarse)]:opacity-100',
+              )}
+            />
 
-        <HudReadout>{surface.rows.length}</HudReadout>
+            {onCompose && (
+              <HudButton
+                size="sm"
+                icon={SlidersHorizontal}
+                onClick={onCompose}
+                title="Choose datapoints"
+                className="border-transparent opacity-0 transition-opacity hover:border-transparent
+                           focus-visible:opacity-100 group-hover/hdr:opacity-100 [@media(pointer:coarse)]:opacity-100"
+              />
+            )}
 
-        {/* Unlinked is the one state here worth a colour: the pane has stopped
-            following the panel, so what it shows and what the query says can
-            now disagree. It stays lit when the others fade. */}
-        <HudButton
-          size="sm"
-          icon={spec.linked ? Link2 : Link2Off}
-          tone={spec.linked ? 'neutral' : 'warn'}
-          onClick={() => onUpdate(spec.linked
-            // Forking inherits what you were reading. Unlinking to an EMPTY
-            // bar threw the current view away and made the pane jump, so the
-            // gesture cost you your place to gain an edit.
-            ? { linked: false, q: spec.q ?? inheritedQ ?? '' }
-            : { linked: true, q: undefined })}
-          title={spec.linked
-            ? 'Following the panel query — click to give this pane its own'
-            : 'Independent query — click to follow the panel again'}
-          className={cn(
-            'border-transparent hover:border-transparent',
-            spec.linked && 'opacity-0 transition-opacity focus-visible:opacity-100 group-hover/hdr:opacity-100',
-          )}
-        />
-
-        {onCompose && (
-          <HudButton
-            size="sm"
-            icon={SlidersHorizontal}
-            onClick={onCompose}
-            title="Choose datapoints"
-            className="border-transparent opacity-0 transition-opacity hover:border-transparent
-                       focus-visible:opacity-100 group-hover/hdr:opacity-100"
-          />
-        )}
-
-        {onRemove && (
-          <HudButton
-            size="sm"
-            icon={X}
-            onClick={onRemove}
-            title="Remove pane"
-            className="border-transparent opacity-0 transition-opacity hover:border-transparent
-                       focus-visible:opacity-100 group-hover/hdr:opacity-100"
-          />
-        )}
-      </header>
+            {onRemove && (
+              <HudButton
+                size="sm"
+                icon={X}
+                onClick={onRemove}
+                title="Remove pane"
+                className="border-transparent opacity-0 transition-opacity hover:border-transparent
+                           focus-visible:opacity-100 group-hover/hdr:opacity-100 [@media(pointer:coarse)]:opacity-100"
+              />
+            )}
+          </>
+        }
+      />
 
       {!spec.collapsed && (
         <>

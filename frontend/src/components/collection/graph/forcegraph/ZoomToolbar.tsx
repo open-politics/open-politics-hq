@@ -3,7 +3,7 @@
 import React from 'react';
 import { ZoomIn, ZoomOut, Maximize2, RotateCcw, Shuffle, Sparkles } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { HudButton, HudGroup, HudReadout } from '../chrome';
+import { HudButton, HudGroup, HudReadout } from '@/components/ui/chrome';
 import { defaultGraphViewConfig, type GraphViewConfig } from '../graphTypes';
 
 // =============================================================================

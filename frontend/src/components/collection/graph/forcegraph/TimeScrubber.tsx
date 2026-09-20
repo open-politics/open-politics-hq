@@ -23,7 +23,7 @@
  * make the control feel broken. The scrubber narrows what *has* time.
  */
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { HUD_SURFACE, HudButton, HudChip } from '../chrome';
+import { HUD_SURFACE, HudButton, HudChip } from '@/components/ui/chrome';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Clock as ClockIcon, Pause, Play, X } from 'lucide-react';
 import { cn } from '@/lib/utils';

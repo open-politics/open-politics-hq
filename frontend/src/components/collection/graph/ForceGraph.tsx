@@ -46,6 +46,7 @@ import { useLinkThreeObject } from './forcegraph/useLinkThreeObject';
 import { useNodePositionUpdate3D } from './forcegraph/useNodePositionUpdate3D';
 import { ZoomToolbar } from './forcegraph/ZoomToolbar';
 import { Controls3DHelp } from './forcegraph/Controls3DHelp';
+import { useWebGLSupport } from '@/hooks/useWebGLSupport';
 
 // =============================================================================
 // Dynamic-imported renderers — Three.js (~600 KB) only ships when a panel is
@@ -323,7 +324,19 @@ export const ForceGraph = forwardRef<ForceGraphHandle, ForceGraphProps>(function
   }), [configOverride]);
 
   // viewMode resolution: explicit prop > config > default
-  const viewMode: '2d' | '3d' = viewModeProp ?? config.viewMode ?? '2d';
+  const requestedViewMode: '2d' | '3d' = viewModeProp ?? config.viewMode ?? '2d';
+
+  // ...then whatever the machine can actually do. A saved graph can carry
+  // ``viewMode: '3d'``, and asking for 3D where there is no WebGL context to be
+  // had — a container with no GPU, a VM with software rendering off, a browser
+  // that has run out of contexts — makes ``three`` throw during construction.
+  // The graph is still perfectly readable in 2D, so read it in 2D rather than
+  // taking the whole surface down. The probe is synchronous on the client, so
+  // ``true`` is known before the first render; anything else means we have no
+  // positive evidence a context can be created, and guessing wrong here throws.
+  const webglSupported = useWebGLSupport();
+  const viewMode: '2d' | '3d' =
+    requestedViewMode === '3d' && webglSupported !== true ? '2d' : requestedViewMode;
 
   // ---- Occurrence view: bipartite ⇄ collapsed ----
   //

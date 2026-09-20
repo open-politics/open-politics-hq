@@ -19,7 +19,7 @@ export const Controls3DHelp: React.FC = () => {
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 w-7 p-0 bg-background/80 backdrop-blur-sm border"
+ className="h-7 w-7 p-0 surface-overlay border"
           title="3D navigation help"
           aria-label="Show 3D navigation help"
         >

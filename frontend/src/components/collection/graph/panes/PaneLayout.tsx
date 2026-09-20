@@ -17,6 +17,8 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Plus } from 'lucide-react';
 import { Pane } from './Pane';
+import { HUD_SURFACE, HudButton, HudChip, HudReadout } from '@/components/ui/chrome';
+import { useContainerWidth } from '@/hooks/useContainerWidth';
 import { ResizeHandle } from './ResizeHandle';
 import type { QueryWarning } from './QueryBar';
 import {
@@ -140,12 +142,122 @@ function Region({
   );
 }
 
-export function PaneLayout(props: PaneLayoutProps) {
+/**
+ * The narrow presentation: one strip, every pane, region ignored.
+ *
+ * `REGION_DEFAULT` is 240px of left rail and 300px of right — 540px of chrome
+ * absolutely positioned over a canvas that, on a phone, is 390px wide. The
+ * bounds in `paneTypes` exist so "a drag cannot make a region unusable or hide
+ * the canvas", but they are absolute pixels, so at that width the *defaults*
+ * already did both: two rails overlapping each other on top of the graph they
+ * were describing.
+ *
+ * Nothing about a pane changes here. `region` stays what it always was — a
+ * property of the pane — and this layout simply has no use for it at a width
+ * where there is one place a pane can go. Panes become named chips over the
+ * canvas, and opening one gives it the lower half. That is also the honest
+ * reading order on a small screen: see the graph, ask one question of it, put
+ * the answer away.
+ */
+function NarrowPanes(props: PaneLayoutProps) {
+  const {
+    panes, surfaces, onUpdatePane, onRemovePane, onComposePane, inheritedQ,
+    onAddPane, onPick, onPin, focusIds, warnings, onAsk, detail, tableFor, docs,
+  } = props;
+
+  const [openId, setOpenId] = React.useState<string | null>(null);
+  const open = panes.find(p => p.id === openId) ?? null;
+
+  // A pane removed while open would otherwise leave the strip pointing at
+  // nothing and the drawer stuck holding a stale spec.
+  React.useEffect(() => {
+    if (openId && !panes.some(p => p.id === openId)) setOpenId(null);
+  }, [panes, openId]);
+
+  if (panes.length === 0) return null;
+
   return (
-    <>
-      <Region {...props} region="left" />
-      <Region {...props} region="right" />
-      <Region {...props} region="bottom" />
-    </>
+    <div className="pointer-events-none absolute inset-0 z-10 flex flex-col justify-end gap-1.5 p-2">
+      {open && (
+        <div className={cn('pointer-events-auto flex max-h-[45%] min-h-0 flex-col', HUD_SURFACE)}>
+          <Pane
+            key={open.id}
+            spec={open}
+            surface={surfaces[open.id] ?? { kind: 'list', rows: [], keyNames: [] }}
+            onUpdate={next => onUpdatePane(open.id, next)}
+            onRemove={() => onRemovePane(open.id)}
+            onCompose={onComposePane ? () => onComposePane(open.id) : undefined}
+            inheritedQ={inheritedQ}
+            onPick={onPick}
+            onPin={onPin}
+            focusIds={focusIds}
+            warnings={warnings}
+            onAsk={onAsk}
+            detail={detail}
+            table={tableFor?.(open.name)}
+            docs={docs}
+            className="min-h-0 flex-1 border-0 bg-transparent backdrop-blur-none"
+          />
+        </div>
+      )}
+
+      {/* The strip. Every pane is one chip wide, so the set stays readable at a
+          glance and the canvas keeps everything above it. */}
+      <div
+        className={cn(
+          'pointer-events-auto flex items-center gap-1 overflow-x-auto px-1.5 py-1',
+          HUD_SURFACE,
+        )}
+      >
+        {panes.map(spec => (
+          <HudChip
+            key={spec.id}
+            active={spec.id === openId}
+            onClick={() => setOpenId(id => (id === spec.id ? null : spec.id))}
+            title={spec.name}
+          >
+            <span className="max-w-[8rem] truncate">{spec.name}</span>
+            <HudReadout className={spec.id === openId ? 'opacity-70' : undefined}>
+              {surfaces[spec.id]?.rows.length ?? 0}
+            </HudReadout>
+          </HudChip>
+        ))}
+        <HudButton
+          size="sm"
+          icon={Plus}
+          onClick={() => onAddPane('bottom')}
+          title="Add a pane"
+          className="ml-auto border-transparent hover:border-transparent"
+        />
+      </div>
+    </div>
+  );
+}
+
+export function PaneLayout(props: PaneLayoutProps) {
+  // Measured on the canvas, not the window: this same panel is embedded in the
+  // annotation dashboard, where it can be two grid columns wide on a desktop —
+  // which is the narrow case for the same reason a phone is.
+  const { ref, width } = useContainerWidth<HTMLDivElement>();
+
+  // Below this, two side rails plus a canvas cannot coexist: `REGION_MIN` alone
+  // is 180 + 220, leaving under 250px of graph on a phone.
+  const narrow = width !== null && width < 640;
+
+  return (
+    // Spans the canvas exactly, so it measures the space the regions are
+    // positioned against. `pointer-events-none` keeps the gaps between panes
+    // click-through, the same way each region already did.
+    <div ref={ref} className="pointer-events-none absolute inset-0">
+      {narrow ? (
+        <NarrowPanes {...props} />
+      ) : (
+        <>
+          <Region {...props} region="left" />
+          <Region {...props} region="right" />
+          <Region {...props} region="bottom" />
+        </>
+      )}
+    </div>
   );
 }
