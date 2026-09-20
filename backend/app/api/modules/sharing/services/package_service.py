@@ -33,7 +33,7 @@ from app.models import (
     AnnotationSchemaTargetLevel, RunStatus, RunType, ResultStatus, Source,
     ProcessingStatus,
 )
-from app.api.modules.foundation_service_providers.base import StorageProvider
+from app.api.modules.foundation_service_providers import StorageProvider
 from app.core.config import AppSettings
 from app.schemas import AssetRead, SourceRead, InfospaceCreate, InfospaceRead
 

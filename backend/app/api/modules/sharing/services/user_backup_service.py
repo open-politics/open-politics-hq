@@ -30,7 +30,7 @@ from app.schemas import (
 from app.api.modules.sharing.services.package_service import PackageBuilder, PackageImporter, DataPackage, PackageMetadata
 from app.api.modules.identity_infospace_user.services.infospace_service import InfospaceService
 from app.api.modules.sharing.services.package_service import PackageService
-from app.api.modules.foundation_service_providers.base import StorageProvider
+from app.api.modules.foundation_service_providers import StorageProvider
 from app.core.config import AppSettings
 
 logger = logging.getLogger(__name__)

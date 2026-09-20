@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional
 from sqlmodel import SQLModel, Field
 
 from app.api.modules.identity_infospace_user.models import UserBase, UserTier, CollaboratorRole
-from app.api.modules.foundation_service_providers.base import ProviderDefaults, EnrichmentConfig
+from app.api.modules.foundation_service_providers import ProviderDefaults, EnrichmentConfig
 
 
 # ─── User schemas ───

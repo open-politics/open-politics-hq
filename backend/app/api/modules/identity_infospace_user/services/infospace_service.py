@@ -36,7 +36,7 @@ from app.schemas import (
 )
 
 # ADDED imports for StorageProvider and settings
-from app.api.modules.foundation_service_providers.base import StorageProvider
+from app.api.modules.foundation_service_providers import StorageProvider
 from app.core.config import AppSettings # Changed from settings to AppSettings
 # Moved ShareableService import under TYPE_CHECKING
 if TYPE_CHECKING:
@@ -79,7 +79,13 @@ class InfospaceService:
         from app.api.modules.graph.models import Canon
 
         logger.info(f"Service: Creating infospace '{infospace_in.name}' for user {user_id}")
-        db_infospace = Infospace.model_validate(infospace_in)
+        # ``model_dump()`` first, the way ``update_infospace`` already does it.
+        # ``enrichment_config`` is a typed ``EnrichmentConfig`` on the DTO and a
+        # JSON column on the row; ``model_validate(dto)`` carries the pydantic
+        # object across unchanged and psycopg then refuses to serialise it. Any
+        # caller that set it at CREATE time hit that — only the update path was
+        # ever exercised, because the UI configures enrichment after the fact.
+        db_infospace = Infospace.model_validate(infospace_in.model_dump())
         db_infospace.owner_id = user_id
 
         self.session.add(db_infospace)

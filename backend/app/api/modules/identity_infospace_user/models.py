@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.mutable import MutableDict
 from sqlalchemy.types import JSON
 
-from app.api.modules.foundation_service_providers.base import ProviderDefaults, ProviderSelection, EnrichmentConfig
+from app.api.modules.foundation_service_providers import ProviderDefaults, ProviderSelection, EnrichmentConfig
 
 
 class UserTier(str, enum.Enum):

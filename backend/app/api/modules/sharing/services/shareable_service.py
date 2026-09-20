@@ -73,7 +73,7 @@ from app.schemas import (
     BundlePreview,
     AnnotationRunPreview
 )
-from app.api.modules.foundation_service_providers.base import StorageProvider
+from app.api.modules.foundation_service_providers import StorageProvider
 from app.api.modules.sharing.services.package_service import DataPackage, PackageMetadata
 logger = logging.getLogger(__name__)
 

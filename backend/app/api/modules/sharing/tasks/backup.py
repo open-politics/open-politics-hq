@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
       tags=frozenset({"backup"}))
 def process_backup(ctx: TaskContext, backup_ids: list[int]):
     """Execute PENDING infospace backups."""
-    from app.api.modules.foundation_service_providers.base import StorageProvider
+    from app.api.modules.foundation_service_providers import StorageProvider
     from app.api.modules.sharing.services.backup_service import BackupService
 
     storage = ctx.provider(StorageProvider)
@@ -102,7 +102,7 @@ def process_backup(ctx: TaskContext, backup_ids: list[int]):
       tags=frozenset({"backup"}))
 def cleanup_expired(ctx: TaskContext, backup_ids: list[int]):
     """Delete expired infospace backups."""
-    from app.api.modules.foundation_service_providers.base import StorageProvider
+    from app.api.modules.foundation_service_providers import StorageProvider
     from app.api.modules.sharing.services.backup_service import BackupService
 
     storage = ctx.provider(StorageProvider)
@@ -142,7 +142,7 @@ def cleanup_expired(ctx: TaskContext, backup_ids: list[int]):
       tags=frozenset({"backup"}))
 def auto_backup(ctx: TaskContext, _ids: list[int]):
     """Create automatic backup for infospace if no recent auto backup exists."""
-    from app.api.modules.foundation_service_providers.base import StorageProvider
+    from app.api.modules.foundation_service_providers import StorageProvider
     from app.api.modules.sharing.services.backup_service import BackupService
     from app.api.modules.identity_infospace_user.models import Infospace
     from app.schemas import InfospaceBackupCreate
