@@ -10,10 +10,9 @@ This license concerns the two fundamental technical components created, develope
 
 These are distributed by the Github organisation "open-politics", and namely:
 
-- /open-politics-hq (the app and UX layer)
-- /opol (the data layer)
+- /open-politics-hq 
 
-Both are released under the GNU Affero General Public License, version 3 (AGPLv3).
+HQ is released under the GNU Affero General Public License, version 3 (AGPLv3).
 We also offer an optional Enterprise Self-Hosting License for organizations that need to make private internal modifications without triggering AGPLv3's public-source requirements.
 
 ## 2. AGPLv3 License
