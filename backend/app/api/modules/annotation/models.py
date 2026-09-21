@@ -68,7 +68,10 @@ class AnnotationSchema(SQLModel, table=True):
 
     infospace: Optional[Infospace] = Relationship(back_populates="schemas")
     user: Optional[User] = Relationship(back_populates="schemas")
-    annotations: List["Annotation"] = Relationship(back_populates="schema")
+    annotations: List["Annotation"] = Relationship(
+        back_populates="schema",
+        sa_relationship_kwargs={"cascade": "all, delete-orphan", "passive_deletes": True},
+    )
 
     __table_args__ = (
         Index(
@@ -134,7 +137,14 @@ class AnnotationRun(SQLModel, table=True):
         sa_relationship_kwargs={"foreign_keys": "[AnnotationRun.flow_execution_id]"}
     )
     target_schemas: List["AnnotationSchema"] = Relationship(link_model=RunSchemaLink)
-    annotations: List["Annotation"] = Relationship(back_populates="run")
+    annotations: List["Annotation"] = Relationship(
+        back_populates="run",
+        # An annotation is part of its run. Without this SQLAlchemy disassociated
+        # the children on delete — UPDATE annotation SET run_id = NULL — against a
+        # NOT NULL column. passive_deletes hands the work to the FK's ON DELETE
+        # CASCADE instead of loading every row to delete it one at a time.
+        sa_relationship_kwargs={"cascade": "all, delete-orphan", "passive_deletes": True},
+    )
 
 
 class Annotation(SQLModel, table=True):

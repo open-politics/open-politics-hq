@@ -214,7 +214,7 @@ class Asset(SQLModel, table=True):
     source: Optional[Source] = Relationship(back_populates="assets")
     annotations: List["Annotation"] = Relationship(
         back_populates="asset",
-        sa_relationship_kwargs={"cascade": "all, delete-orphan"},
+        sa_relationship_kwargs={"cascade": "all, delete-orphan", "passive_deletes": True},
     )
     chunks: List["AssetChunk"] = Relationship(
         back_populates="asset",

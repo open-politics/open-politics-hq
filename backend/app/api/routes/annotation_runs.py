@@ -42,6 +42,7 @@ from app.api.modules.identity_infospace_user.access import (
     Access, Capability, Requires,
 )
 from sqlmodel import select, func
+from sqlalchemy import text
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -380,7 +381,17 @@ def delete_run(
         if run.status == RunStatus.RUNNING:
             raise ValueError("Cannot delete a run that is currently processing. Cancel it first.")
         
-        # Delete the run
+        # Human curation is the one child a cascade must never take (see
+        # u1_infospace_cascade_delete), so its FK stays NO ACTION and this path
+        # clears it deliberately — the same thing delete_infospace does. Without
+        # it the FK would refuse the delete once anyone had curated a fragment.
+        session.execute(
+            text("DELETE FROM fragmentcuration WHERE annotation_id IN "
+                 "(SELECT id FROM annotation WHERE run_id = :rid)"),
+            {"rid": run_id},
+        )
+        # Everything else is composition: annotations, aggregates and schema
+        # links go with the run via ON DELETE CASCADE.
         session.delete(run)
         session.commit()
         logger.info(f"Route: Run {run_id} successfully deleted")
