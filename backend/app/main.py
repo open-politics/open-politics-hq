@@ -1,7 +1,8 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.routing import APIRoute
 from starlette.middleware.cors import CORSMiddleware
+import json
 from contextlib import asynccontextmanager
 
 # SSE keepalive: 3s pings to survive nginx proxy_read_timeout=5s (default is 15s)
@@ -10,9 +11,7 @@ fastapi.sse._PING_INTERVAL = 3.0
 
 # Import celery app early to initialize Redis connection for task queueing.
 # load_task_modules() populates THIS process's @task registry + event-bus
-# subscriptions (the worker gets the same set via Celery's `imports`), so that
-# producer-side emit()/kick_tasks() from API routes and the chat MCP tools actually
-# reach their tasks — e.g. intake()'s `ingestion_job.created` → `ingest`.
+# subscriptions (the worker gets the same set via Celery's `imports`).
 from app.core.celery_app import celery, load_task_modules  # noqa: F401
 load_task_modules()
 from app.core.config import settings
@@ -20,11 +19,9 @@ from app.core.config import settings
 from app.api.api_router_global import api_router
 
 # /tools is mounted only when COMPUTE is in the deployment ceiling (see the
-# mount below) — MCP exposes workspace search, annotation runs and asset CRUD,
-# all of which require compute. Importing it costs ~6.5s of the process's ~9s
-# startup, because it drags in the whole FastMCP client+server stack and
-# beartype's 344 modules. So the import follows the same gate as the mount,
-# rather than being paid by deployments that will never serve /tools.
+# mount below). Importing it costs ~6.5s of the process's ~9s startup, because
+# it drags in the whole FastMCP client+server stack and beartype's 344 modules.
+# So the import follows the same gate as the mount.
 MCP_ENABLED = "compute" in settings.deployment_capability_names
 if MCP_ENABLED:
     from app.api.modules.conversational_intelligence.mcp_server.server import (
@@ -36,7 +33,6 @@ def custom_generate_unique_id(route: APIRoute) -> str:
     return f"{route.tags[0]}-{route.name}"
 
 
-# Create an ASGI-compatible application from the FastMCP server.
 # Use stateless_http=True for production HTTP deployment to avoid session issues.
 # FastAPI's `mount` will handle the path, so we don't specify it here.
 mcp_asgi_app = (
@@ -49,8 +45,6 @@ mcp_asgi_app = (
 async def combined_lifespan(app: FastAPI):
 
     
-    # Run the lifespans together — unless MCP is gated off, in which case
-    # there is no second lifespan to combine with.
     if mcp_asgi_app is None:
         yield
         return
@@ -66,7 +60,80 @@ app = FastAPI(
     lifespan=combined_lifespan,
 )
 
-# Set all CORS enabled origins (from AppSettings)
+class BodySizeLimitMiddleware:
+    """Cap every request body at MAX_UPLOAD_SIZE_BYTES.
+
+    Content-Length is rejected up front; the wrapped receive() then counts what
+    actually arrives, which is what catches a chunked upload sending no header.
+    Added before CORSMiddleware so a 413 still carries CORS headers.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        limit = settings.MAX_UPLOAD_SIZE_BYTES
+        too_large = HTTPException(
+            status_code=413,
+            detail=f"Request body exceeds maximum size of {limit} bytes",
+        )
+
+        for name, value in scope.get("headers", ()):
+            if name == b"content-length":
+                try:
+                    declared = int(value)
+                except ValueError:
+                    break              # unparseable: the byte count below decides
+                if declared > limit:
+                    await self._reject(send, too_large)
+                    return
+                break
+
+        received = 0
+        started = False
+
+        async def counting_receive():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > limit:
+                    # Caught by Starlette's ExceptionMiddleware, below us.
+                    raise too_large
+            return message
+
+        async def tracking_send(message):
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, counting_receive, tracking_send)
+        except HTTPException as e:
+            if e is not too_large or started:
+                raise
+            await self._reject(send, too_large)
+
+    @staticmethod
+    async def _reject(send, exc: HTTPException) -> None:
+        body = json.dumps({"detail": exc.detail}).encode()
+        await send({
+            "type": "http.response.start",
+            "status": exc.status_code,
+            "headers": [(b"content-type", b"application/json"),
+                        (b"content-length", str(len(body)).encode())],
+        })
+        await send({"type": "http.response.body", "body": body})
+
+
+app.add_middleware(BodySizeLimitMiddleware)
+
+
 if settings.BACKEND_CORS_ORIGINS:
     cors_origins = [str(o).strip("/") for o in settings.BACKEND_CORS_ORIGINS]
     cors_methods = settings.CORS_ALLOWED_METHODS
@@ -79,9 +146,19 @@ if settings.BACKEND_CORS_ORIGINS:
         allow_headers=cors_headers,
     )
 
-# Security headers middleware (HSTS, CSP, X-Frame-Options)
-class SecurityHeadersMiddleware:
-    """Add security headers to all responses."""
+class ResponseHeadersMiddleware:
+    """Security headers on every response; no-transform on event streams.
+
+    Upstream proxies (nginx, the Next.js dev rewrite) gzip and batch small SSE
+    frames unless told otherwise. `no-transform`, nginx's `X-Accel-Buffering: no`
+    and an explicit identity encoding together cover the variants.
+    """
+
+    CSP = (
+        b"default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+        b"style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; "
+        b"font-src 'self' data:; connect-src 'self' https: wss:; frame-ancestors 'none'"
+    )
 
     def __init__(self, app):
         self.app = app
@@ -95,52 +172,19 @@ class SecurityHeadersMiddleware:
             if message["type"] == "http.response.start":
                 headers = list(message.get("headers", []))
                 if settings.ENVIRONMENT == "production":
-                    headers.append([b"strict-transport-security", b"max-age=31536000; includeSubDomains"])
-                headers.append([b"x-content-type-options", b"nosniff"])
-                headers.append([b"x-frame-options", b"DENY"])
-                headers.append([b"x-xss-protection", b"1; mode=block"])
-                csp = b"default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:; connect-src 'self' https: wss:; frame-ancestors 'none'"
-                headers.append([b"content-security-policy", csp])
-                message["headers"] = headers
-            await send(message)
+                    headers.append(
+                        (b"strict-transport-security", b"max-age=31536000; includeSubDomains")
+                    )
+                headers.append((b"x-content-type-options", b"nosniff"))
+                headers.append((b"x-frame-options", b"DENY"))
+                headers.append((b"x-xss-protection", b"1; mode=block"))
+                headers.append((b"content-security-policy", self.CSP))
 
-        await self.app(scope, receive, send_with_headers)
-
-
-app.add_middleware(SecurityHeadersMiddleware)
-
-
-class SseNoTransformMiddleware:
-    """Force no-transform / no-buffering on every ``text/event-stream`` response.
-
-    Why: gzip middleware in upstream proxies (Next.js dev rewrites, nginx)
-    will batch small SSE frames before flushing, which defeats live progress
-    streams entirely (banner sits at 0% then jumps to 100% at connection close).
-    Standards-compliant ``Cache-Control: no-transform`` plus the nginx hint
-    ``X-Accel-Buffering: no`` plus ``Content-Encoding: identity`` covers all
-    proxy variants we've seen. Applied globally so any future SSE route
-    inherits the fix without per-route plumbing.
-    """
-
-    def __init__(self, app):
-        self.app = app
-
-    async def __call__(self, scope, receive, send):
-        if scope["type"] != "http":
-            await self.app(scope, receive, send)
-            return
-
-        async def send_with_sse_headers(message):
-            if message["type"] == "http.response.start":
-                headers = list(message.get("headers", []))
-                # Detect SSE responses by content-type — only those need this.
                 is_sse = any(
                     name == b"content-type" and b"text/event-stream" in value.lower()
                     for name, value in headers
                 )
                 if is_sse:
-                    # Drop any existing Cache-Control / Content-Encoding the app
-                    # may have set, then add the no-transform set. Idempotent.
                     headers = [
                         (n, v) for (n, v) in headers
                         if n not in (b"cache-control", b"content-encoding", b"x-accel-buffering")
@@ -148,15 +192,14 @@ class SseNoTransformMiddleware:
                     headers.append((b"cache-control", b"no-cache, no-store, no-transform"))
                     headers.append((b"x-accel-buffering", b"no"))
                     headers.append((b"content-encoding", b"identity"))
-                    message["headers"] = headers
+                message["headers"] = headers
             await send(message)
 
-        await self.app(scope, receive, send_with_sse_headers)
+        await self.app(scope, receive, send_with_headers)
 
 
-app.add_middleware(SseNoTransformMiddleware)
+app.add_middleware(ResponseHeadersMiddleware)
 
-# Mount the MCP server only when COMPUTE capability is in the deployment ceiling.
 # MCP exposes workspace search, annotation runs, and asset CRUD — all require compute.
 if mcp_asgi_app is not None:
     app.mount("/tools", mcp_asgi_app)
@@ -166,7 +209,6 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 
 # ─── Startup scope declaration validation ───
 # Every route using Requires() must declare scope= to prevent silent data leaks.
-# Currently warns; will become a hard crash once all routes are annotated.
 
 import logging as _logging
 _startup_logger = _logging.getLogger("app.startup")
@@ -176,9 +218,7 @@ def _iter_api_routes(app_instance):
 
     FastAPI stopped flattening `include_router` into `app.routes`: it now leaves
     a lazy `_IncludedRouter` placeholder that keeps the real router under
-    `original_router`. The previous version of this walk iterated `app.routes`
-    directly, so it saw 6 entries, 0 of them APIRoute, inspected no dependencies
-    and could never fail — it had been silently passing since that upgrade.
+    `original_router`.
     """
     from fastapi.routing import APIRoute
 
@@ -220,9 +260,7 @@ def _validate_capability_vocabulary():
     """config.KNOWN_CAPABILITIES and access.Capability must not drift apart.
 
     config.py cannot import access.py — access's models import config — so the
-    ceiling's vocabulary is spelled out in both places. This is the assertion
-    that keeps the second copy honest: add a Capability and forget config.py,
-    and `allowed_actions: "*"` would quietly stop granting it.
+    ceiling's vocabulary is spelled out in both places.
     """
     from app.api.modules.identity_infospace_user.access import Capability
     from app.core.config import KNOWN_CAPABILITIES
@@ -237,15 +275,10 @@ def _validate_capability_vocabulary():
 
 
 def _validate_scope_declarations(app_instance):
-    """Check that every route with Requires() has a scope declaration."""
     from app.api.modules.identity_infospace_user.access import _SCOPE_UNSET
     missing = []
     routes = list(_iter_api_routes(app_instance))
 
-    # A guard that inspects nothing is worse than no guard: it reports success.
-    # If the route walk ever comes back empty again — another FastAPI internals
-    # change, a reordering that runs this before include_router — fail loudly
-    # rather than pass silently.
     if not routes:
         raise RuntimeError(
             "Scope validation found no API routes to inspect. The route walk is "
