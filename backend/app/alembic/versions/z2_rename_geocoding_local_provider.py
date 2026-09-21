@@ -1,6 +1,6 @@
 """rename geocoding provider key local -> nominatim_local
 
-"local" was only unique because it was scoped to geocoding. my-hq.yml indexes
+"local" was only unique because it was scoped to geocoding. HQ.yml indexes
 providers by key across every capability, where it says nothing and reads as
 the local/self_hosted context. Stored selections carry the old value, so they
 move with it.

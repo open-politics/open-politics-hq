@@ -40,9 +40,9 @@ def get_url():
     """The app's own URI — not a second derivation of it.
 
     This used to rebuild the DSN from POSTGRES_* environment variables while the
-    application built its own from my-hq.yml. Two derivations of one fact, so
+    application built its own from HQ.yml. Two derivations of one fact, so
     they could point at different databases — and did: .env said
-    `opp_app_users_dev`, my-hq.yml said `opp_app_users`, so `alembic upgrade
+    `opp_app_users_dev`, HQ.yml said `opp_app_users`, so `alembic upgrade
     head` migrated a database the app never reads. Worse, POSTGRES_DB is not in
     setup.sh's rendered region, so once .env stops carrying it this fell back to
     the literal default "app".
