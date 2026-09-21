@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/badge'
 import { connectSSE } from '@/lib/sse'
 import { OpenAPI } from '@/client/core/OpenAPI'
 import { cn } from '@/lib/utils'
+import { authHeaders } from '@/lib/authHeaders';
 
 export interface JobProgressBannerProps {
   jobId: number
@@ -75,7 +76,7 @@ export function JobProgressBanner({
         const url = `${OpenAPI.BASE}/api/v1/infospaces/${infospaceId}/ingestion-jobs/${jobId}`
         const headers: Record<string, string> = { Accept: 'application/json' }
         const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null
-        if (token) headers.Authorization = `Bearer ${token}`
+        if (token) Object.assign(headers, authHeaders(token))
         const resp = await fetch(url, { headers, credentials: 'include' })
         if (resp.ok) {
           const job = await resp.json()

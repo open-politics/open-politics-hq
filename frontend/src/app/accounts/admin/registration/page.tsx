@@ -16,6 +16,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { authHeaders } from '@/lib/authHeaders';
 
 interface RegistrationStats {
   total_users: number;
@@ -38,7 +39,7 @@ export default function AdminRegistrationPage() {
     try {
       const response = await fetch('/api/v1/admin/registration/stats', {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+          ...authHeaders(),
         },
       });
       

@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { BackupsService } from '@/client';
 import { toast } from 'sonner';
+import { authHeaders } from '@/lib/authHeaders';
 
 interface InfospaceOverview {
   id: number;
@@ -89,7 +90,7 @@ export default function AdminBackupsPage() {
       
       const response = await fetch(`/api/v1/backups/admin/infospaces-overview?${params}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+          ...authHeaders(),
         },
       });
       
@@ -147,7 +148,7 @@ export default function AdminBackupsPage() {
       const response = await fetch(`/api/v1/backups/${backupId}/restore`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+          ...authHeaders(),
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ 
@@ -183,7 +184,7 @@ export default function AdminBackupsPage() {
         const response = await fetch('/api/v1/backups/admin/backup-all', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+            ...authHeaders(),
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ backup_type: 'manual' }),
@@ -204,7 +205,7 @@ export default function AdminBackupsPage() {
         const response = await fetch('/api/v1/backups/admin/backup-specific', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+            ...authHeaders(),
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ 

@@ -4,6 +4,7 @@ import { useEffect, useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import useAuth from '@/hooks/useAuth';
 import { Loader2 } from 'lucide-react';
+import { authHeaders } from '@/lib/authHeaders';
 
 function SSOCompleteContent() {
   const router = useRouter();
@@ -42,7 +43,7 @@ function SSOCompleteContent() {
         const response = await fetch('/api/v1/sso/discourse/complete', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${token}`,
+            ...authHeaders(token),
             'Content-Type': 'application/x-www-form-urlencoded',
           },
           body: new URLSearchParams({

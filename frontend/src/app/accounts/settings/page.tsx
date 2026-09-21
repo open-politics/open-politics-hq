@@ -13,6 +13,7 @@ import Link from 'next/link';
 import { UsersService } from '@/client';
 import { useUserPreferencesStore } from '@/zustand_stores/storeUserPreferences';
 import ApiKeySettings from '@/components/settings/ApiKeySettings';
+import { authHeaders } from '@/lib/authHeaders';
  
 
 export default function AccountSettingsPage() {
@@ -89,7 +90,7 @@ export default function AccountSettingsPage() {
       const token = localStorage.getItem('access_token');
       const res = await fetch('/api/v1/users/me/handle', {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        headers: { 'Content-Type': 'application/json', ...(token ? { ...authHeaders(token) } : {}) },
         body: JSON.stringify({ handle }),
       });
       if (!res.ok) {

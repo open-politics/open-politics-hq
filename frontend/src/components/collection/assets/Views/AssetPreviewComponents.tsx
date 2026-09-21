@@ -9,6 +9,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useAssetStore } from '@/zustand_stores/storeAssets';
 import { toast } from 'sonner';
+import { authHeaders } from '@/lib/authHeaders';
 
 // Helper function to check if an image URL is a .gif file
 const isGifImage = (url: string): boolean => {
@@ -35,7 +36,7 @@ export const CompactWebPreview: React.FC<CompactWebPreviewProps> = ({ asset, cla
     try {
       const response = await fetch(`/api/v1/files/stream/${encodeURIComponent(blobPath)}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+          ...authHeaders(),
         },
       });
 
@@ -183,7 +184,7 @@ export const CompactImagePreview: React.FC<CompactImagePreviewProps> = ({ asset,
     try {
       const response = await fetch(`/api/v1/files/stream/${encodeURIComponent(blobPath)}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+          ...authHeaders(),
         },
       });
 
@@ -299,7 +300,7 @@ export const CompactCSVPreview: React.FC<CompactCSVPreviewProps> = ({ asset, cla
     try {
       const response = await fetch(`/api/v1/files/stream/${encodeURIComponent(blobPath)}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+          ...authHeaders(),
         },
       });
 

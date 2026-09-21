@@ -18,6 +18,7 @@ import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import ComposedArticleRenderer from '../Views/Articles/ComposedArticleRenderer';
 import { DockBack, DockClose } from '@/components/collection/intake/DockNav';
 import type { SurfaceContentProps } from '@/components/collection/intake/types';
+import { authHeaders } from '@/lib/authHeaders';
 
 interface EmbeddedAsset {
   id: string;
@@ -304,7 +305,7 @@ export default function ArticleComposer({ init, close, back, mode: surfaceMode }
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
-              'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+              ...authHeaders(),
             },
             body: JSON.stringify(compositionData)
           });

@@ -7,6 +7,7 @@ import { Loader2, Eye, Download, X, Files, FileText, ChevronLeft, ChevronRight }
 import { cn } from '@/lib/utils';
 import { AssetRead } from '@/client';
 import { toast } from 'sonner';
+import { authHeaders } from '@/lib/authHeaders';
 
 // Define placeholder types since DataRecordRead doesn't exist
 interface AssetRecord {
@@ -90,7 +91,7 @@ const AssetDetailViewPdf: React.FC<AssetDetailViewPdfProps> = ({
     try {
       const response = await fetch(viewUrl, {
         method: 'GET',
-        headers: { 'Authorization': `Bearer ${token}` },
+        headers: { ...authHeaders(token) },
       });
 
       if (!response.ok) {

@@ -87,6 +87,7 @@ import { useTreeStore } from '@/zustand_stores/storeTree'
 import { PersistentTaskTracker } from './PersistentTaskTracker'
 import { MessageToolPanel } from './MessageToolPanel'
 import { MessageTaskPanel } from './MessageTaskPanel'
+import { AUTH_HEADER, authHeaders } from '@/lib/authHeaders';
 
 function CompactCompanionMenu({
   messages,
@@ -287,9 +288,9 @@ export function IntelligenceChat({ className, agent, runId, onAgentMutation, emb
           Object.assign(headers, resolved)
         }
         // Fallback to localStorage token
-        if (!headers['Authorization'] && typeof window !== 'undefined') {
+        if (!headers[AUTH_HEADER] && typeof window !== 'undefined') {
           const token = localStorage.getItem('access_token')
-          if (token) headers['Authorization'] = `Bearer ${token}`
+          if (token) Object.assign(headers, authHeaders(token))
         }
       } catch {}
       

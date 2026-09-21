@@ -17,6 +17,7 @@ import {
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import type { StorageBrowseEntry, IngestionJobRead } from '@/client';
+import { authHeaders } from '@/lib/authHeaders';
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B';
@@ -72,7 +73,7 @@ interface PipelineStats {
 
 function getAuthHeaders(): Record<string, string> {
   const token = typeof window !== 'undefined' ? localStorage.getItem('access_token') : null;
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return token ? { ...authHeaders(token) } : {};
 }
 
 function usePipelineStats(jobId: number | null, poll: boolean = false) {

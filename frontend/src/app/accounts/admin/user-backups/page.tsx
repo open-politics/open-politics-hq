@@ -24,6 +24,7 @@ import {
   UserPlus
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { authHeaders } from '@/lib/authHeaders';
 
 interface UserOverview {
   id: number;
@@ -112,7 +113,7 @@ export default function AdminUserBackupsPage() {
       
       const response = await fetch(`/api/v1/user-backups/admin/users-overview?${params}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+          ...authHeaders(),
         },
       });
       
@@ -146,7 +147,7 @@ export default function AdminUserBackupsPage() {
       
       const response = await fetch(`/api/v1/user-backups?${params}`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+          ...authHeaders(),
         },
       });
       
@@ -197,7 +198,7 @@ export default function AdminUserBackupsPage() {
       const response = await fetch('/api/v1/user-backups', {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+          ...authHeaders(),
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -235,7 +236,7 @@ export default function AdminUserBackupsPage() {
         const response = await fetch('/api/v1/user-backups/admin/backup-all', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+            ...authHeaders(),
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ backup_type: 'system' }),
@@ -256,7 +257,7 @@ export default function AdminUserBackupsPage() {
         const response = await fetch('/api/v1/user-backups/admin/backup-specific', {
           method: 'POST',
           headers: {
-            'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+            ...authHeaders(),
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({ 
@@ -301,7 +302,7 @@ export default function AdminUserBackupsPage() {
       const response = await fetch(`/api/v1/user-backups/${backup.id}/restore`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+          ...authHeaders(),
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -335,7 +336,7 @@ export default function AdminUserBackupsPage() {
       const response = await fetch(`/api/v1/user-backups/${backup.id}/share`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+          ...authHeaders(),
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({

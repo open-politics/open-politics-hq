@@ -80,6 +80,7 @@ import {
 } from './cellRenderers';
 import { Rows3, Rows4, AlignJustify } from 'lucide-react';
 import { AssetDetailContext } from '@/components/collection/assets/Views/AssetDetailProvider';
+import { authHeaders } from '@/lib/authHeaders';
 
 // Extend TableMeta type if needed for onRowClick
 declare module '@tanstack/react-table' {
@@ -539,7 +540,7 @@ export function AnnotationResultsTable({
         apiUrl,
         {
           headers: {
-            Authorization: `Bearer ${localStorage.getItem('access_token')}`,
+            ...authHeaders(),
           },
         }
       );
@@ -799,7 +800,7 @@ export function AnnotationResultsTable({
           } else if (asset.blob_path && activeInfospace?.id) {
             const response = await fetch(`/api/v1/files/stream/${encodeURIComponent(asset.blob_path)}`, {
               headers: {
-                'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+                ...authHeaders(),
               },
             });
             if (response.ok) {
