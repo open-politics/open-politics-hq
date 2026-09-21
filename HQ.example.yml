@@ -106,7 +106,7 @@ deployment:
       max_concurrency: 20         # default_concurrency may not exceed this
       chunk_size: 50              # commit granularity, so a 50k run isnt one transaction
   starter:                        # what a brand new install begins with. first boot only
-    documents: /app/seed          # ./seed in the repo, mounted here. drop files in, or leave empty
+    documents: /app/seed          # ./.github/seed in the repo, mounted here. drop files in, or leave empty
     schemas: [minimal, positions] # ids from the built-in template catalogue. [] = none
   sso:
     discourse:

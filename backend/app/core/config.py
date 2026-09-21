@@ -325,7 +325,7 @@ class AppSettings(BaseSettings):
     DISPATCH_REACTIVE_WORK_INTERVAL_SECONDS: int = Field(validation_alias=AliasChoices("DISPATCH_REACTIVE_WORK_INTERVAL_SECONDS", AliasPath("deployment", "processing", "dispatch_interval_seconds")), default=120, ge=1)
 
     # What a fresh install starts with, applied once when the superuser is created.
-    # The path is inside the container; compose bind-mounts ./seed onto /app/seed.
+    # The path is inside the container; compose bind-mounts ./.github/seed onto /app/seed.
     STARTER_DOCUMENTS_PATH: str = Field(validation_alias=AliasPath("deployment", "starter", "documents"), default="/app/seed")
     # Template ids from annotation/templates.py list_templates(). Empty = no schemas.
     STARTER_SCHEMAS: List[str] = Field(validation_alias=AliasPath("deployment", "starter", "schemas"), default_factory=lambda: ["minimal", "positions"])

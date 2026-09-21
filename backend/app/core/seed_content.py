@@ -61,7 +61,7 @@ def _seed_documents(session: Session, *, user_id: int, infospace_id: int) -> Non
     from app.api.modules.content.intake import intake
     from app.api.modules.content.tree import resolve_or_create_bundle
 
-    # copy_mode: they become the user's own data, so emptying ./seed afterwards
+    # copy_mode: they become the user's own data, so emptying ./.github/seed afterwards
     # leaves nothing dangling.
     dest = resolve_or_create_bundle(
         session, infospace_id, user_id, bundle_name="Starter documents"

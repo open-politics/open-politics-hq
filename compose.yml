@@ -38,7 +38,7 @@ services:
     volumes:
       - ./HQ.yml:/app/HQ.yml:ro
       # Starter content, read on first boot. Path is deployment.starter.documents.
-      - ./seed:/app/seed:ro
+      - ./.github/seed:/app/seed:ro
       - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:$${BACKEND_PORT:-8022}/api/v1/healthz/liveness >/dev/null"]
@@ -113,7 +113,7 @@ services:
     volumes:
       - ./HQ.yml:/app/HQ.yml:ro
       # Starter content, read on first boot. Path is deployment.starter.documents.
-      - ./seed:/app/seed:ro
+      - ./.github/seed:/app/seed:ro
       - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
     # Source bind is dev-only (compose.override.yml).
     extra_hosts:
@@ -141,7 +141,7 @@ services:
     volumes:
       - ./HQ.yml:/app/HQ.yml:ro
       # Starter content, read on first boot. Path is deployment.starter.documents.
-      - ./seed:/app/seed:ro
+      - ./.github/seed:/app/seed:ro
       - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
     # Source bind is dev-only (compose.override.yml).
     extra_hosts:
