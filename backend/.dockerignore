@@ -25,7 +25,7 @@ app/tests
 .env
 .env.*
 !.env.example
-my-hq.yml
+HQ.yml
 
 # Docker
 Dockerfile

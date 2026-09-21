@@ -37,7 +37,7 @@ FROM base AS deps
 # runtime stage branches off `base`, so uv never reaches a pushed image.
 COPY --from=ghcr.io/astral-sh/uv:0.12.17 /uv /uvx /bin/
 
-# Derived from `stack.environment` in my-hq.yml by setup.sh (local -> true).
+# Derived from `stack.environment` in HQ.yml by setup.sh (local -> true).
 # Defaults to false so anything that builds without passing a build arg — the
 # registry push script, a plain `docker build` — gets the lean image.
 ARG INSTALL_DEV=false
