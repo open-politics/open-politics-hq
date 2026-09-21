@@ -1573,7 +1573,7 @@ export function IntelligenceChat({ className, agent, runId, onAgentMutation, emb
                                 </div>
                               )}
                               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
-                                <Eye className="h-4 w-4 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                                <Eye className="h-4 w-4 text-white opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 transition-opacity drop-shadow-lg" />
                               </div>
                             </div>
                           )
@@ -1826,7 +1826,7 @@ export function IntelligenceChat({ className, agent, runId, onAgentMutation, emb
                               {conv.title}
                             </h4>
                           </div>
-                          <div className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity flex gap-0.5">
+                          <div className="shrink-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 transition-opacity flex gap-0.5">
                             <Button
                               variant="ghost"
                               size="icon"
@@ -2407,7 +2407,7 @@ export function IntelligenceChat({ className, agent, runId, onAgentMutation, emb
                           </div>
                         )}
                         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition-colors flex items-center justify-center">
-                          <Eye className="h-3 w-3 text-white opacity-0 group-hover:opacity-100 transition-opacity drop-shadow-lg" />
+                          <Eye className="h-3 w-3 text-white opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 transition-opacity drop-shadow-lg" />
                         </div>
                       </div>
                       

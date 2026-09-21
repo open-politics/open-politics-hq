@@ -117,7 +117,7 @@ export function ExemplarRow({
                       disabled={atFloor}
                       onClick={() => onToggle(f.id)}
                       className={cn(
-                        'ml-auto shrink-0 rounded px-1 text-[11px] leading-none text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-foreground',
+                        'ml-auto shrink-0 rounded px-1 text-[11px] leading-none text-muted-foreground opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 hover:text-foreground',
                         atFloor && 'cursor-not-allowed opacity-0',
                       )}
                       title={atFloor ? 'Keep at least one field' : 'Hide this field'}

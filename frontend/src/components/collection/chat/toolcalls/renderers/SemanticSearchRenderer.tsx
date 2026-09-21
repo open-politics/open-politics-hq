@@ -87,7 +87,7 @@ function ChunkCard({
             >
               <FileText className="h-3 w-3 flex-shrink-0" />
               <span className="truncate">{chunk.asset_title}</span>
-              <ExternalLink className="h-2.5 w-2.5 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0" />
+              <ExternalLink className="h-2.5 w-2.5 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 transition-opacity flex-shrink-0" />
             </button>
             <Badge variant="secondary" className="text-[9px] h-4 px-1">
               {formatKind(chunk.asset_kind)}

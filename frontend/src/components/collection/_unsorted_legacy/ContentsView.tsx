@@ -1141,7 +1141,7 @@ export function ContentsView({
                               ? selectionMode === 'classification'
                                 ? "bg-gradient-to-r from-[#7AEFFF]/30 via-[#7CFF7A]/30 to-[#FEEC90]/30 border border-[#7CFF7A]/50" 
                                 : "bg-blue-500/20 border border-blue-500/30"
-                              : "bg-background/80 opacity-0 group-hover:opacity-100 border border-muted"
+                              : "bg-background/80 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 border border-muted"
                           )}
                           onClick={(e) => {
                             e.stopPropagation();

@@ -678,7 +678,7 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
                       <button
                         onClick={() => handleRemoveModel(model, provider.id)}
                         disabled={isRemovingModel === model}
-                        className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity shrink-0"
+                        className="opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 text-muted-foreground hover:text-destructive transition-opacity shrink-0"
                       >
                         {isRemovingModel === model ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
                       </button>
