@@ -6,6 +6,7 @@ import {
 import { InfospaceRead, InfospaceCreate, InfospaceUpdate, ResourceType } from '@/client';
 import { useShareableStore } from './storeShareables'; // Import the shareable store
 import { toast } from 'sonner';
+import { authHeaders } from '@/lib/authHeaders';
 
 // Helper function to trigger browser download
 const triggerDownload = (blob: Blob, filename: string) => {
@@ -164,7 +165,7 @@ export const useInfospaceStore = create<InfospaceState>()(
             {
               method: 'POST',
               headers: {
-                'Authorization': `Bearer ${token}`,
+                ...authHeaders(token),
               },
             }
           );

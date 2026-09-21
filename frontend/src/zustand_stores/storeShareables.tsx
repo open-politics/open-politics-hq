@@ -20,6 +20,7 @@ import { OpenAPI } from '../client'; // Added import for OpenAPI.BASE
 import { saveAs } from 'file-saver';
 import { toast } from 'sonner';
 import { ApiError } from '@/client/core/ApiError';
+import { authHeaders } from '@/lib/authHeaders';
 
 // --- New Frontend-specific types for the Public View ---
 export interface AssetPreview {
@@ -312,7 +313,7 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
       const response = await fetch(`${OpenAPI.BASE}/api/v1/shareables/${infospaceId}/export`, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          ...authHeaders(token),
         },
         body: formData,
       });
@@ -381,7 +382,7 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
+          ...authHeaders(token),
         },
         body: JSON.stringify(requestBody),
       });
@@ -436,7 +437,7 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
+          ...authHeaders(token),
         },
         body: JSON.stringify({ asset_ids: assetIds, bundle_ids: bundleIds }),
       });
@@ -524,7 +525,7 @@ export const useShareableStore = create<ShareableState>((set, get) => ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${authToken}`,
+          ...authHeaders(authToken),
         },
         body: JSON.stringify(body),
       });

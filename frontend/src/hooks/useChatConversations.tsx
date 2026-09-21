@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { useChatHistoryStore, ChatConversation, ChatConversationWithMessages } from '@/zustand_stores/storeChatHistory';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { OpenAPI } from '@/client/core/OpenAPI';
+import { AUTH_HEADER, authHeaders } from '@/lib/authHeaders';
 
 export interface ChatHistoryScope {
   /** Agent kind to filter by. ``undefined`` / ``'intelligence'`` → workspace
@@ -39,9 +40,9 @@ export function useChatConversations(scope?: ChatHistoryScope) {
       if (resolved && typeof resolved === 'object') {
         Object.assign(headers, resolved);
       }
-      if (!headers['Authorization'] && typeof window !== 'undefined') {
+      if (!headers[AUTH_HEADER] && typeof window !== 'undefined') {
         const token = localStorage.getItem('access_token');
-        if (token) headers['Authorization'] = `Bearer ${token}`;
+        if (token) Object.assign(headers, authHeaders(token));
       }
     } catch {}
     return headers;

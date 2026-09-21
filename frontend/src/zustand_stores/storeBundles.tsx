@@ -11,6 +11,7 @@ import {
 import { toast } from 'sonner';
 import { useInfospaceStore } from './storeInfospace';
 import { OpenAPI } from '@/client';
+import { authHeaders } from '@/lib/authHeaders';
 
 interface BundleState {
   bundles: BundleRead[];
@@ -198,7 +199,7 @@ export const useBundleStore = create<BundleState>((set, get) => ({
       const response = await fetch(`${OpenAPI.BASE}/api/v1/infospaces/${activeInfospace.id}/bundles/${bundleId}/assets?skip=0&limit=100`, {
         method: 'GET',
         headers: {
-          'Authorization': `Bearer ${token}`,
+          ...authHeaders(token),
         },
       });
 

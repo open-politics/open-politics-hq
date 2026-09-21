@@ -13,6 +13,7 @@
  */
 
 import { OpenAPI } from '@/client/core/OpenAPI';
+import { AUTH_HEADER, authHeaders } from '@/lib/authHeaders';
 
 export interface SSEEvent {
   id?: string;
@@ -46,9 +47,9 @@ export async function resolveAuthHeaders(): Promise<Record<string, string>> {
     if (resolved && typeof resolved === 'object') {
       Object.assign(headers, resolved);
     }
-    if (!headers['Authorization'] && typeof window !== 'undefined') {
+    if (!headers[AUTH_HEADER] && typeof window !== 'undefined') {
       const token = localStorage.getItem('access_token');
-      if (token) headers['Authorization'] = `Bearer ${token}`;
+      if (token) Object.assign(headers, authHeaders(token));
     }
   } catch { /* resolver failed, proceed without */ }
   return headers;

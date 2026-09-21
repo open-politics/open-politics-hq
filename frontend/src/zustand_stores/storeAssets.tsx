@@ -11,6 +11,7 @@ import {
 import { toast } from 'sonner';
 import { useInfospaceStore } from './storeInfospace';
 import { useShareableStore } from './storeShareables';
+import { authHeaders } from '@/lib/authHeaders';
 
 // TODO: Update imports when client is regenerated
 
@@ -300,7 +301,7 @@ export const useAssetStore = create<AssetState>((set, get) => ({
       const response = await fetch(url, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+          ...authHeaders(),
           'Content-Type': 'application/json',
         },
       });

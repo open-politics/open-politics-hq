@@ -10,6 +10,7 @@ import {
   OpenAPI,
 } from '@/client';
 import { useProvidersStore } from '@/zustand_stores/storeProviders';
+import { authHeaders } from '@/lib/authHeaders';
 
 type User = UserOut & {
   avatar?: string;
@@ -31,7 +32,7 @@ const useAuth = () => {
     const updateTokenState = () => {
       const token = localStorage.getItem("access_token");
       setHasToken(!!token);
-      OpenAPI.HEADERS = token ? async () => ({ Authorization: `Bearer ${token}` }) : undefined;
+      OpenAPI.HEADERS = token ? async () => ({ ...authHeaders(token) }) : undefined;
     };
 
     updateTokenState();
@@ -64,7 +65,7 @@ const useAuth = () => {
     mutationFn: async (data: AccessToken) => {
       const response = await LoginService.loginAccessToken({ formData: data });
       localStorage.setItem('access_token', response.access_token);
-      OpenAPI.HEADERS = async () => ({ Authorization: `Bearer ${response.access_token}` });
+      OpenAPI.HEADERS = async () => ({ ...authHeaders(response.access_token) });
       return response;
     },
     onSuccess: () => {

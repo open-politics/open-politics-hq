@@ -15,6 +15,7 @@
 import { create } from 'zustand';
 import { useInfospaceStore } from './storeInfospace';
 import { toast } from 'sonner';
+import { authHeaders } from '@/lib/authHeaders';
 
 interface MediaBlobState {
   // Cache: blobPath -> blob URL
@@ -67,7 +68,7 @@ export const useMediaBlobStore = create<MediaBlobState>((set, get) => ({
           `/api/v1/files/stream/${encodeURIComponent(blobPath)}`,
           {
             headers: {
-              'Authorization': `Bearer ${localStorage.getItem('access_token')}`,
+              ...authHeaders(),
             },
           }
         );
