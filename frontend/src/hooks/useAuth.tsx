@@ -9,6 +9,7 @@ import {
   UsersService,
   OpenAPI,
 } from '@/client';
+import { useProvidersStore } from '@/zustand_stores/storeProviders';
 
 type User = UserOut & {
   avatar?: string;
@@ -21,6 +22,7 @@ const useAuth = () => {
   const [error, setError] = useState<string | null>(null);
   const [hasToken, setHasToken] = useState<boolean>(false);
   const [isLoggingOut, setIsLoggingOut] = useState<boolean>(false);
+  const hydrateFromProfile = useProvidersStore((s) => s.hydrateFromProfile);
 
   // Check token on mount and listen for changes
   useEffect(() => {
@@ -49,6 +51,14 @@ const useAuth = () => {
     staleTime: 5 * 60 * 1000, // 5 minutes
     gcTime: 10 * 60 * 1000, // 10 minutes
   })
+
+  // The provider store writes `provider_defaults` but had no reader, so a saved
+  // default never came back and every picker fell through to its own heuristic.
+  useEffect(() => {
+    if (user?.provider_defaults) {
+      hydrateFromProfile(user.provider_defaults as any);
+    }
+  }, [user?.provider_defaults, hydrateFromProfile]);
 
   const loginMutation = useMutation({
     mutationFn: async (data: AccessToken) => {

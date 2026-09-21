@@ -39,6 +39,9 @@ export interface ProviderMetadata {
   features: string[];
   /** Whether this endpoint manages its own model inventory. Ask this, never the id. */
   pullable?: boolean;
+  /** Reports its inventory live. Not the same as pullable: llama.cpp lists
+   *  the one GGUF it serves but cannot install another. */
+  listable?: boolean;
   /** The wire it speaks. Two providers sharing one share a wire. */
   dialect?: string;
   /** True when the provider requires an explicit model_name for save-validation to pass. */
