@@ -10,13 +10,13 @@ import asyncio
 from jose import jwt
 
 from app.api.modules.foundation_service_providers import (
-    resolve, ProviderError, get_model_spec, GenerationOptions,
+    resolve, ProviderError, GenerationOptions,
 )
 from app.api.modules.foundation_service_providers import GenerationResponse
 from app.models import Asset, User, Infospace, Bundle, AnnotationSchema, Annotation, AssetKind
 from app.api.modules.annotation.services import AnnotationService
 from app.api.modules.content.query import AssetQuery
-from app.api.modules.identity_infospace_user.access import resolve_access_capped
+from app.api.modules.identity_infospace_user.access import resolve_access
 from app.api.modules.conversational_intelligence import catalogue as C
 from app.schemas import AnnotationRunCreate
 from app.api.modules.conversational_intelligence.mcp_server.client import (
@@ -255,8 +255,12 @@ class IntelligenceConversationService:
                 f"No LLM provider available for model '{model_name}': {e}"
             )
 
-        model_spec = get_model_spec("language", provider_instance.provider_key, model_name)
-        supports_tools = bool(getattr(model_spec, "supports_tools", False)) if model_spec else False
+        # Capability facts ride on the resolution: declared spec, else the wire's
+        # baseline. A provider that declares no models at all (llama.cpp, Ollama)
+        # has only the baseline, and asking a declaration-only lookup instead
+        # answered "supports nothing" — so tools were never sent and the model
+        # emitted its template's call syntax as prose.
+        supports_tools = bool(getattr(provider_instance.spec, "supports_tools", False))
 
         # The HQ operator is the only persona (browse-all catalogue). Unset and
         # legacy 'intelligence' both map to it.
@@ -298,15 +302,6 @@ class IntelligenceConversationService:
         else:
             tools = None
 
-        # Cache the tool surface. It is large (full MCP schemas) and byte-identical
-        # across every tool-loop iteration AND every conversation turn, so it is the
-        # single biggest stable prefix in chat. A marker on the LAST tool caches the
-        # whole tool block on Anthropic (prefix order is tools → system → messages);
-        # OpenAI/Ollama rebuild tool dicts and drop the key, so this is a safe no-op
-        # there (OpenAI caches stable prefixes automatically regardless).
-        if tools:
-            tools[-1] = {**tools[-1], "cacheable": True}
-
         infospace = self.session.get(Infospace, infospace_id)
         if is_operator:
             system_context = self._build_operator_context(infospace, active_scenario, current_route, current_focus)
@@ -323,7 +318,7 @@ class IntelligenceConversationService:
         # it loads routes through the normal MCP path, which re-gates via each
         # operation's declared `requires`.
         if is_operator:
-            operator_access = resolve_access_capped(
+            operator_access = resolve_access(
                 self.session, infospace_id, self.session.get(User, user_id)
             )
 
@@ -858,18 +853,22 @@ General principles:
         capability: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Enumerate statically-declared language models across the deployment.
+        Language models this deployment can offer a picker.
 
-        Reads from the descriptor registry — no credentials, no infospace context.
-        Callers that need credential-validated discovery should go through the
-        ``/providers/models`` route (infospace-gated) instead.
+        A provider that declares none (llama.cpp, Ollama) has only live ones, so
+        the declaration alone is no answer there. Discovery for those needs no
+        infospace — they are keyless — and a keyed endpoint that cannot be built
+        without credentials falls back to its declared list.
         """
-        from app.api.modules.foundation_service_providers import list_providers
+        from app.api.modules.foundation_service_providers import list_models, list_providers
         from app.api.modules.foundation_service_providers import LLMModelSpec
 
         results: List[Dict[str, Any]] = []
         for provider_key, desc in list_providers("language"):
-            for spec in desc.models:
+            specs = list(desc.models)
+            if not specs:
+                specs = await list_models("language", provider_key)
+            for spec in specs:
                 if not isinstance(spec, LLMModelSpec):
                     continue
                 entry = {

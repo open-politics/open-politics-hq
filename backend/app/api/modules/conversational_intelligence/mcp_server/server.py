@@ -52,7 +52,7 @@ from fastmcp import FastMCP, Context
 from fastmcp.tools import ToolResult  # fastmcp>=4 dropped the .tools.tool submodule
 from mcp.types import TextContent
 
-from app.api.modules.identity_infospace_user.access import resolve_access_capped, Capability
+from app.api.modules.identity_infospace_user.access import resolve_access, Capability
 from app.api.modules.conversational_intelligence.catalogue import make_operation, requires_for
 from app.core.config import settings
 from app.api.modules.foundation_service_providers import resolve
@@ -125,7 +125,7 @@ def _gate(services):
     capability. Fat hubs escalate per-mode on the returned ``access``.
     """
     op_name = inspect.currentframe().f_back.f_code.co_name
-    return resolve_access_capped(
+    return resolve_access(
         services["session"], services["infospace_id"], services["user"],
         *requires_for(op_name),
     )
@@ -4851,7 +4851,6 @@ async def _analysis_share_run(
         
         services["session"].commit()
         
-        # settings.FRONTEND_URL has never existed — this raised AttributeError
         # after the link was already committed. server_host is what the email
         # service builds user-facing links from.
         share_url = f"{settings.server_host}/share/{link.token}"

@@ -59,7 +59,11 @@ async def process_asset(
     session.commit()
     try:
         opts = dict(options or {})
-        opts.setdefault("max_pages", settings.PDF_MAX_PAGES)
+        # PDF_MAX_PAGES is a ceiling, not a default: a caller may ask for fewer
+        # pages than the deployment allows, never more. 0 = no limit, both sides.
+        ceiling = settings.PDF_MAX_PAGES
+        requested = opts.get("max_pages") or ceiling
+        opts["max_pages"] = min(requested, ceiling) if ceiling else requested
         context = ProcessingContext(
             session=session, user_id=asset.user_id, infospace_id=asset.infospace_id,
             storage_provider=storage, scraping_provider=scraping, options=opts,

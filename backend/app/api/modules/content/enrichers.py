@@ -4,8 +4,8 @@ Enrichment system: @enricher decorator and enricher functions.
 @enricher wraps @task with enrichment defaults:
 - enrichment_resolved gate (GIN-indexed, prevents re-dispatch)
 - EnrichmentContext with done/fail/skip/provider
-- dispatch_filter checks deployment.processing.background_content_enrichers
-  + enrichment_config + capability
+- dispatch_filter: background_content_enrichers is the default, the
+  infospace's enrichment_config overrides it, the capability must be reachable
 
 Six enrichers: ocr, geocoding, hash, language_detection, quality_score, embedding.
 """
@@ -49,33 +49,23 @@ def retry_enrichment(session: Session, asset_id: int, enricher_name: str):
 # ── @enricher decorator ───────────────────────────────────────────────────────
 
 def _enrichment_dispatch_filter(enricher_name: str, capability: str | None = None):
-    """Build dispatch_filter for an enricher: deployment switch + enrichment_config + capability."""
     def _filter(infospace) -> bool:
-        from app.core.dispatch import _get_enabled_enrichers
-        if enricher_name not in _get_enabled_enrichers():
-            return False
+        from app.api.modules.foundation_service_providers import (
+            EnrichmentConfig, enricher_enabled,
+        )
+        from app.core.dispatch import _get_enabled_enrichers, _is_capability_configured
 
-        # Check enrichment_config
         config = getattr(infospace, "enrichment_config", None)
-        if config is not None:
-            # EnrichmentConfig exists — enricher must be explicitly enabled
-            if isinstance(config, dict):
-                from app.api.modules.foundation_service_providers import EnrichmentConfig
-                config = EnrichmentConfig(**config)
-            if not config.is_enabled(enricher_name):
-                return False
-        elif capability:
-            # Capability-gated enrichers (embedding, ocr, geocoding) need
-            # explicit per-infospace opt-in via enrichment_config
+        if isinstance(config, dict):
+            config = EnrichmentConfig(**config)
+
+        if not enricher_enabled(
+            enricher_name, config,
+            deployment_default=enricher_name in _get_enabled_enrichers(),
+        ):
             return False
 
-        # Check capability availability
-        if capability:
-            from app.core.dispatch import _is_capability_configured
-            if not _is_capability_configured(capability):
-                return False
-
-        return True
+        return not capability or _is_capability_configured(capability)
     return _filter
 
 
@@ -88,8 +78,6 @@ def enricher(
     **overrides,
 ):
     """
-    @enricher wraps @task. Sets enrichment defaults, swaps in EnrichmentContext.
-
     The check callable takes a base query (already scoped to infospace + READY + not resolved)
     and adds enricher-specific conditions.
     """
@@ -102,7 +90,6 @@ def enricher(
     defaults.update(overrides)
 
     def enricher_check(infospace_id: int):
-        """Build complete query: base conditions + enricher-specific check."""
         base = (
             select(Asset.id)
             .where(
@@ -115,9 +102,8 @@ def enricher(
         # non_superseded_filter handles is_superseded + parent_is_superseded
         for clause in non_superseded_filter():
             base = base.where(clause)
-        return check(base)  # enricher lambda adds .where() conditions
+        return check(base)
 
-    # Build a custom context_cls factory
     class _EnrichmentContextFactory(EnrichmentContext):
         def __init__(self, **kwargs):
             kwargs["enricher_name"] = name
@@ -187,12 +173,6 @@ def enrich_ocr(ctx: EnrichmentContext, asset_ids: list[int]):
     # Let a ProviderError propagate. The @task wrapper turns it into a
     # structural block that survives until the user fixes their config, so
     # dispatch stops selecting this batch.
-    #
-    # This used to catch it, log a warning and return — marking nothing. The
-    # assets stayed absent from `enrichment_resolved`, so the enricher's own
-    # check query re-selected the identical batch every 60 seconds, forever,
-    # logging the same warning each time. The other three enrichers were right
-    # to let it through; this one was the outlier.
     ocr = ctx.provider("ocr")
     storage = ctx.provider("storage")
 
@@ -221,10 +201,6 @@ def enrich_ocr(ctx: EnrichmentContext, asset_ids: list[int]):
                             image_bytes = pix.tobytes("png")
                         finally:
                             doc.close()
-                        # Pass the resolved model through. It used to be
-                        # *required* by model_required and then discarded,
-                        # because the adapter read its model from an env var and
-                        # extract_text had no model parameter at all.
                         result = await ocr.extract_text(image_bytes, model=ocr.model)
                         ocr_results.append((asset_id, result.text, result.engine, result.confidence))
                     except Exception as e:
@@ -271,10 +247,8 @@ def enrich_geocoding(ctx: EnrichmentContext, asset_ids: list[int]):
        populated. If hit, use those coords directly — provider call skipped.
     2. **Provider fallback.** Misses fall through to the geocoding provider.
 
-    The geo canon is the trusted reference (e.g., countries, capitals,
-    ISO 3166 entries). Provider results are NOT auto-written into the canon
-    — population stays user-curated. To promote a provider result into the
-    canon, the user does so explicitly.
+    Provider results are NOT auto-written into the canon — population stays
+    user-curated.
     """
     from app.api.modules.content.facets import get_facet
     from app.api.modules.graph.resolution import find_by_alias
@@ -298,9 +272,7 @@ def enrich_geocoding(ctx: EnrichmentContext, asset_ids: list[int]):
     if not candidates:
         return
 
-    # Phase 2: Canon hit-first. Resolve each location against the infospace's
-    # geo canon (when set). Hits get patched immediately; misses go to the
-    # provider work list.
+    # Phase 2: Canon hit-first.
     cached_writes: list[tuple[int, dict]] = []
     work: list[tuple[int, str]] = []
     with ctx.session() as session:
@@ -327,7 +299,6 @@ def enrich_geocoding(ctx: EnrichmentContext, asset_ids: list[int]):
             else:
                 work.append((asset_id, location))
 
-        # Apply canon-cached writes immediately.
         for asset_id, patch in cached_writes:
             ctx.done(session, asset_id, facets=patch)
         session.commit()
@@ -380,10 +351,7 @@ def enrich_geocoding(ctx: EnrichmentContext, asset_ids: list[int]):
           capability="storage", batch=50, queue="processing",
           triggers=["asset.processed"])
 def enrich_hash(ctx: EnrichmentContext, asset_ids: list[int]):
-    """Backfill content_hash for blob-backed roots, via the ONE derivation.
-
-    This used to compute sha256 while every ingest path wrote md5 — two algorithms
-    in one column, so ``decide()`` could never trust a hash it hadn't written itself."""
+    """Backfill content_hash for blob-backed roots, via the ONE derivation."""
     # Phase 1: Load
     work: list[tuple[int, str]] = []
     with ctx.session() as session:
@@ -527,13 +495,7 @@ def enrich_quality_score(ctx: EnrichmentContext, asset_ids: list[int]):
           max_concurrency=1, self_chain=True,
           triggers=["asset.enriched"])
 def enrich_embedding(ctx: EnrichmentContext, asset_ids: list[int]):
-    """Generate embeddings for assets with text_content and no chunks.
-
-    Preserves the three-phase pattern from the legacy embed task:
-    Phase 1 — Load + Chunk (DB session open)
-    Phase 2 — Generate embeddings (no DB session)
-    Phase 3 — Store vectors + emit events (fresh DB session)
-    """
+    """Generate embeddings for assets with text_content and no chunks."""
     from app.api.modules.content.models import get_embedding_column_for_dimension
 
     # Phase 1: Load + Chunk
@@ -559,10 +521,9 @@ def enrich_embedding(ctx: EnrichmentContext, asset_ids: list[int]):
                     continue
                 dim_override = infospace.get_embedding_dimension_override()
 
-                # All assets in this batch share ctx.infospace_id, so the cache
-                # key is stable per-worker. Resolve() reads sel from the
-                # infospace's enrichment_config internally too, but we pass
-                # explicit args so the per-worker cache key matches.
+                # Resolve() reads sel from the infospace's enrichment_config
+                # internally too, but we pass explicit args so the per-worker
+                # cache key matches.
                 provider_instance = ctx.provider(
                     "embedding", sel.provider_key, sel.model_name,
                 )
@@ -672,7 +633,6 @@ def enrich_embedding(ctx: EnrichmentContext, asset_ids: list[int]):
                 chunk.embedding_model_id = grp["em_id"]
                 session.add(chunk)
 
-        # Mark all enriched assets as done
         enriched_assets: set[int] = set()
         for iid, pairs in results.items():
             for chunk_id, _ in pairs:
