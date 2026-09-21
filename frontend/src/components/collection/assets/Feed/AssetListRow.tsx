@@ -53,7 +53,7 @@ export function AssetListRow({
           aria-label={isFavorited ? 'Unfavorite' : 'Favorite'}
           className={cn(
             'shrink-0 rounded p-0.5 transition-opacity',
-            isFavorited ? 'opacity-100' : 'opacity-0 group-hover:opacity-100',
+            isFavorited ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100',
           )}
         >
           <Star className={cn('h-3.5 w-3.5', isFavorited ? 'fill-amber-400 text-amber-500' : 'text-muted-foreground/60 hover:text-amber-500')} />

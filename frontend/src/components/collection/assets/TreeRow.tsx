@@ -130,7 +130,7 @@ export function TreeRow({
 
         {/* Actions slot — hover-revealed */}
         {actions && (
-          <div className="pointer-events-none absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
+          <div className="pointer-events-none absolute right-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100">
             {actions}
           </div>
         )}

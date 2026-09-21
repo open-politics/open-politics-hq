@@ -88,7 +88,7 @@ export function AssetCardBase({
             "absolute top-2 right-2 z-10 p-1 rounded-full transition-opacity",
             isFavorited
               ? "opacity-100"
-              : "opacity-0 group-hover:opacity-100"
+              : "opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
           )}
         >
           <Star className={cn(

@@ -62,7 +62,7 @@ const AssetItem: React.FC<{ asset: AssetPreview; level: number; token: string }>
             <Button
               variant="outline"
               size="sm"
-              className="h-7 px-2 opacity-0 group-hover:opacity-100 transition-opacity"
+              className="h-7 px-2 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 transition-opacity"
               onClick={handleDownload}
             >
               <Download className="h-3 w-3 mr-1" />

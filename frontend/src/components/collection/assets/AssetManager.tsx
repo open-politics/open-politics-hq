@@ -1788,7 +1788,21 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                   being traced, open a gutter to its right so the curves have a
                   channel to fan out into instead of piling up on the seam. */}
               {showSourcesRail && (
-                <div className={cn('h-full w-60 shrink-0 overflow-hidden transition-[margin] duration-300', sourceStreams.length > 0 && 'mr-12')}>
+                <div
+                  className={cn(
+                    'h-full w-60 shrink-0 overflow-hidden transition-[margin] duration-300',
+                    sourceStreams.length > 0 && 'mr-12',
+                    // A 240px column plus a resizable two-pane split needs room
+                    // the desktop branch does not always have: this renders from
+                    // 768px up, and it is also what is left when the dock takes
+                    // half the page. Below ~896px of page width the rail stops
+                    // taking width from the split and overlays it instead — the
+                    // same move the explorer's helper panel makes, and it is a
+                    // toggle, so it is already meant to come and go.
+                    '@max-4xl/page:absolute @max-4xl/page:inset-y-0 @max-4xl/page:left-0 @max-4xl/page:z-20',
+                    '@max-4xl/page:w-[min(15rem,85%)] @max-4xl/page:mr-0 @max-4xl/page:border-r @max-4xl/page:surface-overlay',
+                  )}
+                >
                   <SourceList mode="panel" init={undefined} fullscreen={false} close={() => setShowSourcesRail(false)} escalate={() => {}} streams={sourceStreamControls} />
                 </div>
               )}

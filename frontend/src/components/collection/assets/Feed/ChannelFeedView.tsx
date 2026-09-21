@@ -105,7 +105,7 @@ export function ChannelTabs({ channels, activeChannelId, onSelect, onAddChannel,
             <button
               type="button"
               onClick={(e) => e.stopPropagation()}
-              className="absolute right-1 opacity-0 group-hover/tab:opacity-100 transition-opacity p-0.5 rounded text-muted-foreground hover:bg-muted-foreground/20 hover:text-foreground"
+              className="absolute right-1 opacity-0 group-hover/tab:opacity-100 [@media(pointer:coarse)]:opacity-100 transition-opacity p-0.5 rounded text-muted-foreground hover:bg-muted-foreground/20 hover:text-foreground"
             >
               <Pencil className="h-2.5 w-2.5" />
             </button>
@@ -153,7 +153,7 @@ export function ChannelTabs({ channels, activeChannelId, onSelect, onAddChannel,
             <button
               type="button"
               onClick={(e) => e.stopPropagation()}
-              className="absolute right-1 opacity-0 group-hover/tab:opacity-100 transition-opacity p-0.5 rounded text-muted-foreground hover:bg-muted-foreground/20 hover:text-foreground"
+              className="absolute right-1 opacity-0 group-hover/tab:opacity-100 [@media(pointer:coarse)]:opacity-100 transition-opacity p-0.5 rounded text-muted-foreground hover:bg-muted-foreground/20 hover:text-foreground"
             >
               <Pencil className="h-2.5 w-2.5" />
             </button>
@@ -201,7 +201,7 @@ export function ChannelTabs({ channels, activeChannelId, onSelect, onAddChannel,
             <DropdownMenuTrigger asChild>
               <button
                 onClick={(e) => e.stopPropagation()}
-                className="absolute right-1 opacity-0 group-hover/tab:opacity-100 transition-opacity p-0.5 rounded hover:bg-muted-foreground/20"
+                className="absolute right-1 opacity-0 group-hover/tab:opacity-100 [@media(pointer:coarse)]:opacity-100 transition-opacity p-0.5 rounded hover:bg-muted-foreground/20"
               >
                 <Pencil className="h-2.5 w-2.5 hover:invert" />
               </button>

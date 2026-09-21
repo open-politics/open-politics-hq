@@ -73,7 +73,7 @@ const BundlePublicView: React.FC<BundlePublicViewProps> = ({ bundle, token, onAs
                     </div>
                     <div className="ml-auto pl-2">
                         {asset.blob_path && (
-                            <a href={`/api/v1/shareables/download/${token}/${asset.id}`} target="_blank" rel="noopener noreferrer" className="opacity-0 group-hover:opacity-100 transition-opacity">
+                            <a href={`/api/v1/shareables/download/${token}/${asset.id}`} target="_blank" rel="noopener noreferrer" className="opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 transition-opacity">
                                 <Download className="h-4 w-4 text-muted-foreground hover:text-primary" />
                             </a>
                         )}
