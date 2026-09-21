@@ -75,6 +75,7 @@ import { effectiveMergeMaps } from '@/lib/annotations/valueAliases';
 import { createScopeFromSelection, createCooccursScope, entityPathsFromSchema, focusedEntityNamesFromFilter, pushCooccursToDashboard } from '@/lib/annotations/scopes';
 import type { Scope } from '@/lib/annotations/types';
 import type { FilterSet } from '@/client';
+import { REGION_DEFAULT } from '@/components/collection/graph/panes/paneTypes';
 
 /** Radix Select forbids `value=""` on items; use this for “infospace default” instead of clearing the select. */
 const CURATE_TARGET_GRAPH_INFOSPACE_DEFAULT = '__infospace_default__';
@@ -2983,7 +2984,19 @@ export default function AnnotationResultsGraph({
       {/* Main Content Area */}
       {!isLoading && nodes.length > 0 && (
         <div className="flex-1 min-h-0">
-          <div className="relative h-full w-full overflow-hidden">
+          <div
+            className="@container/graph relative h-full w-full overflow-hidden"
+            style={{
+              // The pin board sits at the bottom-left of the canvas, which is
+              // also where a pane in the `bottom` region lives — so a bottom
+              // pane simply covered it. The canvas publishes how much of its
+              // floor is already spoken for and the pin board rides above it,
+              // the same contract `--app-rail` and `--graph-right-rail` use.
+              ['--graph-bottom-rail' as any]: panes.some(p => p.region === 'bottom')
+                ? `calc(${(regionSize.bottom ?? REGION_DEFAULT.bottom)}px + 0.75rem)`
+                : '0px',
+            }}
+          >
             <ForceGraph
               ref={forceGraphRef}
               viewControls="external"

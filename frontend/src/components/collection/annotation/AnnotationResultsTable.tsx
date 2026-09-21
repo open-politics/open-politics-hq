@@ -1269,7 +1269,7 @@ export function AnnotationResultsTable({
     const isCurrentlyRetryingThis = retryingResultId === firstResult.id;
     return (
       <td
-        className="absolute right-1 top-1 z-10 p-0 border-0 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity bg-transparent"
+        className="absolute right-1 top-1 z-10 p-0 border-0 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus-within:opacity-100 transition-opacity bg-transparent"
         onClick={(e) => e.stopPropagation()}
       >
         <DropdownMenu>

@@ -861,7 +861,7 @@ const NavFieldRow: React.FC<{
         {!disabled && (
           <button
             type="button"
-            className="h-5 w-5 opacity-0 group-hover:opacity-100 flex items-center justify-center text-muted-foreground hover:text-destructive transition-opacity shrink-0"
+            className="h-5 w-5 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 flex items-center justify-center text-muted-foreground hover:text-destructive transition-opacity shrink-0"
             onClick={(e) => { e.stopPropagation(); onRemove(sectionId, path); }}
             title="Remove field"
           >
@@ -1063,7 +1063,7 @@ const NavTree: React.FC<{
                 {section.name !== "document" && mode !== "watch" && (
                   <button
                     type="button"
-                    className="h-5 w-5 opacity-0 group-hover:opacity-100 flex items-center justify-center text-muted-foreground hover:text-destructive transition-opacity shrink-0"
+                    className="h-5 w-5 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 flex items-center justify-center text-muted-foreground hover:text-destructive transition-opacity shrink-0"
                     onClick={(e) => { e.stopPropagation(); onRemoveSection(section.id); }}
                   >
                     <Trash2 className="h-3 w-3" />
@@ -2128,7 +2128,7 @@ const NestedChildRow: React.FC<{
       {!disabled && (
         <button
           type="button"
-          className="h-6 w-6 opacity-0 group-hover:opacity-100 flex items-center justify-center text-muted-foreground hover:text-destructive transition-opacity shrink-0"
+          className="h-6 w-6 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 flex items-center justify-center text-muted-foreground hover:text-destructive transition-opacity shrink-0"
           onClick={(e) => { e.stopPropagation(); onRemove(); }}
         >
           <Trash2 className="h-3 w-3" />

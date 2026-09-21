@@ -1822,7 +1822,17 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         </div>
       ) : null}
 
-      <div className="@container/map flex-1 min-h-0 relative annotation-map-host">
+      <div
+        className="@container/map flex-1 min-h-0 relative annotation-map-host"
+        style={{
+          // On a narrow map the locations list is a bottom drawer, and the
+          // label chips and colour legend live at `bottom-2` — underneath it.
+          // The host publishes the drawer's height so they sit above it; on a
+          // wide map the drawer is a side rail and the offset is never applied
+          // (the classes that read this are `@max-xl/map:` only).
+          ['--map-drawer' as any]: locationsPanelOpen ? '45%' : '0px',
+        }}
+      >
       <style>
         {`.annotation-map-host .mapboxgl-ctrl-bottom-right { display: none; }`}
       </style>
@@ -1963,7 +1973,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
                           }}
                           aria-label={isHidden ? 'Show on map' : 'Hide from map'}
                           title={isHidden ? 'Show on map' : 'Hide from map'}
-                          className="flex-shrink-0 h-4 w-4 inline-flex items-center justify-center rounded text-muted-foreground/60 hover:text-foreground hover:bg-muted/40 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
+                          className="flex-shrink-0 h-4 w-4 inline-flex items-center justify-center rounded text-muted-foreground/60 hover:text-foreground hover:bg-muted/40 opacity-0 group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100 focus:opacity-100 transition-opacity"
                         >
                           {isHidden ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
                         </button>
@@ -2135,7 +2145,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
 
       {/* Label-source indicator chips */}
       {labelConfigInfos.length > 0 && (
-        <div className="absolute bottom-2 left-2 z-10 inline-flex items-center gap-1 flex-wrap">
+        <div className="absolute bottom-2 left-2 z-10 inline-flex items-center gap-1 flex-wrap @max-xl/map:bottom-[calc(0.5rem+var(--map-drawer,0px))]">
           {labelConfigInfos.map((info) => (
             <div
               key={`${info.schemaId}:${info.fieldKey}`}
@@ -2159,7 +2169,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
               type="button"
               onClick={() => setLegendCollapsed(false)}
               title={`Color legend (${colorEntries.length})`}
- className="absolute left-1/2 -translate-x-1/2 bottom-2 z-20 inline-flex items-center gap-1 rounded-full border surface-overlay px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-background"
+ className="absolute left-1/2 -translate-x-1/2 bottom-2 z-20 inline-flex items-center gap-1 rounded-full border surface-overlay px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-background @max-xl/map:bottom-[calc(0.5rem+var(--map-drawer,0px))]"
             >
               <Palette className="h-3 w-3" />
               <span className="tabular-nums">{colorEntries.length}</span>
@@ -2169,7 +2179,7 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
         }
         return (
           <div
-            className="absolute left-1/2 -translate-x-1/2 bottom-2 z-20 max-w-[calc(100%-1rem)]"
+            className="absolute left-1/2 -translate-x-1/2 bottom-2 z-20 max-w-[calc(100%-1rem)] @max-xl/map:bottom-[calc(0.5rem+var(--map-drawer,0px))]"
             style={{ pointerEvents: 'none' }}
           >
             <div
