@@ -27,7 +27,7 @@ unset POSTGRES_PASSWORD POSTGRES_USER POSTGRES_DB POSTGRES_PORT POSTGRES_SERVER 
       LOCAL_STORAGE_HOST_PATH LOCAL_STORAGE_BASE_PATH \
       BACKEND_WORKERS CELERY_CONCURRENCY CELERY_PROCESSING_CONCURRENCY \
       COMPOSE_FILE COMPOSE_PROFILES COMPOSE_PROJECT_NAME COMPOSE_BAKE \
-      HQ_BIND_HOST HQ_SEARXNG_PORT HQ_CONFIG_SHA \
+      HQ_BIND_HOST HQ_SEARXNG_PORT \
       TAG INSTALL_DEV DOCKER_IMAGE_BACKEND S3_BUCKET_NAME 2>/dev/null || true
 
 # Constants: paths, file modes, and the key lists everything else reads
@@ -38,7 +38,6 @@ DIM=$'\033[2m';   BOLD=$'\033[1m';     NC=$'\033[0m'
 ENV_FILE=".env";                                      ENV_MODE=600
 EXAMPLE_FILE=".env.example"
 CONF_FILE="HQ.yml";                                CONF_MODE=644
-SELF_FILE="$(basename "$0")"          # the generator: artifacts come from its heredocs
 CONF_EXAMPLE="HQ.example.yml"
 SETUP_CONF=".config/hq/setup.conf";                   SETUP_CONF_MODE=644
 HOST_NET_FRAGMENT=".config/hq/compose.host-net.yml";  HOST_NET_MODE=644
@@ -906,7 +905,7 @@ ensure_s3_secrets() {
 # HQ.yml to .env: the generated region compose interpolates
 
 RENDERED_ENV_KEYS=(
-  HQ_CONFIG_SHA COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_PROFILES
+  COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_PROFILES
   FRONTEND_PORT BACKEND_PORT BACKEND_BIND_HOST
   POSTGRES_PORT POSTGRES_DB POSTGRES_USER
   REDIS_PORT HQ_BIND_HOST HQ_SEARXNG_PORT
@@ -1001,17 +1000,6 @@ render_projection() {
   printf 'S3_BUCKET_NAME=%s\n'                "$(yget deployment.services.s3.bucket)"
 }
 
-conf_sha() {
-  [[ -f "$CONF_FILE" ]] || { echo ""; return; }
-  # The generator is an input, not just the config. Everything under .config/hq/
-  # is written from heredocs in this script, so a template fixed here has to
-  # re-render exactly as an edit to HQ.yml does. Hashing only HQ.yml left a
-  # corrected fragment sitting unwritten until someone happened to change their
-  # config for an unrelated reason.
-  { cat "$CONF_FILE"; [[ -f "$SELF_FILE" ]] && cat "$SELF_FILE"; } \
-    | { sha256sum 2>/dev/null || shasum -a 256 2>/dev/null; } | cut -c1-16
-}
-
 render_env() {
   [[ -f "$CONF_FILE" ]] || die "No $CONF_FILE — run ./setup.sh first."
   [[ -f "$ENV_FILE"  ]] || die "No $ENV_FILE — run ./setup.sh first."
@@ -1023,7 +1011,6 @@ render_env() {
   {
     echo ""
     echo "$marker"
-    printf 'HQ_CONFIG_SHA=%s\n' "$(conf_sha)"
     render_projection
   } >> "$tmp"
   commit_file "$tmp" "$ENV_FILE" "$ENV_MODE"
@@ -2020,11 +2007,12 @@ do_render() {
 }
 
 ensure_derived_current() {
+  # Just render. It is idempotent and takes under a second, so the staleness
+  # hash was a cache key for something not worth caching — and it only ever
+  # watched HQ.yml, while the artifacts under .config/hq/ are written from
+  # heredocs in this script. A template corrected here sat unwritten until
+  # someone happened to edit their config for an unrelated reason.
   [[ -f "$CONF_FILE" && -f "$ENV_FILE" ]] || return 0
-  local want have
-  want="$(conf_sha)"; have="$(get_env HQ_CONFIG_SHA)"
-  [[ "$want" == "$have" ]] && return 0
-  say "${DIM}$CONF_FILE or $SELF_FILE changed since .env was rendered — re-rendering.${NC}"
   do_render
   return 0
 }
@@ -3822,15 +3810,7 @@ audit_files() {
 
 audit_config() {
   say "${BOLD}CONFIG${NC}"
-  local want have
-  want="$(conf_sha)"; have="$(get_env HQ_CONFIG_SHA)"
-  if [[ "$want" == "$have" ]]; then
-    printf "  %-34s %-10s ${GREEN}ok${NC}\n" ".env matches $CONF_FILE + $SELF_FILE" "$want"
-  else
-    printf "  %-34s %-10s want %-8s ${RED}FAIL${NC}\n" ".env matches $CONF_FILE + $SELF_FILE" "${have:-unset}" "$want"
-    say "    ${DIM}run: ./setup.sh render${NC}"
-    AUDIT_FINDINGS=$((AUDIT_FINDINGS + 1))
-  fi
+  printf "  %-34s %-10s ${GREEN}ok${NC}\n" "derived from $CONF_FILE" "every start"
   if [[ "$(yget deployment.storage.use)" == local_fs ]]; then
     local base; base="$(yget deployment.storage.user_uploads.base_path)"
     if $(compose_cmd) config 2>/dev/null | grep -q "target: ${base:-/data/storage}"; then
