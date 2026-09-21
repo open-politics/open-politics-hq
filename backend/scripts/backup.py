@@ -261,13 +261,10 @@ def upload_to_s3(source_path: str, bucket: str, retention_days: int = 30) -> boo
         from minio import Minio
         from minio.error import S3Error
         
-        # MINIO_* settings went away with MinIO; every one of these raised
-        # AttributeError, so this path had been dead since garage replaced it.
-        # The object store is now whatever deployment.services.s3 points at.
         if not settings.S3_ENDPOINT:
             logger.error(
                 "No S3 endpoint configured. Set deployment.services.s3 in "
-                "my-hq.yml, or back up to a local path instead."
+                "HQ.yml, or back up to a local path instead."
             )
             return False
         if not (settings.S3_ACCESS_KEY_ID and settings.S3_SECRET_ACCESS_KEY):
