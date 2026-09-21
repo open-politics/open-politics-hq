@@ -12,7 +12,7 @@ on:
     paths:
       - 'setup.sh'
       - 'compose*.yml'
-      - 'my-hq.example.yml'
+      - 'HQ.example.yml'
       - '.env.example'
       - 'backend/app/core/config.py'
       - 'backend/Dockerfile'
@@ -22,7 +22,7 @@ on:
     paths:
       - 'setup.sh'
       - 'compose*.yml'
-      - 'my-hq.example.yml'
+      - 'HQ.example.yml'
       - '.env.example'
       - 'backend/app/core/config.py'
       - 'backend/Dockerfile'
@@ -41,23 +41,23 @@ jobs:
         # ensure_conf copies this; if it is not committed, a fresh clone dies on
         # `cp` with no message worth reading.
         run: |
-          test -f my-hq.example.yml || { echo "my-hq.example.yml is not in the repo"; exit 1; }
+          test -f HQ.example.yml || { echo "HQ.example.yml is not in the repo"; exit 1; }
           test -f .env.example      || { echo ".env.example is not in the repo"; exit 1; }
           test ! -f .env            || { echo ".env is committed — it must not be"; exit 1; }
-          test ! -f my-hq.yml       || { echo "my-hq.yml is committed — it must not be"; exit 1; }
+          test ! -f HQ.yml       || { echo "HQ.yml is committed — it must not be"; exit 1; }
 
       - name: setup.sh, non-interactive
         run: |
           printf 'ci@example.org\nci-password-not-a-placeholder\nci-password-not-a-placeholder\n' \
             | ./setup.sh dev || { echo "::error::setup.sh failed on a clean tree"; exit 1; }
 
-      - name: The database compose created is the one my-hq.yml names
-        # The bug this job exists for: my-hq.yml names the database, config.py
+      - name: The database compose created is the one HQ.yml names
+        # The bug this job exists for: HQ.yml names the database, config.py
         # builds the DSN from it, and nothing handed POSTGRES_DB to the image —
         # so initdb made `postgres` and the backend asked for something else.
         run: |
-          WANT=$(grep -A4 '^    database:' my-hq.yml | grep '      name:' | awk '{print $2}')
-          echo "my-hq.yml names: $WANT"
+          WANT=$(grep -A4 '^    database:' HQ.yml | grep '      name:' | awk '{print $2}')
+          echo "HQ.yml names: $WANT"
           docker compose exec -T db psql -U postgres -lqt | cut -d'|' -f1 | grep -qw "$WANT" \
             || { echo "::error::database '$WANT' does not exist"; docker compose exec -T db psql -U postgres -lqt; exit 1; }
 
@@ -91,9 +91,9 @@ jobs:
       - name: Audit is clean
         run: ./setup.sh audit
 
-      - name: Editing my-hq.yml is caught, and render fixes it
+      - name: Editing HQ.yml is caught, and render fixes it
         run: |
-          sed -i 's/^    pdf_max_pages: .*/    pdf_max_pages: 7/' my-hq.yml
+          sed -i 's/^    pdf_max_pages: .*/    pdf_max_pages: 7/' HQ.yml
           docker compose up -d --force-recreate backend
           sleep 20
           docker compose logs backend --tail=40 | grep -q 'changed since .env was rendered' \
@@ -111,17 +111,17 @@ jobs:
 
       - name: Invalid config is refused, not absorbed
         # The whole point of putting the rules in AppSettings: `docker compose
-        # up` has to reject a bad my-hq.yml on its own, with no setup.sh in the
+        # up` has to reject a bad HQ.yml on its own, with no setup.sh in the
         # loop. Each case below booted happily before these gates existed.
         run: |
           set -u
-          cp my-hq.yml /tmp/my-hq.good.yml
+          cp HQ.yml /tmp/hq.good.yml
           fail=0
           check() {   # check <label> <sed-expr>
-            cp /tmp/my-hq.good.yml /tmp/my-hq.bad.yml
-            sed -i "$2" /tmp/my-hq.bad.yml
+            cp /tmp/hq.good.yml /tmp/hq.bad.yml
+            sed -i "$2" /tmp/hq.bad.yml
             if docker compose exec -T -e HQ_CONFIG_FILE=/tmp/bad.yml backend \
-                 sh -c 'cat > /tmp/bad.yml' < /tmp/my-hq.bad.yml \
+                 sh -c 'cat > /tmp/bad.yml' < /tmp/hq.bad.yml \
                && docker compose exec -T -e HQ_CONFIG_FILE=/tmp/bad.yml -w /app backend \
                  python -c 'import app.api.dependency_injection' 2>/dev/null; then
               echo "::error::accepted invalid config: $1"
