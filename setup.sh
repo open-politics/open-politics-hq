@@ -962,6 +962,12 @@ derived_profiles() {
 }
 
 derived_compose_file() {
+  # Relative, and deliberately so: docker compose only honours COMPOSE_FILE from
+  # .env when the cwd is the directory holding it. Run from a subdirectory it
+  # walks up, finds compose.yml, and by then discovery is done — you get a
+  # bridge-mode config with the right profiles and no host networking, silently.
+  # Absolute paths do not change that, so run compose from the repo root (or use
+  # ./setup.sh, which builds the -f list itself in compose_cmd).
   local f="compose.yml"
   [[ "$(yget stack.environment)" == "local" ]] && f="$f:compose.override.yml"
   [[ "$(yget deployment.network.mode)" == "host" ]] && f="$f:$HOST_NET_FRAGMENT"
