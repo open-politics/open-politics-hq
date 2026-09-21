@@ -23,8 +23,6 @@ services:
       context: ./backend
       args:
         INSTALL_DEV: ${INSTALL_DEV-false}
-    networks:
-      - default
 
   celery_worker:
     restart: "no"
@@ -65,8 +63,6 @@ services:
       - ./backend/app/tests/fixtures:/backend/app/tests/fixtures:ro
       # Import the checked-in contract from the docs tree, for the same reason.
       - ./docs/plans/observation-model/schemas:/docs/plans/observation-model/schemas:ro
-    networks:
-      - default
 
   # Thin dev overrides for optional services — only materialize when their
   # profile is active (selected in COMPOSE_PROFILES). Base defs are in compose.yml.

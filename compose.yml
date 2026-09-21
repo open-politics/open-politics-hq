@@ -22,8 +22,6 @@ services:
   backend:
     image: '${DOCKER_IMAGE_BACKEND:-backend}:${TAG-latest}'
     restart: always
-    networks:
-      - default
     depends_on:
       db: { condition: service_healthy }
     env_file:
@@ -73,8 +71,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
-    networks:
-      - default
 
   frontend:
     build:
@@ -88,8 +84,6 @@ services:
     # mapping, configurable so setup.sh can bump it when 3000 is in use.
     ports:
       - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
-    networks:
-      - default
 
   celery_worker:
     image: '${DOCKER_IMAGE_BACKEND:-backend}:${TAG-latest}'
@@ -98,8 +92,6 @@ services:
       args:
         INSTALL_DEV: ${INSTALL_DEV-false}
     restart: always
-    networks:
-      - default
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -126,8 +118,6 @@ services:
       args:
         INSTALL_DEV: ${INSTALL_DEV-false}
     restart: always
-    networks:
-      - default
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -154,8 +144,6 @@ services:
       args:
         INSTALL_DEV: ${INSTALL_DEV-false}
     restart: always
-    networks:
-      - default
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -192,8 +180,6 @@ services:
       - ./.config/hq/garage.toml:/etc/garage.toml:ro
       - ./.store/garage/meta:/var/lib/garage/meta
       - ./.store/garage/data:/var/lib/garage/data
-    networks:
-      - default
 
   searxng:
     image: searxng/searxng:latest
@@ -205,8 +191,6 @@ services:
     environment:
       - SEARXNG_BASE_URL=http://searxng:${HQ_SEARXNG_PORT:-8888}/
       - GRANIAN_PORT=${HQ_SEARXNG_PORT:-8888}
-    networks:
-      - default
 
   ollama:
     image: ollama/ollama:latest
@@ -219,8 +203,6 @@ services:
       - OLLAMA_NUM_PARALLEL=2
       - OLLAMA_MAX_LOADED_MODELS=2
     restart: unless-stopped
-    networks:
-      - default
 
   # No `ports:`. The image runs gunicorn on 0.0.0.0:8080 and ignores every attempt
   # to change that, so with nothing published it reaches no further than this
@@ -259,8 +241,6 @@ services:
     volumes:
       - nominatim-data:/var/lib/postgresql/16/main
       - nominatim-flatnode:/nominatim/flatnode
-    networks:
-      - default
     # Admin: ~5GB download, ~2h import | Address (Europe): ~28GB, ~3h | Full: ~60GB, ~8h
 
   caddy:
@@ -284,8 +264,6 @@ services:
     depends_on:
       - backend
       - frontend
-    networks:
-      - default
 
 volumes:
   app-db-data:
