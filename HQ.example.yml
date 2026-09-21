@@ -2,15 +2,15 @@
 # secrets live in .env. both are managed by ./setup.sh.
 # what every block is for: see the index at the bottom of this file.
 
-# ── identity ──────────────────────────────────────────────────────────────────
+# General HQ stack identity
 
 stack:
   name: open-politics-hq          # docker volume prefix, renaming orphans your data
   project: HQ
   environment: local              # local | staging | production
-  user_agent: OpenPoliticsHQ/1.0
+  user_agent: OpenPoliticsHQ/1.0 (+https://open-politics.org)   # nominatim's usage policy wants a contact
 
-# ── how it runs ───────────────────────────────────────────────────────────────
+# Deployment Settings (Users, Processing, Mail, Network etc)
 
 deployment:
   users:
@@ -23,7 +23,7 @@ deployment:
     use: local_fs                 # local_fs | s3 -> garage below, or any bucket. see services.s3
     user_uploads:                 # where uploaded files land
       host_path: ./.store/local_fs     # on this machine
-      base_path: /data/storage         # inside the container
+      base_path: /data/storage         # inside the container, and the root of importable_paths
     importable_paths:             # dirs users may import FROM, read only
       - /data/storage/datasets
       - /data/storage/managed
@@ -32,7 +32,7 @@ deployment:
     host: ""                      # password: SMTP_PASSWORD in .env
     port: 587
     user: ""
-    from_email: info@example.com
+    from_email: ""
     from_name: ""                 # empty -> stack.project
     tls: true
     ssl: false
@@ -56,7 +56,7 @@ deployment:
         - "*"
   services:
     backend:
-      port: 8022                  # host side, the container always binds 8022 inside
+      port: 8022                  # both sides, the container binds this too
       workers: auto               # uvicorn, production only. auto = 1 per cpu (2-8); or set a number
       image: backend              # registry path, see scripts/push-registry-containers.sh
       tag: latest
@@ -84,12 +84,14 @@ deployment:
       db: 0                       # password: REDIS_PASSWORD in .env
       url: ""                     # set to override host/port/db, rediss:// for TLS
     s3:                           # only when storage.use is s3
-      endpoint: garage:3900       # the garage container. vs nbg1.your-objectstorage.com, s3.amazonaws.com
+      endpoint: garage:3900       # the garage container, or any S3 host -- nbg1.your-objectstorage.com, s3.amazonaws.com
       bucket: hq-assets
       region: garage
       use_ssl: false
   processing:
-    background_content_enrichers: # run automatically on every new asset
+    background_content_enrichers: # what every infospace starts with. a user turns one
+                                  # on or off for their own and the rest stay as set here.
+                                  # safe to switch on early: one with no provider wont run
       hash: false
       ocr: false
       geocoding: false
@@ -101,14 +103,17 @@ deployment:
     dispatch_interval_seconds: 120
     annotation:
       default_concurrency: 5
-      max_concurrency: 20
+      max_concurrency: 20         # default_concurrency may not exceed this
       chunk_size: 50              # commit granularity, so a 50k run isnt one transaction
+  starter:                        # what a brand new install begins with. first boot only
+    documents: /app/seed          # ./seed in the repo, mounted here. drop files in, or leave empty
+    schemas: [minimal, positions] # ids from the built-in template catalogue. [] = none
   sso:
     discourse:
       enabled: false
       url: ""                     # secret: DISCOURSE_CONNECT_SECRET in .env
 
-# ── what it talks to ──────────────────────────────────────────────────────────
+# Foundation Services & Access Guarding - e.g. local LLMs, geocoding, ocr; .env key shared with everybody or ollama just for admins
 
 foundation:
   run:                            # containers we start
@@ -147,7 +152,7 @@ foundation:
       newspaper4k: all
   providers:                      # how each one is reached
     ollama:
-      base_url: http://ollama:11434    # vs host.docker.internal:11434 -> ollama on the host, not a container
+      base_url: http://ollama:11434    # host.docker.internal:11434 reaches ollama on the host instead
       ocr_model: llava
     llamacpp:
       base_url: http://host.docker.internal:4000
@@ -183,18 +188,22 @@ foundation:
     mapbox:
       base_url: https://api.mapbox.com/geocoding/v5/mapbox.places
       key_env: MAPBOX_ACCESS_TOKEN
+  mcp_connectors: {}              # label: url. an endpoint that speaks MCP calls these itself
+                                  # hq: https://your-instance/tools    -- needs to be reachable from their side
+                                  # empty = every tool runs through our own executor
 
-# ── whats in here ─────────────────────────────────────────────────────────────
+# Whats in here
 #
 #   stack             name, env, identity. renaming stack.name orphans your volumes
 #
 #   deployment
 #     users           signup, verification, what users are allowed to do at all
-#     storage         local_fs vs s3, where uploads land, which dirs are importable
+#     storage         local_fs or s3, where uploads land, which dirs are importable
 #     email           smtp, password in .env
-#     network         bridge vs host, local vs public, cors
+#     network         host or bridge, local or public, cors
 #     services        per service: port, workers, image. plus db, redis, s3
-#     processing      enrichers, page/upload/rate limits, annotation concurrency
+#     processing      enrichers, page and upload limits, annotation concurrency
+#     starter         schemas and documents a fresh install begins with
 #     sso             discourse
 #
 #   foundation
@@ -202,7 +211,8 @@ foundation:
 #     use             what answers when nobody picked. comma list = try in order
 #     access          all | superuser | byok | none. keyed providers left out = none
 #     providers       base_url, models, key_env
+#     mcp_connectors  mcp servers a language endpoint may call directly
 #
 # secrets never live here. .env holds them, providers.*.key_env names which one.
 # pointing `use` at a container thats not in `run` wont boot. the same in
-# `access` only warns — granting something you switch on later is fine.
+# `access` only warns -- granting something you switch on later is fine.

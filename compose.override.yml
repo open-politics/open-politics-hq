@@ -13,7 +13,7 @@ services:
     volumes:
       - ./backend/:/app
       - ./backend/openapi.json:/app/openapi.json
-      - ./my-hq.yml:/app/my-hq.yml:ro
+      - ./HQ.yml:/app/HQ.yml:ro
     environment:
       - PORT=${BACKEND_PORT:-8022}
     extra_hosts:
@@ -30,19 +30,19 @@ services:
     restart: "no"
     volumes:
       - ./backend/:/app
-      - ./my-hq.yml:/app/my-hq.yml:ro
+      - ./HQ.yml:/app/HQ.yml:ro
 
   celery_worker_processing:
     restart: "no"
     volumes:
       - ./backend/:/app
-      - ./my-hq.yml:/app/my-hq.yml:ro
+      - ./HQ.yml:/app/HQ.yml:ro
 
   celery_beat:
     restart: "no"
     volumes:
       - ./backend/:/app
-      - ./my-hq.yml:/app/my-hq.yml:ro
+      - ./HQ.yml:/app/HQ.yml:ro
 
   frontend:
     restart: "no"
@@ -61,16 +61,9 @@ services:
       - ./frontend:/app
       - ./backend/openapi.json:/app/openapi.json
       - frontend_node_modules:/app/node_modules
-      # The convergence parity test reads the backend's fixture directly
-      # rather than keeping a copy — a copy is not a parity test, it is the
-      # same bug with two homes. Read-only, and mounted at the path the test's
-      # `../../../../../../backend/...` resolve() expects, so the suite runs
-      # the same from the container as from the host.
+      # Read the backend's fixture directly; a copy is not a parity test.
       - ./backend/app/tests/fixtures:/backend/app/tests/fixtures:ro
-      # `schemaImport.test.ts` imports the checked-in testimony contract from
-      # the docs tree — the generated artifact it asserts round-trips — rather
-      # than keeping a copy beside itself. Same reasoning as the parity
-      # fixture: a copy is not a round-trip test.
+      # Import the checked-in contract from the docs tree, for the same reason.
       - ./docs/plans/observation-model/schemas:/docs/plans/observation-model/schemas:ro
     networks:
       - default

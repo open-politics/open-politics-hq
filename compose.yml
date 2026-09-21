@@ -1,5 +1,5 @@
 services:
-  # ── Core services (always run; no profile) ──────────────────────────────────
+  # Core services, always run, no profile
   db:
     image: pgvector/pgvector:pg16
     restart: always
@@ -7,13 +7,9 @@ services:
       - app-db-data:/var/lib/postgresql/data/pgdata
     env_file:
       - .env
-    # CRITICAL: POSTGRES_PASSWORD/USER/DB come from env_file ONLY, never the
-    # `environment:` block. A redundant `environment: POSTGRES_PASSWORD=${...}`
-    # entry would re-interpolate at compose level — which picks shell env
-    # FIRST, then .env. If anyone has POSTGRES_PASSWORD exported in their
-    # shell (from .bashrc, a `source .env`, etc.), shell wins for db while
-    # backend reads from env_file — producing a silent mismatch that survives
-    # every `down -v`. Don't add them here.
+    # POSTGRES_PASSWORD/USER/DB come from env_file ONLY. An `environment:` entry
+    # would re-interpolate at compose level, which picks shell env before .env,
+    # so an exported value would reach db while backend reads env_file.
     environment:
       - PGDATA=/var/lib/postgresql/data/pgdata
       - PGPORT=${POSTGRES_PORT:-5432}
@@ -34,15 +30,15 @@ services:
       - .env
     environment:
       - PYTHONPATH=/app
-    # `$$` defers expansion to the container shell (reads .env-loaded values),
-    # so BACKEND_BIND_HOST can be flipped to 127.0.0.1 by the hardened-network
-    # override fragment without changing this file. Default 0.0.0.0 is correct
-    # for bridge mode (docker's network isolation does the work).
+    # `$$` defers expansion to the container shell. Default 0.0.0.0 is correct for
+    # bridge mode; host mode overrides BACKEND_BIND_HOST from the fragment.
     command: ["sh", "-c", "bash /app/prestart.sh && exec uvicorn app.main:app --workers $${BACKEND_WORKERS:-4} --host $${BACKEND_BIND_HOST:-0.0.0.0} --port $${BACKEND_PORT:-8022}"]
     # Deployment config, read directly by AppSettings. Same filename relative
     # to the app root on host and in the container, so there's one path to know.
     volumes:
-      - ./my-hq.yml:/app/my-hq.yml:ro
+      - ./HQ.yml:/app/HQ.yml:ro
+      # Starter content, read on first boot. Path is deployment.starter.documents.
+      - ./seed:/app/seed:ro
       - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:$${BACKEND_PORT:-8022}/api/v1/healthz/liveness >/dev/null"]
@@ -66,7 +62,7 @@ services:
       redis-server /usr/local/etc/redis/redis.conf
       --port ${REDIS_PORT:-6379}
       --appendonly yes
-      --requirepass ${REDIS_PASSWORD}
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is empty; run ./setup.sh to generate one}
       --rename-command REPLICAOF ""
       --rename-command SLAVEOF ""
     healthcheck:
@@ -109,15 +105,15 @@ services:
       redis: { condition: service_healthy }
     env_file:
       - .env
-    # -Q matters: this pool used to serve ALL five queues, so four concurrent ingest
-    # jobs (the `ingest` task's max_concurrency) saturated it and starved annotate /
-    # embed / the beat dispatcher behind hour-long ingests. Heavy content work now has
-    # its own pool below; this one keeps the interactive and LLM queues responsive.
+    # -Q matters: heavy content work has its own pool below, so this one keeps the
+    # interactive and LLM queues responsive during long ingests.
     command: ["celery", "-A", "app.core.celery_app.celery", "worker", "--loglevel=info",
               "-P", "prefork", "--concurrency=${CELERY_CONCURRENCY:-4}",
               "-Q", "default,llm,embedding,external_api"]
     volumes:
-      - ./my-hq.yml:/app/my-hq.yml:ro
+      - ./HQ.yml:/app/HQ.yml:ro
+      # Starter content, read on first boot. Path is deployment.starter.documents.
+      - ./seed:/app/seed:ro
       - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
     # Source bind is dev-only (compose.override.yml).
     extra_hosts:
@@ -143,7 +139,9 @@ services:
               "-P", "prefork", "--concurrency=${CELERY_PROCESSING_CONCURRENCY:-4}",
               "-Q", "processing"]
     volumes:
-      - ./my-hq.yml:/app/my-hq.yml:ro
+      - ./HQ.yml:/app/HQ.yml:ro
+      # Starter content, read on first boot. Path is deployment.starter.documents.
+      - ./seed:/app/seed:ro
       - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
     # Source bind is dev-only (compose.override.yml).
     extra_hosts:
@@ -169,24 +167,18 @@ services:
       --pidfile=/tmp/celerybeat.pid
       --schedule=/tmp/celerybeat-schedule
     volumes:
-      - ./my-hq.yml:/app/my-hq.yml:ro
+      - ./HQ.yml:/app/HQ.yml:ro
       - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
     # Source bind is dev-only (compose.override.yml).
     extra_hosts:
       - "host.docker.internal:host-gateway"
 
-  # ── Optional services (opt-in via COMPOSE_PROFILES; see setup.sh) ────────────
-  # Object storage. The backend talks plain S3, so this is one deployment
-  # option among several — point deployment.services.s3.endpoint at Hetzner or
-  # AWS instead and turn this off.
-  #
-  # Bootstrap (layout, key, bucket) is NOT a sidecar: this image is scratch
-  # plus one static binary — no shell to run a script with. ./setup.sh does it
-  # over `compose exec` instead, idempotently, on every start.
-  #
-  # No `ports:`. In bridge mode garage is reachable only as garage:3900 on the
-  # compose network; in host mode the generated garage.toml binds HQ_BIND_HOST.
-  # Binds live in that file because garage takes them nowhere else.
+  # Optional services, opt-in via COMPOSE_PROFILES (see setup.sh)
+  # Object storage. The backend talks plain S3, so point
+  # deployment.services.s3.endpoint elsewhere and turn this off.
+  # Bootstrap runs from ./setup.sh over `compose exec` — the image is scratch plus
+  # one binary, so there is no shell for a sidecar. No `ports:`: binds live in
+  # garage.toml because garage takes them nowhere else.
   garage:
     image: dxflrs/garage:v1.2.0
     profiles: ["garage"]
@@ -230,15 +222,10 @@ services:
     networks:
       - default
 
-  # No `ports:` — deliberately. The image runs gunicorn on 0.0.0.0:8080 and
-  # ignores every attempt to change that from outside, so containment is done
-  # at the docker level: with nothing published, that 0.0.0.0 reaches no further
-  # than this container's own namespace, and the backend talks to it as
-  # nominatim:8080 on the compose network. `expose` documents the port without
-  # placing it on a host interface.
-  #
-  # Host network mode has no namespace to contain it — see the nominatim block
-  # in .config/hq/compose.host-net.yml for what happens there instead.
+  # No `ports:`. The image runs gunicorn on 0.0.0.0:8080 and ignores every attempt
+  # to change that, so with nothing published it reaches no further than this
+  # container's namespace. Host mode has no namespace — see the nominatim block
+  # in .config/hq/compose.host-net.yml.
   nominatim:
     image: mediagis/nominatim:5.1
     profiles: ["nominatim"]
@@ -255,7 +242,7 @@ services:
     environment:
       # Default: world coarse (admin boundaries: countries, states, cities).
       # Override NOMINATIM_PBF_URL / NOMINATIM_IMPORT_STYLE in .env for detail.
-      - PBF_URL=${NOMINATIM_PBF_URL:-https://planet.openstreetmap.org/pbf/planet-latest.osm.pbf}
+      - PBF_URL=${NOMINATIM_PBF_URL:-https://download.geofabrik.de/europe-latest.osm.pbf}
       - REPLICATION_URL=${NOMINATIM_REPLICATION_URL:-https://planet.openstreetmap.org/replication/day/}
       - IMPORT_STYLE=${NOMINATIM_IMPORT_STYLE:-admin}
       - UPDATE_MODE=none
@@ -288,11 +275,8 @@ services:
       - ./.config/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-    # Defaults here are intentionally non-strict — compose validates ALL
-    # services on every command (even profile-gated ones), so a strict
-    # `${DOMAIN:?...}` would break `down`, `config`, `ps` etc. when caddy
-    # isn't even active. Real validation happens in setup.sh's "Published"
-    # path before the caddy profile is enabled.
+    # Non-strict on purpose: compose validates ALL services on every command, so a
+    # `${DOMAIN:?...}` would break `down`/`config`/`ps` when caddy is inactive.
     environment:
       - DOMAIN=${DOMAIN:-localhost}
       - BACKEND_PORT=${BACKEND_PORT:-8022}
@@ -307,10 +291,8 @@ volumes:
   app-db-data:
   redis_data:
   searxng_data:
-  # Deliberately unscoped: model weights are tens of GB, so every checkout on
-  # this host shares one cache instead of re-pulling. The cost is that it is NOT
-  # namespaced by project — `docker compose down -v` from any HQ checkout takes
-  # the models with it. Every other volume here is project-scoped.
+  # Deliberately unscoped, so every checkout on this host shares one model cache.
+  # Not namespaced by project: `down -v` from any HQ checkout takes the models.
   ollama_data:
     name: ollama_data
   nominatim-data:
