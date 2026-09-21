@@ -1,6 +1,6 @@
 """Every AppSettings field has exactly one home.
 
-`.env` holds what compromises the deployment if it leaks. `my-hq.yml` holds
+`.env` holds what compromises the deployment if it leaks. `HQ.yml` holds
 everything else. The split only stays true if something checks it — a field
 added without a `validation_alias` silently reads from an environment that no
 longer carries it, and falls back to its code default. That failure is quiet:
@@ -62,7 +62,7 @@ def test_secrets_are_notis_yaml_backed():
     """A secret with an AliasPath would be readable from the non-secret file."""
     leaked = [n for n in SECRETS
               if n in AppSettings.model_fields and is_yaml_backed(AppSettings.model_fields[n])]
-    assert not leaked, f"Secrets reachable from my-hq.yml: {leaked}"
+    assert not leaked, f"Secrets reachable from HQ.yml: {leaked}"
 
 
 def test_no_minio_fields_remain():

@@ -25,7 +25,7 @@ from sqlmodel import Session, create_engine
 # Name the deployment config BEFORE anything imports app.core.config —
 # HQ_CONFIG_FILE is read once, at module import.
 #
-# The deployment's own my-hq.yml when there is one, because the functional
+# The deployment's own HQ.yml when there is one, because the functional
 # tests talk to the services it describes — its database is the database they
 # need. Otherwise hq-test.yml, which is enough for everything that touches no
 # service. Either way the suite names its config instead of inheriting whatever
@@ -36,8 +36,8 @@ from sqlmodel import Session, create_engine
 # repo checkout (backend/app/tests/...) and from /app in a container.
 _here = Path(__file__).resolve()
 _deployment_config = next(
-    (c for c in (Path.cwd() / "my-hq.yml", _here.parents[2] / "my-hq.yml",
-                 _here.parents[3] / "my-hq.yml") if c.is_file()),
+    (c for c in (Path.cwd() / "HQ.yml", _here.parents[2] / "HQ.yml",
+                 _here.parents[3] / "HQ.yml") if c.is_file()),
     None,
 )
 os.environ.setdefault(
