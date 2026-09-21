@@ -17,6 +17,7 @@ import { ToolExecution } from '@/hooks/useIntelligenceChat'
 import { SourceConfirmCard, isStagedSource } from './SourceConfirmCard'
 import { SchemaConfirmCard, isStagedSchema } from './SchemaConfirmCard'
 import { SearchModeCard, isStagedSearchMode } from './SearchModeCard'
+import { CardBoundary } from './CardBoundary'
 import { Response } from '@/components/ai-elements/response'
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/components/ai-elements/reasoning'
 
@@ -239,34 +240,27 @@ export function AssistantMessageRenderer({
             }
 
             case 'tool': {
-              if (!section.toolExecution) return null
+              const exec = section.toolExecution
+              if (!exec) return null
 
-              // A staged source is a call to action — render its confirm card inline,
-              // always open. Every other tool (and task tools) is consolidated into
-              // the single collapsible tool panel (sidebar on wide, inline on mobile —
-              // see Chat.renderMessage), so nothing else renders in the reading column.
-              if (isStagedSource(section.toolExecution)) {
-                return (
-                  <div key={`tool-${section.toolExecution.id}`} className="my-2 min-w-0">
-                    <SourceConfirmCard execution={section.toolExecution} />
-                  </div>
-                )
-              }
-              if (isStagedSchema(section.toolExecution)) {
-                return (
-                  <div key={`tool-${section.toolExecution.id}`} className="my-2 min-w-0">
-                    <SchemaConfirmCard execution={section.toolExecution} />
-                  </div>
-                )
-              }
-              if (isStagedSearchMode(section.toolExecution)) {
-                return (
-                  <div key={`tool-${section.toolExecution.id}`} className="my-2 min-w-0">
-                    <SearchModeCard execution={section.toolExecution} />
-                  </div>
-                )
-              }
-              return null
+              // A staged directive is a call to action — render its confirm card
+              // inline, always open, behind a boundary (the card is built from model
+              // JSON; a throw here must not reach the page). Every other tool (and
+              // task tools) is consolidated into the single collapsible tool panel
+              // (sidebar on wide, inline on mobile — see Chat.renderMessage), so
+              // nothing else renders in the reading column.
+              const staged =
+                isStagedSource(exec) ? { label: 'source', card: <SourceConfirmCard execution={exec} /> } :
+                isStagedSchema(exec) ? { label: 'schema', card: <SchemaConfirmCard execution={exec} /> } :
+                isStagedSearchMode(exec) ? { label: 'search', card: <SearchModeCard execution={exec} /> } :
+                null
+              if (!staged) return null
+
+              return (
+                <div key={`tool-${exec.id}`} className="my-2 min-w-0">
+                  <CardBoundary label={staged.label}>{staged.card}</CardBoundary>
+                </div>
+              )
             }
 
             case 'content':

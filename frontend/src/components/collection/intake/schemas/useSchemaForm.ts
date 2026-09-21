@@ -28,7 +28,12 @@ export const LEAN_FIELD_TYPES: { value: LeanFieldType; label: string; hint: stri
   { value: 'list_choice', label: 'List of choices', hint: 'many from a fixed set' },
 ];
 
-/** A field seed the operator stages (mirrors the backend `schema_fields` vocabulary). */
+/** A field seed the operator stages (mirrors the backend `schema_fields` vocabulary).
+ *
+ * These types describe what a *well-formed* seed looks like, not what arrives:
+ * a seed is model-authored JSON off the wire, so every reader below coerces
+ * rather than trusts. `seedToField` is that boundary and is total by design.
+ */
 export interface SchemaFieldSeed {
   name: string;
   type?: string; // text|string|number|integer|boolean|enum|select, optionally array / suffixed []
@@ -83,13 +88,21 @@ function setFieldOptions(f: AdvancedSchemeField, options: string[]): AdvancedSch
   return { ...f, enum: options };
 }
 
-/** Map an operator-staged seed into a real `AdvancedSchemeField`. */
+/** The seed's choice list, however it arrived — array, comma string, or absent. */
+function seedOptions(seed: SchemaFieldSeed): string[] {
+  const raw: unknown = seed?.options ?? seed?.enum;   // declared string[], but it is JSON
+  if (Array.isArray(raw)) return raw.map((o) => String(o));
+  if (typeof raw === 'string') return raw.split(',').map((o) => o.trim()).filter(Boolean);
+  return [];
+}
+
+/** Map an operator-staged seed into a real `AdvancedSchemeField`. Total: any JSON in. */
 function seedToField(seed: SchemaFieldSeed): AdvancedSchemeField {
   const id = nanoid();
   const name = String(seed?.name ?? '').trim();
-  const description = seed?.description ?? '';
+  const description = String(seed?.description ?? '');
   const required = seed?.required ?? true;
-  const options = seed?.options ?? seed?.enum ?? [];
+  const options = seedOptions(seed);
   let type = String(seed?.type ?? 'text').toLowerCase();
   const isArray = !!(seed?.array) || type.endsWith('[]');
   if (type.endsWith('[]')) type = type.slice(0, -2);
@@ -121,7 +134,11 @@ export function useSchemaForm(init?: SchemaFormInit, onSuccess?: (result: any) =
   const [name, setName] = useState(init?.name ?? '');
   const [description, setDescription] = useState(init?.description ?? '');
   const [fields, setFields] = useState<AdvancedSchemeField[]>(() => {
-    const seeded = (init?.fields ?? []).map(seedToField).filter((f) => f.name || (init?.fields?.length ?? 0) > 0);
+    // `??` only catches null/undefined. A section-keyed object sailed through it
+    // into `.map` and threw inside this initializer, which unmounts the tree the
+    // chat is rendered in — the page died, not the card.
+    const seeds = Array.isArray(init?.fields) ? init.fields : [];
+    const seeded = seeds.map(seedToField);
     return seeded.length ? seeded : [newField()];
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
