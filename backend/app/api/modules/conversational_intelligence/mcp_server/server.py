@@ -287,16 +287,6 @@ def format_bundle_summary(bundles: List[Any]) -> str:
     return f"Found {len(bundles)} bundle{'' if len(bundles) == 1 else 's'} in your infospace."
 
 
-def _extract_fields_from_output_contract(output_contract: Dict[str, Any]) -> List[Dict[str, str]]:
-    """Legacy flat extractor — kept for backwards compatibility with old callers.
-
-    For the introspection surface used by FormulaAgent / DossierAgent, prefer
-    ``_walk_schema_surface()`` below, which emits row-shape roots, full
-    array-indexed paths, enum values, and axis references.
-    """
-    return _walk_schema_surface(output_contract).get("field_paths", [])
-
-
 def _walk_schema_surface(output_contract: Dict[str, Any]) -> Dict[str, Any]:
     """Walk a schema's output_contract and emit everything an LLM needs to author a Formula.
 
@@ -438,23 +428,18 @@ def format_schema_summary(schemas: List[Any]) -> str:
         if schema.description:
             lines.append(f"  {truncate_text(schema.description, 100)}")
         
-        # Extract fields from output_contract (handles both dict and object formats)
-        output_contract = schema.output_contract
-        if isinstance(output_contract, dict):
-            fields = _extract_fields_from_output_contract(output_contract)
-        elif hasattr(output_contract, 'fields'):
-            # Legacy format with OutputContract object
-            fields = [
-                {"name": f.name, "type": f.type, "description": getattr(f, 'description', '')}
-                for f in output_contract.fields
-            ]
-        else:
-            fields = []
-        
+        # Straight from the one walker. Every entry it emits is keyed ``path``
+        # (``document.sentiment``) and never ``name``, so reading ``name`` here
+        # raised KeyError on any schema that had a field — schema.list was dead
+        # for every non-empty infospace. The path is also the better thing to
+        # show: it says where the field lives, which is what the model needs to
+        # author a contract or a formula against it.
+        fields = _walk_schema_surface(schema.output_contract).get("field_paths", [])
+
         if fields:
             field_descriptions = [
-                f"  {field['name']}: {field['description']}" if field.get('description') 
-                else f"  {field['name']} ({field.get('type', 'unknown')})"
+                f"  {field['path']}: {field['description']}" if field.get('description')
+                else f"  {field['path']} ({field.get('type', 'unknown')})"
                 for field in fields[:10]  # Limit to first 10 fields
             ]
             lines.append("  Fields:")
@@ -2548,6 +2533,170 @@ def _fields_to_properties(
     return props, required
 
 
+# Field kinds whose *structure* the inline lean editor cannot show. It renders
+# text / number / yes-no / choice / list, so a nested row collapses into a single
+# text box and the user approves a schema that lost its shape. Flavour loss
+# (date shown as text) is fine — the picker shows it and the user can correct it.
+_UNSTAGEABLE_TYPES = {"object", "graph"}
+
+
+# JSON Schema bookkeeping keys, so a bare ``{name: spec}`` mapping never mistakes
+# one of them for a field.
+_SCHEMA_KEYWORDS = {"type", "properties", "required", "items", "description",
+                    "$schema", "$defs", "definitions", "title", "additionalProperties"}
+
+# JSON Schema spells some types differently than the field vocabulary does.
+_JSON_TYPE_ALIASES = {"string": "text", "float": "number", "bool": "boolean"}
+
+
+def _spec_to_field(name: str, spec: Dict[str, Any], required: bool) -> Dict[str, Any]:
+    """One ``{name: spec}`` entry → one field, from JSON Schema or field-ish input."""
+    field: Dict[str, Any] = {"name": name}
+    field["required"] = spec["required"] if isinstance(spec.get("required"), bool) else required
+    if spec.get("description"):
+        field["description"] = str(spec["description"])
+    if spec.get("entity_type"):
+        field["entity_type"] = spec["entity_type"]
+
+    declared = str(spec.get("type") or "text").lower()
+    items = spec.get("items") if isinstance(spec.get("items"), dict) else {}
+    if declared.endswith("[]"):
+        declared, field["array"] = declared[:-2], True
+    if declared == "array" or spec.get("array"):
+        field["array"] = True
+        declared = str(items.get("type") or "text").lower() if items else "text"
+
+    options = spec.get("options") or spec.get("enum") or items.get("enum")
+    if isinstance(options, list) and options:
+        field["options"] = [str(o) for o in options]
+        declared = "enum"
+
+    # A nested row, however it was spelled: HQ's ``fields`` or JSON Schema's
+    # ``properties`` (on the field, or on an array's items).
+    nested = spec.get("fields") if isinstance(spec.get("fields"), list) else None
+    if nested is None:
+        props = spec.get("properties") or items.get("properties")
+        if isinstance(props, dict):
+            nested = _fields_from_mapping({"properties": props,
+                                           "required": spec.get("required") or items.get("required")})
+    if nested:
+        field["fields"], declared = nested, "object"
+    elif spec.get("entity_type") and declared in ("text", "string"):
+        # A roster the model spelled as a plain array of names. Typing it
+        # ``entity`` is what makes it canon-resolvable instead of free text.
+        declared = "entity"
+
+    field["type"] = _JSON_TYPE_ALIASES.get(declared, declared)
+    return field
+
+
+def _fields_from_mapping(node: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Any mapping the model reached for → the flat field list this tool speaks.
+
+    Covers the two it actually sends: a full JSON Schema
+    (``{type, properties, required}``) and the section-keyed form
+    (``{document: {...}, events: {...}}``).
+    """
+    if isinstance(node.get("fields"), list):
+        return node["fields"]
+
+    inner = node.get("properties") if isinstance(node.get("properties"), dict) else node
+    required = node.get("required") if isinstance(node.get("required"), list) else []
+
+    def entries(mapping: Dict[str, Any], req: List[str]) -> List[Dict[str, Any]]:
+        return [_spec_to_field(key, spec, key in req)
+                for key, spec in mapping.items()
+                if isinstance(spec, dict) and key not in _SCHEMA_KEYWORDS]
+
+    # ``document`` is the section ``_fields_to_output_contract`` puts back, so a
+    # mapping that names it — alone or beside siblings — meant its contents to be
+    # the top-level fields, not a field called "document".
+    doc = inner.get("document")
+    if isinstance(doc, dict):
+        if isinstance(doc.get("fields"), list):
+            hoisted = doc["fields"]
+        else:
+            doc_props = doc.get("properties") if isinstance(doc.get("properties"), dict) else {}
+            doc_req = doc.get("required") if isinstance(doc.get("required"), list) else []
+            hoisted = entries(doc_props, doc_req)
+        siblings = {k: v for k, v in inner.items() if k != "document"}
+        return hoisted + entries(siblings, required)
+
+    return entries(inner, required)
+
+
+def _coerce_field_list(schema_fields: Any) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """The one door ``schema_fields`` comes through, for stage and create alike.
+
+    ``schema_fields`` is a FLAT list; nesting lives *inside* a field
+    (``{"type": "object", "fields": [...]}``), never as top-level sections. But
+    ``output_contract`` sits directly above it in the signature and teaches the
+    hierarchical ``{document: {...}}`` convention, and ``schema.list`` hands back
+    JSON Schema — so a model reaches for those shapes here constantly. They used
+    to pass straight through, because nothing checked what ``json.loads``
+    returned: stage shipped the dict to a React ``.map`` and took the whole page
+    down, and create built an EMPTY contract without complaining.
+
+    Refusing them is not enough either — measured, a local 35B sent JSON Schema,
+    read a precise rejection, and sent the same thing four more times. So a
+    mapping is *converted* rather than bounced: it is never ambiguous, and it
+    lands on the one internal shape everything downstream already reads. The
+    returned note says what was done, so the model still learns the vocabulary.
+    """
+    if schema_fields is None:
+        return [], None
+    note = None
+    if isinstance(schema_fields, str):
+        schema_fields = json.loads(schema_fields)          # JSONDecodeError is a ValueError
+    if isinstance(schema_fields, dict):
+        if isinstance(schema_fields.get("name"), str) and not isinstance(schema_fields.get("properties"), dict):
+            # The right vocabulary, handed over without its list — a single field.
+            schema_fields = [schema_fields]
+            note = "wrapped your single field in a list; schema_fields is always a list"
+        else:
+            shape = ("JSON Schema" if isinstance(schema_fields.get("properties"), dict)
+                     else "a section-keyed object")
+            fields = _fields_from_mapping(schema_fields)
+            if not fields:
+                raise ValueError(
+                    f"schema_fields looked like {shape} but no fields could be read out of it. "
+                    "It takes a flat list: [{\"name\": \"sentiment\", \"type\": \"integer\"}, ...]."
+                )
+            note = (f"read your input ({shape}) as {len(fields)} field"
+                    f"{'' if len(fields) == 1 else 's'} — schema_fields takes a flat list "
+                    "([{name, type, description?, options?, array?}]); hand-written JSON Schema "
+                    "goes to output_contract")
+            schema_fields = fields
+    if not isinstance(schema_fields, list):
+        raise ValueError(
+            f"schema_fields must be a list of field objects, got {type(schema_fields).__name__}"
+        )
+    nameless = [f for f in schema_fields
+                if not isinstance(f, dict) or not str(f.get("name") or "").strip()]
+    if nameless:
+        raise ValueError(
+            f"every field needs a name; {len(nameless)} of {len(schema_fields)} have none"
+        )
+    return schema_fields, note
+
+
+def _reject_unstageable(fields: List[Dict[str, Any]]) -> None:
+    """Refuse fields the inline editor would show the user as something they aren't.
+
+    stage-then-confirm only means anything if the user approves what will be
+    created. A nested row rendered as one text box is not that.
+    """
+    structural = [f["name"] for f in fields
+                  if f.get("fields") or str(f.get("type") or "").rstrip("[]") in _UNSTAGEABLE_TYPES]
+    if structural:
+        raise ValueError(
+            f"the inline editor cannot show nested rows, so {structural} would reach the user "
+            "as plain text fields and be approved as that. Either flatten them for schema.stage, "
+            "or build this one with schema.create (start from schema.templates — the templates "
+            "carry the graph bindings)."
+        )
+
+
 def _fields_to_output_contract(fields: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Build a hierarchical output_contract from a field list.
 
@@ -2713,6 +2862,7 @@ async def _analysis_create_schema(
     instructions: Optional[str],
     version: str,
     field_specific_justification_configs: Optional[Dict[str, Any]],
+    note: Optional[str] = None,
 ) -> ToolResult:
     """Create a schema from a full JSON Schema output_contract.
 
@@ -2735,7 +2885,8 @@ async def _analysis_create_schema(
         structured = _schema_to_structured(schema)
         structured["status"] = "created"
         text = (
-            f"✅ Created schema '{schema.name}' v{schema.version} (ID: {schema.id}, {structured['field_count']} fields)\n\n"
+            (f"ℹ️  {note}\n\n" if note else "")
+            + f"✅ Created schema '{schema.name}' v{schema.version} (ID: {schema.id}, {structured['field_count']} fields)\n\n"
             f"{_render_schema_text(schema)}\n\n"
             f"→ analysis_hub(operation='run.start', schema_id={schema.id}, asset_ids=[...]) to run analysis"
         )
@@ -2917,9 +3068,10 @@ async def analysis_hub(
     schema_name: Annotated[Optional[str], "Schema name — required for schema.create, optional rename for schema.update"] = None,
     output_contract: Annotated[Optional[Dict[str, Any]], "Full JSON Schema output_contract — same shape as schema.list returns. Use the hierarchical {type, properties: {document: {type, properties: {...}, required: [...]}}, required: ['document']} convention. For schema.create, prefer the simpler schema_fields instead."] = None,
     schema_fields: Annotated[Optional[Any], (
-        "EASY way to create a schema: a list (or JSON string) of fields "
+        "EASY way to create a schema: a FLAT list (or JSON string) of fields "
         "[{name, type, description?, array?, required?, ref?}]. Converted to output_contract "
-        "for you — always prefer this over hand-writing output_contract.\n"
+        "for you — always prefer this over hand-writing output_contract. Never an object "
+        "keyed by section: nesting goes INSIDE a field, via type:object + fields.\n"
         "Types: text, number, integer, boolean, date, enum (+options), entity (+entity_type), "
         "object (a nested row, +fields). array:true for many.\n"
         "\n"
@@ -3114,17 +3266,22 @@ async def analysis_hub(
                     structured_content={"error": "missing_schema_name"},
                 )
             try:
-                staged_fields = (json.loads(schema_fields) if isinstance(schema_fields, str) else schema_fields) or []
-            except (ValueError, TypeError) as e:
+                staged_fields, note = _coerce_field_list(schema_fields)
+                _reject_unstageable(staged_fields)
+            except ValueError as e:
                 return ToolResult(
-                    content=[TextContent(type="text", text=f"❌ schema_fields must be a list of field objects: {e}")],
+                    content=[TextContent(type="text", text=f"❌ {e}")],
                     structured_content={"error": "invalid_schema_fields", "detail": str(e)},
                 )
             import uuid as _uuid
             token = f"schema-{_uuid.uuid4().hex[:12]}"
-            n = len(staged_fields) if isinstance(staged_fields, list) else 0
+            n = len(staged_fields)
             return ToolResult(
-                content=[TextContent(type="text", text=f"⏸ Prepared schema '{schema_name}' ({n} field{'' if n == 1 else 's'}) — shape and confirm it below and I'll continue.")],
+                content=[TextContent(type="text", text=(
+                    f"⏸ Prepared schema '{schema_name}' ({n} field{'' if n == 1 else 's'})"
+                    + (f" — {note}" if note else "")
+                    + " — shape and confirm it below and I'll continue."
+                ))],
                 structured_content={
                     "staged": True,
                     "ui_directive": {
@@ -3143,13 +3300,14 @@ async def analysis_hub(
 
         if operation == "schema.create":
             # Accept the natural field-list form and convert it to output_contract.
+            note = None
             if schema_fields is not None and not output_contract:
                 try:
-                    fields = json.loads(schema_fields) if isinstance(schema_fields, str) else schema_fields
+                    fields, note = _coerce_field_list(schema_fields)
                     output_contract = _fields_to_output_contract(fields)
-                except (ValueError, TypeError) as e:
+                except ValueError as e:
                     return ToolResult(
-                        content=[TextContent(type="text", text=f"❌ schema_fields must be a list of field objects: {e}")],
+                        content=[TextContent(type="text", text=f"❌ {e}")],
                         structured_content={"error": "invalid_schema_fields", "detail": str(e)},
                     )
             if not schema_name or not output_contract:
@@ -3166,6 +3324,7 @@ async def analysis_hub(
                 instructions=schema_instructions,
                 version=schema_version or "1.0",
                 field_specific_justification_configs=field_specific_justification_configs,
+                note=note,
             )
 
         if operation == "schema.update":
