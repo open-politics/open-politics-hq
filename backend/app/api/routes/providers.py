@@ -85,6 +85,20 @@ async def discover_models(
     return {"capability": capability, "models": results, "count": len(results)}
 
 
+def _provides(desc, capability_fn: str) -> bool:
+    """Whether any of this provider's features implements ``capability_fn``.
+
+    Same derivation ``list_models`` uses, so the flag and the behaviour cannot
+    disagree.
+    """
+    from importlib import import_module
+    return any(
+        capability_fn in getattr(
+            import_module(f"{desc.domain.package}.features.{f.module}"), "PROVIDES", ())
+        for f in desc.features
+    )
+
+
 def _entry(spec, provider_key: str) -> Dict[str, Any]:
     """One model, flattened for the wire. Only the fields that domain has."""
     entry: Dict[str, Any] = {"name": spec.name, "provider": provider_key}
@@ -200,13 +214,15 @@ async def infospace_enrichment_status(
                    for this specific infospace
     """
     from app.core.tasks import get_task_registry, list_structural_blocks
-    from app.api.modules.foundation_service_providers import EnrichmentConfig
+    from app.core.dispatch import _get_enabled_enrichers
+    from app.api.modules.foundation_service_providers import EnrichmentConfig, enricher_enabled
 
     iid = access.infospace_id
     config = access.infospace.enrichment_config
     if isinstance(config, dict):
         config = EnrichmentConfig(**config)
 
+    deployment_on = _get_enabled_enrichers()
     blocks = list_structural_blocks(iid)  # {task_name: reason}
 
     registry = get_task_registry()
@@ -216,7 +232,7 @@ async def infospace_enrichment_status(
         if "enrichment" not in desc.tags:
             continue
 
-        enabled = bool(config and config.is_enabled(name)) if config else False
+        enabled = enricher_enabled(name, config, deployment_default=name in deployment_on)
         sel = config.provider_for(name) if config else None
 
         entry = {
@@ -288,6 +304,9 @@ class CatalogProvider(BaseModel):
     #: Whether this endpoint's model inventory is mutable from here. Derived
     #: from the declaration, so a UI never needs `provider.id === "ollama"`.
     pullable: bool
+    #: Whether it can report its inventory live. Distinct from `pullable`:
+    #: llama.cpp lists the one GGUF it serves but cannot install another.
+    listable: bool = False
     models: List[CatalogModel] = []
 
 
@@ -330,8 +349,10 @@ async def provider_catalog(
     per-domain model call for capability flags, and string-matching a feature
     name to decide whether a model-management panel should appear.
 
-    Curated models only — fast, no credentials, no network. An endpoint's live
-    inventory needs a key, so it stays on ``/{infospace_id}/models``.
+    Curated where a declaration carries models, discovered where it does not.
+    A provider declaring none (llama.cpp, Ollama) has only live models, so a
+    curated-only answer would leave it unpickable — and every model picker in
+    the UI reads this one route. Bounded to those providers, which are local.
     """
     domains: Dict[str, List[CatalogProvider]] = {}
 
@@ -341,6 +362,12 @@ async def provider_catalog(
             endpoint = desc.endpoint
             api_key = endpoint.api_key
             feature_names = sorted(f.name for f in desc.features)
+            listable = _provides(desc, "list_models")
+            models = list(desc.models)
+            if listable and not models:
+                models = await list_models(
+                    domain, provider_key, infospace_id=access.infospace_id,
+                )
             entries.append(CatalogProvider(
                 id=provider_key,
                 name=endpoint.name,
@@ -354,7 +381,8 @@ async def provider_catalog(
                 dialect=desc.binding.dialect.name,
                 features=feature_names,
                 pullable="model_pull" in feature_names,
-                models=[_catalog_model(s) for s in desc.models],
+                listable=listable,
+                models=[_catalog_model(m) for m in models],
             ))
         domains[domain] = entries
 

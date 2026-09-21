@@ -35,7 +35,7 @@ from app.api.modules.content.views import (
     tree,
 )
 from app.api.modules.identity_infospace_user.access import (
-    Access, Capability, DeleteAccess, Requires, ViewAccess,
+    Access, Capability, Requires,
 )
 from app.api.tree_renderer import parse_tree_node_id
 from app.api.modules.content.tree import ROOT, delete as tree_delete
@@ -73,7 +73,7 @@ async def get_infospace_tree(
     limit: int = Query(100, ge=1, le=500),
     cursor: Optional[str] = Query(None),
     q: Optional[str] = Query(None, description="AQL filter — turns the browse tree into a result-tree"),
-    access: Access = ViewAccess,
+    access: Access = Requires(scope=None),
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
 ):
     """Root-level tree: flat bundle nav + top-level assets (JSON envelope).
@@ -100,7 +100,7 @@ async def get_infospace_tree_stream(
     limit: int = Query(100, ge=1, le=500),
     cursor: Optional[str] = Query(None),
     q: Optional[str] = Query(None, description="AQL filter — turns the browse tree into a result-tree"),
-    access: Access = ViewAccess,
+    access: Access = Requires(scope=None),
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
 ):
     """Native SSE stream of the root tree (browse, or a result-tree when ``q`` is set)."""
@@ -177,7 +177,7 @@ async def get_tree_children(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     q: Optional[str] = Query(None, description="AQL filter — lists only matching members (result-tree)"),
-    access: Access = ViewAccess,
+    access: Access = Requires(scope=None),
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
 ):
     """Lazy children for a tree node (JSON envelope).
@@ -205,7 +205,7 @@ async def get_tree_children_stream(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
     q: Optional[str] = Query(None, description="AQL filter — lists only matching members (result-tree)"),
-    access: Access = ViewAccess,
+    access: Access = Requires(scope=None),
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
 ):
     """Native SSE stream of tree children (all members, or matching ones when ``q`` is set)."""
@@ -282,7 +282,7 @@ async def get_feed_assets(
     sort_order: str = Query("desc"),
     bundle_id: Optional[int] = Query(None),
     cursor: Optional[str] = Query(None),
-    access: Access = ViewAccess,
+    access: Access = Requires(scope=None),
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
 ):
     """Flat feed of recent assets (JSON envelope)."""
@@ -306,7 +306,7 @@ async def get_feed_assets_stream(
     sort_order: str = Query("desc"),
     bundle_id: Optional[int] = Query(None),
     cursor: Optional[str] = Query(None),
-    access: Access = ViewAccess,
+    access: Access = Requires(scope=None),
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
 ):
     """Native SSE stream of the recent-assets feed."""
@@ -332,7 +332,7 @@ def batch_get_assets(
     *,
     infospace_id: int,
     request: BatchGetAssetsRequest,
-    access: Access = ViewAccess,
+    access: Access = Requires(scope=None),
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
 ) -> Any:
     """Fetch multiple assets by ids. Scope-aware; order preserved."""
@@ -402,7 +402,7 @@ def delete_tree_nodes(
     *,
     infospace_id: int,
     request: TreeDeleteRequest,
-    access: Access = DeleteAccess,
+    access: Access = Requires(Capability.DELETE, scope=None),
     db: Session = dependency_injection.Depends(dependency_injection.get_db),
 ) -> Any:
     """Delete bundles and/or assets (cascaded)."""

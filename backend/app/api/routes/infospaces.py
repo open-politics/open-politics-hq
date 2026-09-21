@@ -29,7 +29,7 @@ from app.api.dependency_injection import (
 from app.api.modules.identity_infospace_user.services import InfospaceService
 from app.api.modules.identity_infospace_user.services import invitation_service
 from app.api.modules.identity_infospace_user.access import (
-    Access, Capability, Requires,
+    ASSIGNABLE_ROLES, Access, Capability, Requires,
 )
 from app.api.modules.identity_infospace_user.models import CollaboratorRole
 
@@ -312,8 +312,12 @@ def change_collaborator_role(
     access: Access = Requires(Capability.SETUP, scope=None),
 ) -> Any:
     """Change a collaborator's role. Only owner/setup can do this."""
-    if role == CollaboratorRole.OWNER:
-        raise HTTPException(status_code=400, detail="Cannot assign owner role via this endpoint")
+    if role not in ASSIGNABLE_ROLES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot assign the '{role.value}' role. "
+                   f"Choose one of: {', '.join(sorted(r.value for r in ASSIGNABLE_ROLES))}.",
+        )
     try:
         infospace_service.change_collaborator_role(
             infospace_id=access.infospace_id,

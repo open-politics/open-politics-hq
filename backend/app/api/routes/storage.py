@@ -43,18 +43,6 @@ class StorageBrowseResponse(BaseModel):
     path_error: Optional[str] = None  # Set when path doesn't exist (mount/config issue)
 
 
-def _is_allowed_path(path: Path, allowed_roots: List[Path]) -> bool:
-    """Check if path is under one of the allowed roots."""
-    try:
-        resolved = path.resolve()
-        for root in allowed_roots:
-            if root and resolved.is_relative_to(root):
-                return True
-    except (ValueError, OSError):
-        pass
-    return False
-
-
 @router.get("/infospaces/{infospace_id}/storage/browse", response_model=StorageBrowseResponse)
 def browse_storage(
     *,
@@ -71,30 +59,19 @@ def browse_storage(
     List immediate children of a directory under allowed import paths.
 
     Used by the Local Storage Import UI to browse available datasets before import.
-    Path must be under ALLOWED_IMPORT_PATHS (or LOCAL_STORAGE_BASE_PATH).
+    Path must be under ALLOWED_IMPORT_PATHS; an empty list means nothing is browsable.
     """
     from app.core.config import settings
 
     is_owner = access.is_owner
 
-    allowed_str = [p for p in (settings.ALLOWED_IMPORT_PATHS or []) if p]
-    if not allowed_str:
-        allowed_str = [settings.LOCAL_STORAGE_BASE_PATH]
-
-    allowed_roots = []
-    for p in allowed_str:
-        try:
-            allowed_roots.append(Path(p).resolve())
-        except (ValueError, OSError):
-            pass
-
+    allowed_roots = settings.importable_roots
     if not allowed_roots:
-        roots_for_response = [str(Path(settings.LOCAL_STORAGE_BASE_PATH).resolve())] if is_owner else []
         return StorageBrowseResponse(
             current_path="",
             parent_path=None,
             entries=[],
-            allowed_roots=roots_for_response,
+            allowed_roots=[],
         )
 
     # Resolve target path
@@ -103,7 +80,7 @@ def browse_storage(
     else:
         target = allowed_roots[0]
 
-    if not _is_allowed_path(target, allowed_roots):
+    if not settings.is_importable(target):
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="Path is not under allowed import paths")
 
@@ -115,7 +92,7 @@ def browse_storage(
             parent_path=None,
             entries=[],
             allowed_roots=roots_for_response,
-            path_error=f"Path {target} does not exist. Ensure ALLOWED_IMPORT_PATHS ({', '.join(allowed_str)}) is mounted in your Docker/container setup.",
+            path_error=f"Path {target} does not exist. Ensure ALLOWED_IMPORT_PATHS ({', '.join(str(r) for r in allowed_roots)}) is mounted in your Docker/container setup.",
         )
     if not target.is_dir():
         return StorageBrowseResponse(
@@ -132,7 +109,7 @@ def browse_storage(
         try:
             if target != root and target.is_relative_to(root):
                 parent_path = str(target.parent)
-                if not _is_allowed_path(target.parent, allowed_roots):
+                if not settings.is_importable(target.parent):
                     parent_path = str(root)
                 break
         except ValueError:
@@ -146,7 +123,7 @@ def browse_storage(
     for item in sorted(target.iterdir()):
         try:
             entry_path = item.resolve()
-            if not _is_allowed_path(entry_path, allowed_roots):
+            if not settings.is_importable(entry_path):
                 continue  # Skip symlinks/mounts outside allowed roots
             if item.name.startswith("."):
                 continue
@@ -157,9 +134,7 @@ def browse_storage(
                 size_bytes = 0
                 counts_capped = False
                 if include_counts:
-                    max_files = getattr(
-                        settings, "STORAGE_BROWSE_MAX_COUNT_FILES", 2000
-                    ) or 0
+                    max_files = settings.STORAGE_BROWSE_MAX_COUNT_FILES
                     try:
                         with os.scandir(item) as it:
                             for entry in it:

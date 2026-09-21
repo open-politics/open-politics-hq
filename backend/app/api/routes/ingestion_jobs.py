@@ -127,17 +127,7 @@ def create_directory_import_job(
             detail=f"Source path '{request.source_path}' does not exist or is not a directory"
         )
 
-    allowed_paths = [p for p in (settings.ALLOWED_IMPORT_PATHS or []) if p]
-    if not allowed_paths:
-        allowed_paths = [settings.LOCAL_STORAGE_BASE_PATH]
-
-    allowed_resolved = []
-    for p in allowed_paths:
-        try:
-            allowed_resolved.append(Path(p).resolve())
-        except (ValueError, OSError):
-            pass
-    if not any(source.is_relative_to(a) for a in allowed_resolved):
+    if not settings.is_importable(source):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Source path '{request.source_path}' is not under allowed import paths"
@@ -647,10 +637,7 @@ async def reconcile_directory(
             detail=f"Source path '{request.source_path}' does not exist or is not a directory",
         )
 
-    allowed_paths = [p for p in (settings.ALLOWED_IMPORT_PATHS or []) if p]
-    if not allowed_paths:
-        allowed_paths = [settings.LOCAL_STORAGE_BASE_PATH]
-    if not any(source.is_relative_to(Path(p).resolve()) for p in allowed_paths):
+    if not settings.is_importable(source):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Source path is not under allowed import paths",

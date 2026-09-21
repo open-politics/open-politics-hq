@@ -46,24 +46,6 @@ reusable_oauth2 = OAuth2PasswordBearer(
 SettingsDep = Annotated[AppSettings, Depends(lambda: settings)]
 
 
-def check_upload_size(request: Request, settings: SettingsDep) -> None:
-    """Enforce MAX_UPLOAD_SIZE_BYTES from config. Raise 413 if exceeded."""
-    content_length = request.headers.get("content-length")
-    if content_length:
-        try:
-            size = int(content_length)
-            if size > settings.MAX_UPLOAD_SIZE_BYTES:
-                raise HTTPException(
-                    status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                    detail=f"Request body exceeds maximum size of {settings.MAX_UPLOAD_SIZE_BYTES} bytes",
-                )
-        except ValueError:
-            pass
-
-
-CheckUploadSizeDep = Annotated[None, Depends(check_upload_size)]
-
-
 def get_db() -> Generator[Session, None, None]:
     with Session(engine) as session:
         yield session

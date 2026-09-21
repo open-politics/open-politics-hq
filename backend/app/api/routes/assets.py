@@ -25,7 +25,6 @@ from app.api.dependency_injection import (
     SessionDep,
     CurrentUser,
     StorageProviderDep,
-    CheckUploadSizeDep,
 )
 from app.api.modules.identity_infospace_user.access import (
     Access, Capability, Requires, resolve_access,
@@ -291,7 +290,6 @@ async def upload_file(
     session: SessionDep,
     access: Access = Requires(Capability.INGEST, scope=None),
     infospace_id: int,
-    _: CheckUploadSizeDep,
     file: UploadFile = File(...),
     title: Optional[str] = Form(None),
     bundle_id: Optional[int] = Form(None),

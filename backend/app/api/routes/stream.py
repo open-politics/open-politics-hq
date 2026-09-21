@@ -71,9 +71,8 @@ async def subscribe_stream(
     reconnects with ``Last-Event-ID``.
 
     No-transform / no-buffering response headers are injected globally by
-    ``SseNoTransformMiddleware`` in ``main.py`` for any ``text/event-stream``
-    response — gzip in proxies (Next.js dev rewrites, nginx) batches small
-    SSE frames into bulk delivery and defeats streaming.
+    ``ResponseHeadersMiddleware`` in ``main.py`` for any ``text/event-stream``
+    response — proxies gzip and batch small SSE frames otherwise.
     """
     key = stream_key(access.infospace_id, topic, resource_id, param_dict)
 
