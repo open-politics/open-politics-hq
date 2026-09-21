@@ -51,6 +51,11 @@ def get_db() -> Generator[Session, None, None]:
         yield session
 
 SessionDep = Annotated[Session, Depends(get_db)]
+
+# Standard ``Authorization: Bearer``. A proxy that gates the origin with HTTP
+# Basic exempts the API path instead — there is only one ``Authorization``
+# header, and the fix for that belongs in the proxy, not in the scheme every
+# client, curl invocation and Swagger Authorize button already speaks.
 TokenDep = Annotated[Optional[str], Depends(reusable_oauth2)]
 
 # --- User Authentication Dependencies ---
