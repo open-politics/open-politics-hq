@@ -82,7 +82,7 @@ export const PinBoard: React.FC<PinBoardProps> = ({
 
   return (
     <div
- className="absolute bottom-0 left-2 flex items-center gap-2 surface-overlay border rounded-xl px-2 py-1 max-w-[60%]"
+ className="absolute bottom-[var(--graph-bottom-rail,0px)] left-2 flex items-center gap-2 surface-overlay border rounded-xl px-2 py-1 max-w-[60%] @max-xl/graph:bottom-[calc(var(--graph-bottom-rail,0px)+3.25rem)]"
       style={{ pointerEvents: 'auto' }}
     >
       {/* ===== Tabs ===== */}

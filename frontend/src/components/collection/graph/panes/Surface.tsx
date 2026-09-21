@@ -114,7 +114,7 @@ function ItemsSurface({ surface, focusIds, onPick, onPin }: SurfaceProps) {
                 <button
                   type="button"
                   onClick={e => { e.stopPropagation(); onPin(r); }}
-                  className="shrink-0 text-[9px] text-hud-dimmer opacity-0 transition-opacity group-hover:opacity-100"
+                  className="shrink-0 text-[9px] text-hud-dimmer opacity-0 transition-opacity group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
                   title="Pin — becomes a term of the pin page's query"
                 >
                   pin
@@ -184,7 +184,7 @@ function ListSurface({ surface, focusIds, onPick, onPin }: SurfaceProps) {
               <button
                 type="button"
                 onClick={e => { e.stopPropagation(); onPin(r); }}
-                className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+                className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 [@media(pointer:coarse)]:opacity-100"
                 title="Pin — becomes a term of the pin page's query"
               >
                 <span className="text-[10px] text-hud-dimmer">pin</span>

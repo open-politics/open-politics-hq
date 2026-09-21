@@ -402,7 +402,7 @@ export const NodeDetailHUD: React.FC<NodeDetailHUDProps> = ({
       </div>
 
       {/* ===== TOP-RIGHT: Focus + Close ===== */}
-      <div className="absolute top-2 right-2 flex items-center gap-1" style={{ pointerEvents: 'auto' }}>
+      <div className="absolute top-2 right-[calc(0.5rem+var(--graph-right-rail,0px))] flex items-center gap-1" style={{ pointerEvents: 'auto' }}>
         {onFocusSubgraph && focalNode && (
           <Button
             variant="ghost"
@@ -497,7 +497,7 @@ export const NodeDetailHUD: React.FC<NodeDetailHUDProps> = ({
           <div
             // Top-bound + bottom margin large enough to clear the lanes
             // panel below (which has its own max-h ~9rem ≈ 144px + bottom-2).
-            className="absolute top-12 right-2 w-[300px] max-w-[40%] flex flex-col gap-2 overflow-hidden"
+            className="absolute top-12 right-[calc(0.5rem+var(--graph-right-rail,0px))] w-[300px] max-w-[40%] flex flex-col gap-2 overflow-hidden"
             style={{ pointerEvents: 'none', bottom: 'calc(11rem)' }}
           >
             {mode === 'focal' ? (

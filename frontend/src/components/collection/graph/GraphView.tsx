@@ -320,7 +320,25 @@ export function GraphView({
       {/* Main content: graph with optional HUD overlay (no resizable side panel —
           the HUD floats over the canvas so it never shrinks the graph view). */}
       <div className="flex-1 min-h-0">
-        <div className="relative h-full w-full">
+        <div
+          className="@container/graph relative h-full w-full"
+          style={{
+            // The relationships panel is a full-height rail pinned to the right
+            // edge. Everything else that anchors there — the node HUD's right
+            // column, its button cluster, the edge card — was simply underneath
+            // it whenever both were open, which is most of the time you are
+            // actually using it (pick a pair, then look at a node).
+            //
+            // Same shape as `--app-rail`: the canvas publishes one number and
+            // the panels step aside by exactly that much. It carries the panel's
+            // own `min(width, 40%)` so the offset stays correct when the clamp
+            // takes over on a narrow canvas.
+            ['--graph-right-rail' as any]:
+              graphId != null && showRelationshipsPanel
+                ? 'calc(min(25rem, 40%) + 0.75rem)'
+                : '0px',
+          }}
+        >
           <ForceGraph
             ref={forceGraphRef}
             nodes={nodes}
@@ -357,7 +375,7 @@ export function GraphView({
           {/* Edge floating card (small overlay top-right) */}
           {showDetailPanel && selectedEdge && !selectedNode && (
             <div
-              className="absolute top-2 right-12 z-30 w-[320px] max-w-[40%] surface-overlay border rounded-lg p-3"
+              className="absolute top-2 right-[calc(3rem+var(--graph-right-rail,0px))] z-30 w-[320px] max-w-[40%] surface-overlay border rounded-lg p-3"
               style={{ pointerEvents: 'auto' }}
             >
               <div className="flex items-center justify-between mb-2">
