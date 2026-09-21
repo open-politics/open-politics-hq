@@ -1,10 +1,9 @@
 """
-Core access control module.
+Capability-based access: frozen Access contexts, role→capability mapping, and
+the Requires() dependency factory.
 
-Implements capability-based access with frozen Access contexts, role→capability
-mapping, and the Requires() FastAPI dependency factory.
-
-See FOUNDATION.md § Access Control and OVERVIEW.md § Access Control.
+Every path builds its Access through _resolve_access, which caps it by the
+deployment ceiling. See FOUNDATION.md § Access Control.
 """
 
 from __future__ import annotations
@@ -29,7 +28,7 @@ from app.api.modules.identity_infospace_user.models import (
 logger = logging.getLogger(__name__)
 
 
-# ─── Capabilities ───
+# Capabilities
 
 class Capability(str, enum.Enum):
     ORGANIZE = "organize"   # bundles, schemas, entities, graphs, packages, manual annotations
@@ -51,16 +50,14 @@ ROLE_CAPABILITIES: dict[CollaboratorRole, FrozenSet[Capability]] = {
     CollaboratorRole.VIEWER: frozenset(),
 }
 
-
-# ─── Visibility ───
-
-class InfospaceVisibility(str, enum.Enum):
-    PRIVATE = "private"
-    INTERNAL = "internal"
-    PUBLIC = "public"
+#: What a route may assign. OWNER is not transferable; EDITOR is a legacy alias
+#: two migrations rewrite to ANALYST — existing rows keep their capabilities.
+ASSIGNABLE_ROLES: FrozenSet[CollaboratorRole] = frozenset({
+    CollaboratorRole.ANALYST, CollaboratorRole.CURATOR, CollaboratorRole.VIEWER,
+})
 
 
-# ─── Scope ───
+# Scope
 
 @dataclass(frozen=True)
 class PackageScope:
@@ -81,16 +78,12 @@ class PackageScope:
     copyable_asset_ids: Tuple[int, ...] = ()        # subset of visible assets where copy is allowed
 
 
-# ─── Access context ───
+# Access context
 
 @dataclass(frozen=True)
 class Access:
-    """
-    Immutable access context resolved once per request.
-
-    Every data-returning route receives this via the Requires() dependency.
-    Routes declare what capability they need; resolution happens here.
-    """
+    """Immutable access context, resolved once per request and already capped by
+    the deployment ceiling. Routes declare what capability they need."""
     infospace_id: int
     infospace: Infospace
     user_id: Optional[int]      # None for anonymous public access
@@ -128,12 +121,6 @@ class Access:
             return True  # owner/collaborator = full access
         return asset_id in self.scope.downloadable_asset_ids
 
-    def can_copy(self, asset_id: int) -> bool:
-        """Check if an asset can be copied/imported through the current access context."""
-        if self.scope is None:
-            return True
-        return asset_id in self.scope.copyable_asset_ids
-
     def require_in_scope(self, scope_field: str, entity_id: int) -> None:
         """Point check — raises 404 if entity_id is outside the active scope.
 
@@ -150,7 +137,28 @@ class Access:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 
-# ─── Resolution ───
+# Resolution
+
+def _deployment_ceiling() -> FrozenSet[Capability]:
+    """Hard cap on what ANY user may do here, whatever their role.
+
+    Routes declaring more are pruned at mount; this stops whatever survives.
+    """
+    from app.core.config import settings
+
+    names = settings.deployment_capability_names
+    return frozenset(c for c in Capability if c.value in names)
+
+
+def _require(access: Access, capabilities: Tuple[Capability, ...]) -> None:
+    """403 on the first capability the access does not hold."""
+    for cap in capabilities:
+        if cap not in access.capabilities:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"This action requires the '{cap.value}' capability.",
+            )
+
 
 def _resolve_access(
     session: Session,
@@ -158,14 +166,16 @@ def _resolve_access(
     user: Optional[User],
     package_token: Optional[str] = None,
 ) -> Access:
-    """
-    Resolve access context. Fixed priority order — first match wins:
+    """Resolve access context. Fixed priority order — first match wins:
+
     1. Owner
     2. Collaborator
     3. Package token
     4. Internal visibility + authenticated
     5. Public visibility
     6. No access → 404 (don't reveal existence)
+
+    One construction at the end, so the ceiling applies to every path.
     """
     infospace = session.get(Infospace, infospace_id)
     if not infospace:
@@ -174,77 +184,40 @@ def _resolve_access(
     user_id = user.id if user else None
     visibility = getattr(infospace, "visibility", None) or "private"
 
-    # Step 1: Owner
+    is_owner = False
+    capabilities: FrozenSet[Capability] = frozenset()
+    scope: Optional[PackageScope] = None
+    role: Optional[CollaboratorRole] = None
+
+    # elif: an owner skips the collaborator query, both skip the token CTE.
     if user_id and infospace.owner_id == user_id:
-        return Access(
-            infospace_id=infospace_id,
-            infospace=infospace,
-            user_id=user_id,
-            is_owner=True,
-            capabilities=frozenset(Capability),
-            scope=None,
-            role=CollaboratorRole.OWNER,
+        is_owner, capabilities, role = True, frozenset(Capability), CollaboratorRole.OWNER
+    elif user_id and (collab := session.exec(
+        select(InfospaceCollaborator).where(
+            InfospaceCollaborator.infospace_id == infospace_id,
+            InfospaceCollaborator.user_id == user_id,
         )
+    ).first()):
+        capabilities, role = ROLE_CAPABILITIES.get(collab.role, frozenset()), collab.role
+    elif package_token and (token_scope := _resolve_package_token(
+            session, infospace_id, package_token)) is not None:
+        scope = token_scope                      # viewer-level: scope, no capabilities
+    elif visibility == "internal" and user_id:
+        role = CollaboratorRole.VIEWER
+    elif visibility == "public":
+        role = CollaboratorRole.VIEWER
+    else:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
-    # Step 2: Collaborator
-    if user_id:
-        collab = session.exec(
-            select(InfospaceCollaborator).where(
-                InfospaceCollaborator.infospace_id == infospace_id,
-                InfospaceCollaborator.user_id == user_id,
-            )
-        ).first()
-        if collab:
-            return Access(
-                infospace_id=infospace_id,
-                infospace=infospace,
-                user_id=user_id,
-                is_owner=False,
-                capabilities=ROLE_CAPABILITIES.get(collab.role, frozenset()),
-                scope=None,
-                role=collab.role,
-            )
-
-    # Step 3: Package token
-    if package_token:
-        scope = _resolve_package_token(session, infospace_id, package_token)
-        if scope is not None:
-            return Access(
-                infospace_id=infospace_id,
-                infospace=infospace,
-                user_id=user_id,
-                is_owner=False,
-                capabilities=frozenset(),  # viewer-level (no capabilities)
-                scope=scope,
-                role=None,
-            )
-
-    # Step 4: Internal visibility + authenticated user
-    if visibility == "internal" and user_id:
-        return Access(
-            infospace_id=infospace_id,
-            infospace=infospace,
-            user_id=user_id,
-            is_owner=False,
-            capabilities=frozenset(),
-            scope=None,
-            role=CollaboratorRole.VIEWER,
-        )
-
-    # Step 5: Public visibility
-    if visibility == "public":
-        return Access(
-            infospace_id=infospace_id,
-            infospace=infospace,
-            user_id=user_id,
-            is_owner=False,
-            capabilities=frozenset(),
-            scope=None,
-            role=CollaboratorRole.VIEWER,
-        )
-
-    # Step 6: No access — respond as if infospace doesn't exist
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    return Access(
+        infospace_id=infospace_id,
+        infospace=infospace,
+        user_id=user_id,
+        is_owner=is_owner,
+        capabilities=capabilities & _deployment_ceiling(),
+        scope=scope,
+        role=role,
+    )
 
 
 def _resolve_package_token(
@@ -437,7 +410,8 @@ def _resolve_package_token(
     )
 
 
-# ─── Direct resolution (for routes without infospace_id in path) ───
+# Direct resolution, for routes and non-route surfaces without infospace_id in
+# the path — /bundles/{bundle_id}, the chat MCP tools.
 
 def resolve_access(
     session: Session,
@@ -446,107 +420,34 @@ def resolve_access(
     *required_capabilities: Capability,
     package_token: Optional[str] = None,
 ) -> Access:
-    """
-    Resolve access and check capabilities — call directly from route handlers.
-
-    Use this when the route doesn't have infospace_id as a path parameter
-    (e.g. /bundles/{bundle_id} where infospace_id comes from the bundle).
-
-    Usage::
+    """Resolve access and check capabilities, from inside a handler::
 
         bundle = db.get(Bundle, bundle_id)
         access = resolve_access(db, bundle.infospace_id, current_user, Capability.DELETE)
-        # access is now a verified, frozen Access context
+
+    Already capped, so per-mode escalation can trust ``access.has(cap)``.
     """
     access = _resolve_access(session, infospace_id, user, package_token=package_token)
-    for cap in required_capabilities:
-        if cap not in access.capabilities:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"This action requires the '{cap.value}' capability.",
-            )
+    _require(access, required_capabilities)
     return access
 
 
-def apply_deployment_ceiling(access: Access) -> Access:
-    """Cap an Access's capabilities by the deployment ceiling.
-
-    ``DEPLOYMENT_CAPABILITIES`` is a hard limit on what ANY user may do on this
-    deployment, regardless of role (a read-only or ingest-only node). Returns
-    the access unchanged when the ceiling is the full set (the common case).
-
-    Extracted from ``Requires()`` so non-route surfaces (the chat MCP tools)
-    can apply the same cap — otherwise a permissive user on a restricted
-    deployment could act past the ceiling the route layer enforces.
-    """
-    from app.core.config import settings
-
-    ceiling_names = settings.deployment_capability_names
-    if ceiling_names == frozenset(c.value for c in Capability):
-        return access
-    ceiling = frozenset(c for c in Capability if c.value in ceiling_names)
-    return Access(
-        infospace_id=access.infospace_id,
-        infospace=access.infospace,
-        user_id=access.user_id,
-        is_owner=access.is_owner,
-        capabilities=access.capabilities & ceiling,
-        scope=access.scope,
-        role=access.role,
-    )
-
-
-def resolve_access_capped(
-    session: Session,
-    infospace_id: int,
-    user: Optional[User],
-    *required_capabilities: Capability,
-    package_token: Optional[str] = None,
-) -> Access:
-    """``resolve_access`` + the deployment ceiling.
-
-    Use from surfaces that don't go through ``Requires()`` (the chat MCP tools).
-    Applies ``apply_deployment_ceiling`` before checking ``required_capabilities``,
-    so the deployment cap is honored, then raises 403 on any missing capability.
-    The returned access is already capped — callers doing per-mode escalation can
-    trust ``access.has(cap)``.
-    """
-    access = _resolve_access(session, infospace_id, user, package_token=package_token)
-    access = apply_deployment_ceiling(access)
-    for cap in required_capabilities:
-        if cap not in access.capabilities:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"This action requires the '{cap.value}' capability.",
-            )
-    return access
-
-
-# ─── FastAPI dependency factory ───
+# FastAPI dependency factory
 
 _SCOPE_UNSET = object()
 
 def Requires(*required_capabilities: Capability, scope: str | None = _SCOPE_UNSET):
+    """FastAPI dependency factory: resolve access, then check capabilities.
+
+    ``scope`` names the field this route filters on — ``"run_ids"``,
+    ``"bundle_ids"``, ``"asset"``, or ``None`` for unscoped. ``_SCOPE_UNSET`` is
+    what startup validation flags.
+
+    One declaration, three layers: mount-time pruning, startup scope validation,
+    the 403 below.
     """
-    FastAPI dependency factory that resolves access and checks capabilities.
-
-    The ``scope`` parameter declares what scope field this route operates on:
-    - ``scope="run_ids"`` — list/get routes filtered by run_ids
-    - ``scope="bundle_ids"`` — routes filtered by bundle_ids
-    - ``scope="asset"`` — routes using AssetQuery.scope() directly
-    - ``scope=None`` — explicitly unscoped (blanket denial, auth-only, etc.)
-    - ``_SCOPE_UNSET`` (default) — startup validation will flag this as an error
-
-    The scope declaration drives:
-    1. **Mount-time** — route pruned via _required_capabilities metadata
-    2. **Startup-time** — scope validation catches missing declarations
-    3. **Runtime** — 403 if capability missing (defense in depth)
-
-    See FOUNDATION.md § Access Control and OVERVIEW.md § Access Control.
-    """
-    # Import deferred inside the closure to avoid circular import.
-    # This function runs when the route module is imported (after models.py is done),
-    # NOT when access.py itself is first imported.
+    # Deferred: this runs when the route module is imported, after models.py,
+    # not when access.py itself is first imported.
     from app.api import dependency_injection
 
     def _dependency(
@@ -558,83 +459,11 @@ def Requires(*required_capabilities: Capability, scope: str | None = _SCOPE_UNSE
     ) -> Access:
         token = x_package_token or package_token
         access = _resolve_access(db, infospace_id, current_user, package_token=token)
-
-        # Intersect user capabilities with the deployment ceiling
-        access = apply_deployment_ceiling(access)
-
-        for cap in required_capabilities:
-            if cap not in access.capabilities:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=f"This action requires the '{cap.value}' capability.",
-                )
-
+        _require(access, required_capabilities)
         return access
 
-    # Metadata read by router manifest (mount-time pruning) and startup validator (scope check)
+    # Read by the router manifest (mount-time pruning) and the startup validator.
     _dependency._required_capabilities = required_capabilities
     _dependency._scope_declaration = scope
 
     return Depends(_dependency)
-
-
-# ─── Convenience aliases ───
-# NOT created at module level to avoid circular import.
-# Routes should call Requires() directly or use these lazy properties.
-
-class _AccessAliases:
-    """Lazy access aliases — Requires() is only called when first accessed."""
-
-    @staticmethod
-    def _view():
-        return Requires(scope=None)
-
-    @staticmethod
-    def _organize():
-        return Requires(Capability.ORGANIZE, scope=None)
-
-    @staticmethod
-    def _ingest():
-        return Requires(Capability.INGEST, scope=None)
-
-    @staticmethod
-    def _compute():
-        return Requires(Capability.COMPUTE, scope=None)
-
-    @staticmethod
-    def _delete():
-        return Requires(Capability.DELETE, scope=None)
-
-    @staticmethod
-    def _setup():
-        return Requires(Capability.SETUP, scope=None)
-
-    @staticmethod
-    def _organize_delete():
-        return Requires(Capability.ORGANIZE, Capability.DELETE, scope=None)
-
-
-# These are callables, not Depends instances.
-# Usage: `access: Access = ViewAccess` where ViewAccess is actually `Requires()`
-# They're defined as module-level names that call Requires() on first use.
-# We use a simple pattern: each is a property on a singleton.
-
-_aliases = _AccessAliases()
-
-# For routes to use: `access: Access = ViewAccess`
-# Since FastAPI evaluates default values at route registration time (not at import time
-# of access.py), and route modules are imported AFTER models.py is done, this works.
-def __getattr__(name: str):
-    """Module-level __getattr__ for lazy alias resolution."""
-    _map = {
-        "ViewAccess": _aliases._view,
-        "OrganizeAccess": _aliases._organize,
-        "IngestAccess": _aliases._ingest,
-        "ComputeAccess": _aliases._compute,
-        "DeleteAccess": _aliases._delete,
-        "SetupAccess": _aliases._setup,
-        "OrganizeDeleteAccess": _aliases._organize_delete,
-    }
-    if name in _map:
-        return _map[name]()
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

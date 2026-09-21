@@ -6,6 +6,7 @@ from typing import Optional
 
 from sqlmodel import Session, select
 
+from app.api.modules.identity_infospace_user.access import ASSIGNABLE_ROLES
 from app.api.modules.identity_infospace_user.models import (
     CollaboratorRole,
     Infospace,
@@ -50,9 +51,11 @@ def create_invitation(
     if not infospace:
         raise ValueError("Infospace not found")
 
-    # Don't allow inviting as OWNER — ownership is not transferable via invite
-    if role == CollaboratorRole.OWNER:
-        raise ValueError("Cannot invite as owner")
+    if role not in ASSIGNABLE_ROLES:
+        raise ValueError(
+            f"Cannot invite as '{role.value}'. "
+            f"Choose one of: {', '.join(sorted(r.value for r in ASSIGNABLE_ROLES))}."
+        )
 
     # Resolve identifier → user
     invitee: Optional[User] = None

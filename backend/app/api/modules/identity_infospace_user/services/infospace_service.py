@@ -295,54 +295,6 @@ class InfospaceService:
         )
         return self.create_infospace(user_id=user_id, infospace_in=infospace_create_data)
 
-    def invite_collaborator(
-        self,
-        infospace_id: int,
-        inviter_user_id: int,
-        invitee_email: str,
-        role: str = "viewer",
-    ) -> InfospaceCollaborator:
-        """Invite a user to collaborate on an infospace. Only owner or editor can invite."""
-        infospace = self.get_infospace(infospace_id, inviter_user_id)
-        if not infospace:
-            raise ValueError("Infospace not found")
-        # Check inviter is owner or editor
-        if infospace.owner_id != inviter_user_id:
-            collab = self.session.exec(
-                select(InfospaceCollaborator).where(
-                    InfospaceCollaborator.infospace_id == infospace_id,
-                    InfospaceCollaborator.user_id == inviter_user_id,
-                )
-            ).first()
-            if not collab or collab.role.value not in ("owner", "editor"):
-                raise ValueError("Only owner or editor can invite collaborators")
-        invitee = self.session.exec(select(User).where(User.email == invitee_email)).first()
-        if not invitee:
-            raise ValueError(f"User with email {invitee_email} not found")
-        if invitee.id == infospace.owner_id:
-            raise ValueError("Owner is already a member")
-        existing = self.session.exec(
-            select(InfospaceCollaborator).where(
-                InfospaceCollaborator.infospace_id == infospace_id,
-                InfospaceCollaborator.user_id == invitee.id,
-            )
-        ).first()
-        if existing:
-            existing.role = CollaboratorRole(role) if role in ("owner", "editor", "viewer") else CollaboratorRole.VIEWER
-            self.session.add(existing)
-            self.session.commit()
-            self.session.refresh(existing)
-            return existing
-        collab = InfospaceCollaborator(
-            infospace_id=infospace_id,
-            user_id=invitee.id,
-            role=CollaboratorRole(role) if role in ("owner", "editor", "viewer") else CollaboratorRole.VIEWER,
-        )
-        self.session.add(collab)
-        self.session.commit()
-        self.session.refresh(collab)
-        return collab
-
     def list_collaborators(
         self,
         infospace_id: int,

@@ -15,6 +15,12 @@ from app.api.modules.identity_infospace_user.handle_gen import (
 
 
 def create_user(*, session: Session, user_create: UserCreate) -> User:
+    """Create a user with their default infospace."""
+    from app.api.modules.identity_infospace_user.services.infospace_service import (
+        InfospaceService,
+    )
+    from app.core.config import settings
+
     db_obj = User.model_validate(
         user_create, update={"hashed_password": get_password_hash(user_create.password)}
     )
@@ -22,6 +28,9 @@ def create_user(*, session: Session, user_create: UserCreate) -> User:
         db_obj.handle = generate_handle(session, full_name=db_obj.full_name)
     session.add(db_obj)
     session.commit()
+    session.refresh(db_obj)
+
+    InfospaceService(session=session, settings=settings).ensure_default_infospace(db_obj.id)
     session.refresh(db_obj)
     return db_obj
 

@@ -1193,14 +1193,14 @@ class PackageBuilder:
                             if parent:
                                 asset_registry.setdefault(str(parent.uuid), parent)
 
-        # ── Phase 2: Determine which assets get their blobs included ──
-        # Assets in downloadable_asset_ids get their files. Assets not in
-        # that set still get metadata in the manifest/CSV but no blob.
+        # ── Phase 2: what each per-item permission unlocks ──
+        #   allow_download → the blob lands in files/
+        #   allow_copy     → the asset lands in manifest.json, the re-importable
+        #                    payload. Neither still leaves it in assets.csv.
+        # Empty means empty: both sets are empty exactly when nothing is permitted.
 
         downloadable_ids = set(scope.downloadable_asset_ids or ())
-        # If scope has no downloadable restrictions (e.g. owner export), include all
-        if not downloadable_ids:
-            downloadable_ids = {a.id for a in asset_registry.values()}
+        copyable_ids = set(scope.copyable_asset_ids or ())
 
         # Build parent lookup from registry for hierarchy context
         _id_to_asset = {a.id: a for a in asset_registry.values()}
@@ -1208,6 +1208,7 @@ class PackageBuilder:
         # ── Phase 3: Resolve blobs and serialize assets ──
 
         serialized_assets: list[dict] = []
+        copyable_assets: list[dict] = []
         for asset_uuid, asset in asset_registry.items():
             blob_ref = None
 
@@ -1220,9 +1221,10 @@ class PackageBuilder:
             # Resolve parent for hierarchy context in CSV
             parent = _id_to_asset.get(asset.parent_asset_id) if asset.parent_asset_id else None
 
-            serialized_assets.append(serialize_asset(
-                asset, blob_ref=blob_ref, parent_asset=parent,
-            ))
+            entry = serialize_asset(asset, blob_ref=blob_ref, parent_asset=parent)
+            serialized_assets.append(entry)
+            if asset.id in copyable_ids:
+                copyable_assets.append(entry)
 
         # ── Phase 4: Serialize schemas, runs, bundles ──
 
@@ -1281,7 +1283,7 @@ class PackageBuilder:
         # ── Phase 5: Build manifest content ──
 
         manifest_content = {
-            "assets": serialized_assets,
+            "assets": copyable_assets,
             "bundles": serialized_bundles,
             "annotation_runs": serialized_runs,
             "annotation_schemas": serialized_schemas,
