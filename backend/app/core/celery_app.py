@@ -20,9 +20,7 @@ redis_url = settings.redis_url
 # Celery's ``imports`` below. The web process must load the SAME set at startup
 # (``load_task_modules()``) so producer-side ``emit()`` / ``kick_tasks()`` — which
 # dispatch via the in-process subscriber/registry — reach their tasks identically
-# from API routes and the chat MCP tools. Without it, a backend-initiated intake
-# mints a PENDING IngestionJob that nothing dispatches until an unrelated worker-side
-# poll happens to sweep it via the ``ingest`` task's self-chain.
+# from API routes and the chat MCP tools.
 TASK_MODULES = (
     'app.core.events',
     'app.core.dispatch',
@@ -36,15 +34,12 @@ TASK_MODULES = (
 
 
 def load_task_modules() -> None:
-    """Import every module in ``TASK_MODULES`` so this process's @task registry and
-    event-bus subscriptions match the worker's. Idempotent (import caches). Called at
-    web-process startup; the worker gets the same set via Celery's ``imports``."""
+    """Import every module in ``TASK_MODULES``. Idempotent (import caches)."""
     import importlib
 
     for module in TASK_MODULES:
         importlib.import_module(module)
 
-# Initialize Celery with explicit configuration
 celery = Celery(
     "app",
     broker=redis_url,
@@ -65,28 +60,23 @@ CELERY_TASK_QUEUES = (
     Queue('external_api'),
 )
 
-# Celery configuration
 celery.conf.update(
     broker_url=redis_url,
     result_backend=redis_url,
     result_expires=86400,  # 24h TTL for task results
-    # Connection retry on broker failures
     broker_connection_retry_on_startup=True,
     broker_connection_retry=True,
     broker_connection_max_retries=10,
-    # Redis transport options
     broker_transport_options={
         'visibility_timeout': 3600,
         'fanout_prefix': True,
         'fanout_patterns': True,
     },
-    # Serialization
     task_serializer='json',
     accept_content=['json'],
     result_serializer='json',
     enable_utc=True,
     timezone='UTC',
-    # Queue routing
     task_queues=CELERY_TASK_QUEUES,
     task_default_queue='default',
     task_routes={},  # Queue routing handled by @task queue parameter
@@ -95,13 +85,9 @@ celery.conf.update(
     # Crash resilience: tasks are re-queued if worker dies before ack (OOM, kill, etc.)
     task_acks_late=True,
     task_reject_on_worker_lost=True,
-    # Task time limits (avoid runaway workers)
     task_soft_time_limit=3600,
     task_time_limit=3720,
-    # Task imports — the worker loads these on start; the web process loads the same
-    # set via load_task_modules() so emit()/kick_tasks() work from both (see TASK_MODULES).
     imports=TASK_MODULES,
-    # Beat schedule — only dispatch_tasks + user_backup entries.
     # All @task schedule params are handled by dispatch_tasks internally.
     beat_schedule={
         'dispatch-tasks': {
@@ -128,20 +114,14 @@ from celery.signals import worker_process_init
 def reset_db_pool_on_fork(**kwargs):
     from app.core.db import engine
 
-    # close=False is the post-fork variant. Plain dispose() closes connections
-    # that are checked in — but after a fork those sockets are shared with the
-    # parent, so a child closing them yanks them out from under the parent and
-    # its siblings. SQLAlchemy added the flag for exactly this case: "replace
-    # the connection pool in a child process without interfering with the
-    # connections used by the parent process."
+    # close=False is the post-fork variant: "replace the connection pool in a
+    # child process without interfering with the connections used by the parent
+    # process."
     engine.dispose(close=False)
     logger.info("DB connection pool disposed after worker fork")
 
     # Report which providers this deployment can actually reach, and which
-    # deployment API keys are genuinely shared with users vs BYOK-only. Defined
-    # since the provider registry existed and never once called — so nobody has
-    # ever seen this, and "why is my provider not configured" had no first
-    # place to look.
+    # deployment API keys are genuinely shared with users vs BYOK-only.
     try:
         from app.api.modules.foundation_service_providers import probe_providers
         probe_providers()
@@ -166,7 +146,6 @@ def reset_db_pool_on_fork(**kwargs):
         )
         raise
 
-    # Log registered @task descriptors
     try:
         from app.core.tasks import get_task_registry
         registry = get_task_registry()
@@ -179,7 +158,6 @@ def reset_db_pool_on_fork(**kwargs):
         logger.warning("Could not log registered tasks: %s", e)
 
 
-# Task duration logging for observability
 _task_start_times: dict[str, float] = {}
 
 

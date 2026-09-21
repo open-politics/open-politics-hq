@@ -41,7 +41,6 @@ def update_task_status(task_id: int, status: str, message: Optional[str] = None)
 
 
 def make_python_identifier(name: str) -> str:
-    """Converts a string to a valid Python identifier."""
     name = re.sub(r'[^0-9a-zA-Z_]', '', name)
     name = re.sub(r'^[^a-zA-Z_]+', '', name)
     if not name:
@@ -52,7 +51,6 @@ def make_python_identifier(name: str) -> str:
 
 
 def create_literal_type(enum_values: List[str]) -> Type:
-    """Create a Literal type from a list of enum values."""
     if len(enum_values) == 1:
         return Literal[enum_values[0]]
     elif len(enum_values) == 2:
@@ -65,7 +63,6 @@ def create_literal_type(enum_values: List[str]) -> Type:
 
 
 def map_json_type_to_python_type(json_type: Union[str, List[str]]) -> Any:
-    """Maps JSON schema types to Python types for Pydantic models."""
     if isinstance(json_type, list):
         non_null_types = [t for t in json_type if t != "null"]
         if not non_null_types:
@@ -91,17 +88,9 @@ def map_json_type_to_python_type(json_type: Union[str, List[str]]) -> Any:
 def justification_flag(prop_schema: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
     """``(enabled, prompt)`` for one property, wherever the flag was written.
 
-    **An array declares it on its ITEMS, not on itself** — one justification per
-    item is the whole point, and that is what ``adapters.ts`` (the only writer)
-    and ``annotation/templates.py`` both emit. Every backend reader looked at the
-    array node instead, so for an array<object> — which is every claim section in
-    the observation model — the flag was written, stored, exported and never
-    read. Measured: 21 observation rows, 0 justifications, `with quotes: 0/214`
-    on the assembled graph. The evidence rail of the model was silently off.
-
-    Both placements are accepted. The array node is where a hand-authored
-    contract puts it, and ``schema_map`` already takes the same both-ways
-    reading for ``x-ref`` for exactly that reason.
+    An array declares it on its ITEMS, not on itself — that is what
+    ``adapters.ts`` and ``annotation/templates.py`` emit. Both placements are
+    accepted.
     """
     if not isinstance(prop_schema, dict):
         return False, None
@@ -129,25 +118,8 @@ def split_schema_for_extraction(
     wrappers (``per_image``, ``per_audio``) are bounded by the input media
     count and stay in Phase A regardless of their item shape.
 
-    Args:
-        output_contract: full schema as stored on AnnotationSchema.
-
-    Returns:
-        scalar_subset: deep-copied output_contract with each ``array<object>``
-            field at the document level removed from ``properties`` AND from
-            ``required``. The Pydantic builder fed this contract produces a
-            partial model that the LLM can fill in one Phase A call.
-        list_fields: ordered list of descriptors, one per removed field::
-
-            {
-                "name": str,                # bare field name, e.g. "triplets"
-                "path": str,                # dotted path, e.g. "document.triplets"
-                "item_schema": dict,        # JSON Schema for the array's items
-                "description": str | None,  # field description (for prompts)
-            }
-
-        Empty list_fields means the schema has no Phase B work — the caller
-        should fall back to single-shot.
+    Empty list_fields means the schema has no Phase B work — the caller should
+    fall back to single-shot.
     """
     if not isinstance(output_contract, dict):
         return output_contract or {}, []
@@ -171,9 +143,6 @@ def split_schema_for_extraction(
         path_prefix = ""
         required_owner = contract
 
-    # Identify ``array<object>`` fields. Per-modality wrappers (``per_*``) are
-    # explicitly bounded by input media — leave them in Phase A even when
-    # their items are objects.
     list_fields: List[Dict[str, Any]] = []
     list_field_names: List[str] = []
     for name, prop in list(target_props.items()):
@@ -201,7 +170,6 @@ def split_schema_for_extraction(
         })
         list_field_names.append(name)
 
-    # Strip them from the scalar subset.
     for name in list_field_names:
         target_props.pop(name, None)
     if list_field_names and target_required:
@@ -225,18 +193,14 @@ def create_pydantic_model_from_json_schema(
 
     Justification placement is shape-driven:
       * scalar / object / array<primitive>: sibling field at parent level
-        (``{field}_justification``) — preserves the historical contract.
+        (``{field}_justification``).
       * array<object>: ``justification`` field injected INSIDE each item
         submodel (via ``inject_self_justification`` on the recursive call).
-        One justification per item — matches how evidence actually attaches
-        when items emerge across multiple turns or describe distinct facts
-        within one document.
 
     Per-field opt-in lives inline on each property as ``include_justification:
-    bool`` (set by the schema author or via the migration that lifted the
-    legacy ``field_specific_justification_configs`` block). The run-level
-    ``justifications_enabled`` master switch defaults to True; passing False
-    suppresses all justification fields regardless of the per-field flag.
+    bool``. The run-level ``justifications_enabled`` master switch defaults to
+    True; passing False suppresses all justification fields regardless of the
+    per-field flag.
     """
     if processed_models is None:
         processed_models = {}
@@ -289,7 +253,6 @@ def create_pydantic_model_from_json_schema(
             and prop_schema["items"].get("type") == "object"
             and "properties" in prop_schema["items"]
         )
-        # Per-item placement for array<object>; sibling-at-parent for everything else.
         inject_into_item = needs_justification and is_array_of_object
 
         if prop_type_json == "object" and "properties" in prop_schema:
@@ -333,8 +296,6 @@ def create_pydantic_model_from_json_schema(
         else:
             fields[field_name] = (field_type, field_info)
 
-        # Sibling justification at parent level — skipped when array<object>
-        # already had it injected into each item.
         if needs_justification and not inject_into_item:
             justification_field_name = f"{field_name}_justification"
             fields[justification_field_name] = (
@@ -343,9 +304,8 @@ def create_pydantic_model_from_json_schema(
             )
 
     if inject_self_justification:
-        # Reserved name. Schema authors using a literal field named
-        # ``justification`` on a list-of-object item will collide with this;
-        # a future enhancement can detect and rename.
+        # Reserved name: a schema author's own ``justification`` field on a
+        # list-of-object item collides with this.
         fields["justification"] = (
             Optional[JustificationSubModel],
             Field(default=None, description="Automated justification for this item.")

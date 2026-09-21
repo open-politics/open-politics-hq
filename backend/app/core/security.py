@@ -17,10 +17,8 @@ class CredentialDecryptionError(Exception):
     """Stored ciphertext is present but undecryptable with any configured key
     (or decrypts to corrupt JSON).
 
-    Raised instead of silently returning ``{}`` — the old behavior, combined
-    with the read-modify-write credential endpoints, would persist an empty
-    blob and irreversibly wipe every other stored key for that user. Callers
-    must surface this loudly (503 / ProviderError), never substitute ``{}``.
+    Callers must surface this loudly (503 / ProviderError), never substitute
+    ``{}``.
     """
 
 
@@ -57,14 +55,12 @@ def _get_multifernet() -> MultiFernet:
 
     Index 0 (ENCRYPTION_MASTER_KEY) is the write key; all keys are decrypt
     candidates so ciphertext written under a rotated-out key still reads during
-    a rotation window. A single-key .env yields a one-element MultiFernet that
-    behaves exactly like the previous single-Fernet implementation.
+    a rotation window.
     """
     global _fernet
     if _fernet is None:
         keys = settings.encryption_keys
         if not keys:
-            # FAIL HARD in production — no silent ephemeral key.
             if settings.ENVIRONMENT == "production":
                 raise RuntimeError(
                     "ENCRYPTION_MASTER_KEY must be set in production environment. "
@@ -89,15 +85,7 @@ def _reset_fernet_cache() -> None:
 
 
 def encrypt_credentials(credentials: Dict[str, str]) -> str:
-    """
-    Encrypt provider credentials dict to encrypted string.
-    
-    Args:
-        credentials: Dict mapping provider_id to api_key (e.g., {"openai": "sk-..."})
-    
-    Returns:
-        Base64-encoded encrypted string
-    """
+    """Encrypt provider credentials dict to encrypted string."""
     if not credentials:
         return ""
     json_str = json.dumps(credentials)
@@ -106,20 +94,11 @@ def encrypt_credentials(credentials: Dict[str, str]) -> str:
 
 
 def decrypt_credentials(encrypted: Optional[str]) -> Dict[str, str]:
-    """
-    Decrypt credentials string to dict.
-    
-    Args:
-        encrypted: Base64-encoded encrypted string from database
-    
-    Returns:
-        Dict mapping provider_id to api_key. Empty dict ONLY when nothing is
-        stored (input is None/empty).
+    """Decrypt credentials string to dict.
 
-    Raises:
-        CredentialDecryptionError — input is non-empty but no configured key
-        can decrypt it, or it decrypts to corrupt JSON. Never silently
-        returns {} for a non-empty blob (that would wipe creds on next save).
+    Returns an empty dict ONLY when nothing is stored (input is None/empty).
+    A non-empty blob that no configured key can decrypt, or that decrypts to
+    corrupt JSON, raises ``CredentialDecryptionError`` — never ``{}``.
     """
     if not encrypted:
         return {}
@@ -186,29 +165,15 @@ def merge_credentials(
     user_encrypted: Optional[str],
     runtime_keys: Optional[Dict[str, str]] = None
 ) -> Dict[str, str]:
-    """
-    Merge stored credentials with runtime keys.
-    
+    """Merge stored credentials with runtime keys.
+
     Priority:
     1. Runtime keys (user-provided for immediate operations)
     2. Stored encrypted keys (for background tasks)
-    
-    This enables dual-mode: users can provide runtime keys for one-off operations
-    or save keys for scheduled/background tasks.
-    
-    Args:
-        user_encrypted: Encrypted credentials from user.encrypted_credentials
-        runtime_keys: Runtime API keys from frontend (optional)
-    
-    Returns:
-        Merged dict with runtime keys taking precedence over stored
 
-    Raises:
-        CredentialDecryptionError — propagated from decrypt_credentials when a
-        stored blob is present but undecryptable. Deliberately not caught: a
-        background task must fail loudly, not run with zero credentials.
+    ``CredentialDecryptionError`` from decrypt_credentials is deliberately not
+    caught: a background task must fail loudly, not run with zero credentials.
     """
     stored = decrypt_credentials(user_encrypted)
     runtime = runtime_keys or {}
-    # Runtime keys override stored keys (user intent for this specific operation)
     return {**stored, **runtime}

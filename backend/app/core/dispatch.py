@@ -25,13 +25,7 @@ MAX_PER_TASK_PER_CYCLE = 500
 
 
 def _get_enabled_enrichers() -> set[str]:
-    """Enricher names switched on in my-hq.yml.
-
-    A plain set. The comma-string this replaces encoded three different things
-    in one value — "*" meant all (returned None, "no filter"), "" meant none
-    (empty set), anything else a whitelist — so every caller had to know that
-    None and set() were opposites rather than degrees of the same thing.
-    """
+    """Enricher names switched on in HQ.yml."""
     from app.core.config import settings
     return {name for name, on in (settings.ENRICHERS or {}).items() if on}
 
@@ -70,35 +64,26 @@ def _is_due(descriptor) -> bool:
 
 
 def _chunk(lst, n):
-    """Split list into chunks of size n."""
     for i in range(0, len(lst), n):
         yield lst[i : i + n]
 
 
 def _dispatch_task_for_infospace(desc, infospace_id: int, budget: int = MAX_PER_TASK_PER_CYCLE) -> int:
-    """Core dispatch logic for one task × one infospace. Used by both beat and kick.
-
-    Runs the task's check query, filters failed items, chunks by batch size,
-    sends Celery tasks. Returns count of items dispatched.
-    """
+    """Core dispatch logic for one task × one infospace. Used by both beat and kick."""
     from app.core.db import engine
     from app.core.celery_app import celery_app
     from app.core.tasks import filter_failed_items, is_structurally_blocked
 
-    # Check capability availability
     if desc.capability and not _is_capability_configured(desc.capability):
         return 0
 
     # Structural block — set by previous ProviderError, cleared on config save.
-    # Cheap Redis lookup, no DB hit.
     if is_structurally_blocked(desc.name, infospace_id):
         return 0
 
-    # Apply dispatch_filter (enrichment config + the enrichers block)
     if desc.dispatch_filter:
         try:
             # dispatch_filter receives infospace object, but we have only the id.
-            # Load infospace if needed.
             from app.api.modules.identity_infospace_user.models import Infospace
             with Session(engine) as session:
                 infospace = session.get(Infospace, infospace_id)
@@ -111,7 +96,6 @@ def _dispatch_task_for_infospace(desc, infospace_id: int, budget: int = MAX_PER_
             logger.warning("Dispatch filter failed for %s: %s", desc.name, e)
             return 0
 
-    # Check backoff
     r = _get_redis()
     if r:
         try:
@@ -120,7 +104,6 @@ def _dispatch_task_for_infospace(desc, infospace_id: int, budget: int = MAX_PER_
         except Exception:
             pass
 
-    # Check available concurrency slots
     available_slots = desc.max_concurrency
     if r:
         try:
@@ -150,7 +133,6 @@ def _dispatch_task_for_infospace(desc, infospace_id: int, budget: int = MAX_PER_
         if not ids:
             return 0
 
-        # Filter failed items
         ids = filter_failed_items(desc.name, ids, desc.max_item_failures)
         if not ids:
             return 0
@@ -179,15 +161,7 @@ def _dispatch_task_for_infospace(desc, infospace_id: int, budget: int = MAX_PER_
 
 
 def _dispatch_tasks_impl() -> dict[str, Any]:
-    """
-    Beat task: iterate scheduled @tasks × infospaces, dispatch work.
-
-    For each task in topological order:
-    1. Skip if schedule is None
-    2. Skip if not due (Redis last_dispatched check)
-    3. For each infospace: _dispatch_task_for_infospace()
-    4. Update last_dispatched timestamp in Redis
-    """
+    """Beat task: iterate scheduled @tasks × infospaces, dispatch work."""
     from app.core.db import engine
     from app.core.tasks import get_task_registry, topological_sort
 
@@ -195,7 +169,6 @@ def _dispatch_tasks_impl() -> dict[str, Any]:
     if not task_registry:
         return {"total_dispatched": 0, "tasks": {}}
 
-    # Get all infospaces (one DB query, cached for cycle)
     from app.api.modules.identity_infospace_user.models import Infospace
     from sqlmodel import select as _select
     with Session(engine) as session:
@@ -226,7 +199,6 @@ def _dispatch_tasks_impl() -> dict[str, Any]:
             task_dispatched += count
             budget -= count
 
-        # Update last_dispatched
         if descriptor.schedule is not None:
             r = _get_redis()
             if r:
@@ -244,12 +216,7 @@ def _dispatch_tasks_impl() -> dict[str, Any]:
 
 
 def kick_tasks(infospace_id: int, tags: frozenset[str] | None = None):
-    """On-demand dispatch. Runs full check→fan-out logic, bypasses schedule.
-
-    Called by:
-    - Import tasks after creating PENDING assets (kick_tasks(iid, tags={"content"}))
-    - Admin endpoints for manual re-sweep
-    """
+    """On-demand dispatch. Runs full check→fan-out logic, bypasses schedule."""
     from app.core.tasks import get_task_registry
 
     for name, desc in get_task_registry().items():
@@ -265,11 +232,9 @@ def _create_dispatch_task():
 
     @celery_app.task(name="dispatch_tasks")
     def dispatch_tasks() -> dict[str, Any]:
-        """Beat task: iterate registered @task descriptors × infospaces, dispatch work."""
         return _dispatch_tasks_impl()
 
     return dispatch_tasks
 
 
-# Create task instance for Beat schedule
 dispatch_tasks = _create_dispatch_task()

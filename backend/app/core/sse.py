@@ -3,31 +3,7 @@ SSEResponse — EventSourceResponse that serializes ServerSentEvent objects.
 
 FastAPI's native SSE pipeline only activates for generator endpoints.
 Dual-mode endpoints (JSON or SSE based on Accept header) return the
-response explicitly, bypassing that pipeline. This subclass handles
-serialization so generators can yield ServerSentEvent objects from
-any code path.
-
-    from app.core.sse import SSEResponse
-
-    # Dual-mode: JSON or SSE
-    if not wants_sse(request):
-        return MyModel(...)  # JSON via response_model
-
-    async def generate():
-        yield ServerSentEvent(data=MyModel(...).model_dump_json(), event="results")
-
-    return SSEResponse(generate())
-
-Data handling:
-- ServerSentEvent with data=str → used as-is (pre-serialized via .model_dump_json())
-- ServerSentEvent with raw_data=str → used as-is (pre-encoded, e.g. from Redis)
-- ServerSentEvent with data=Model → calls model.model_dump_json() (Pydantic v2 Rust)
-- ServerSentEvent with data=dict → json.dumps fallback
-- Plain bytes/str → passed through
-- Plain dict → auto-wrapped as SSE data field
-
-drain(events, envelope_type): single source of truth for render → envelope
-collapse. Used by every ``collect_X`` to mirror its ``render_X`` sibling.
+response explicitly, bypassing that pipeline.
 """
 
 import json
@@ -80,16 +56,11 @@ async def drain(events: AsyncIterator[Any], envelope_type: type[T]) -> T:
     Consumes a ``StreamEvent`` async iterator and folds the events into the
     target envelope type (``AssetTree`` / ``AssetSearch`` / ``AssetFeed`` or
     an annotation-domain envelope). Any event that doesn't fit the envelope
-    is skipped. Raises ``StopAsyncIteration`` if the stream never yielded a
-    usable event.
-
-    Used by every ``collect_X`` so the blocking and streaming paths share one
-    implementation.
+    is skipped.
     """
 
     # Imported inside to dodge circular imports (content.schemas imports from
-    # graph.schemas, and we don't want sse.py pulling content.schemas at
-    # load time).
+    # graph.schemas).
     from app.api.modules.content.schemas import (
         AggregateSectionEvent,
         AssetFeed,
@@ -118,8 +89,6 @@ async def drain(events: AsyncIterator[Any], envelope_type: type[T]) -> T:
                 if primary is None:
                     primary = ev.section
                 else:
-                    # Primary now streams in batches; the drained envelope is the
-                    # concatenation. Pagination state tracks the final batch.
                     primary.items = list(primary.items) + list(ev.section.items)
                     primary.has_more = ev.section.has_more
                     primary.cursor_next = ev.section.cursor_next
@@ -129,11 +98,8 @@ async def drain(events: AsyncIterator[Any], envelope_type: type[T]) -> T:
             nav = ev.nav
         elif isinstance(ev, CountEvent):
             # A deferred count resolves the pending total of the section carrying
-            # this at_parent — one rule, by identity: the primary/level section
-            # (at_parent None for root/flat, the parent node id for a child level)
-            # or, failing that, a grouped nested-match section. An unmatched count
-            # means emitter and drain disagree on identity — surface it, don't drop
-            # it silently (that silent drop hid a child-level `total` regression).
+            # this at_parent (None for root/flat, the parent node id for a child
+            # level). An unmatched count means emitter and drain disagree on identity.
             target = (
                 primary if (primary is not None and primary.at_parent == ev.at_parent)
                 else next((s for s in grouped if s.at_parent == ev.at_parent), None)
@@ -180,8 +146,6 @@ async def drain(events: AsyncIterator[Any], envelope_type: type[T]) -> T:
         return AssetFeed(section=primary, meta=None)  # type: ignore[return-value]
 
     # Annotation-domain envelopes — caller passes the concrete envelope class.
-    # By convention: primary → items page, aggregate/graph → dedicated fields.
-    # collect_* in annotation/views.py uses these returns directly.
     result: dict[str, Any] = {}
     if primary is not None:
         result["primary"] = primary

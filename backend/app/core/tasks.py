@@ -58,10 +58,7 @@ class TaskDescriptor:
     capability: Optional[str] = None
     schedule: Optional[int] = None  # seconds between dispatcher polls, None = never polled
     # Direct-invocation-only typed params. When set, triggers/schedule are
-    # forbidden (user-initiated action pattern — v2 §9). The celery wrapper
-    # signature becomes (batch_ids, infospace_id, params_dict) and the wrapper
-    # deserializes params_dict via params_model(**params_dict) before calling
-    # the user function.
+    # forbidden.
     params_model: Optional[Type[BaseModel]] = None
 
 
@@ -76,18 +73,6 @@ def get_task_registry() -> dict[str, TaskDescriptor]:
 # ── TaskContext ────────────────────────────────────────────────────────────────
 
 _provider_cache: dict[str, Any] = {}
-_cache_config_hash: Optional[str] = None
-
-
-def _settings_hash() -> str:
-    from app.core.config import settings
-    keys = [
-        settings.STORAGE_PROVIDER_TYPE,
-        getattr(settings, "OCR_PROVIDER_TYPE", ""),
-        getattr(settings, "SCRAPING_PROVIDER_TYPE", ""),
-        getattr(settings, "GEOCODING_PROVIDER_TYPE", ""),
-    ]
-    return "|".join(str(k) for k in keys)
 
 
 def cached_resolve(
@@ -99,20 +84,7 @@ def cached_resolve(
     context: str | None = None,
     runtime_key: str | None = None,
 ):
-    """Resolve provider with per-worker cache, invalidated on config change.
-
-    Cache key includes infospace_id so different infospaces (with different
-    owners and different credentials) never share a cached instance.
-
-    Runtime-key calls bypass the cache entirely — BYOK must not leak across
-    invocations.
-    """
-    global _cache_config_hash
-    current = _settings_hash()
-    if _cache_config_hash != current:
-        _provider_cache.clear()
-        _cache_config_hash = current
-
+    """Resolve a provider, cached for the life of the worker process."""
     # Runtime key → bypass cache (BYOK isolation).
     if runtime_key:
         from app.api.modules.foundation_service_providers import resolve
@@ -209,8 +181,6 @@ class TaskContext:
         """Push a presence update to browsers watching this resource.
 
         Fire-and-forget. Never raises. Returns True on success.
-        Same pattern as stat() and item_failed() — optional side-channel
-        that doesn't affect task execution.
         """
         try:
             from app.core.stream import stream_key, StreamWriter
@@ -235,8 +205,7 @@ class TaskContext:
     ) -> None:
         """Update an IngestionJob row and emit the matching stream event.
 
-        One call replaces the cursor_state write + ctx.send pair every
-        ingestion task used to do by hand. Fire-and-forget (never raises).
+        Fire-and-forget (never raises).
 
         ``status`` is both the IngestionJob status transition signal and the
         stream event name. Values: ``"progress"`` (no DB status change),
@@ -318,30 +287,13 @@ def _get_redis():
 # running. `max_concurrency` of them per pair; the dispatcher counts them before
 # admitting more work.
 #
-# **The slot is held by a HEARTBEAT, not by a long TTL.** It used to be taken
-# with `ttl = timeout * 2 + 60` and released in a `finally` — which is correct
-# right up until the process does not reach its `finally`. A worker killed
-# mid-task (a restart, a redeploy, an OOM, Celery's own hard time limit) leaves
-# the key behind for the full TTL, and for a task with `timeout=7200` that is
-# FOUR HOURS. `max_concurrency=4` means four such deaths wedge that infospace
-# for half a day, silently and invisibly: the check query still finds work, the
-# dispatcher still runs, and every invocation returns at the slot gate having
-# done nothing. Measured on `process_annotation_run` — four worker restarts
-# during one session left all four slots held with ~4h TTLs.
-#
-# So the TTL is now a short constant and a background thread refreshes it while
-# the body runs. A process that dies stops refreshing, and the slot is free
-# within `SLOT_TTL` instead of within the task's own worst case. The TTL still
-# has to outlive the task — it just does so a beat at a time.
+# The slot is held by a HEARTBEAT, not by a long TTL. A process that dies stops
+# refreshing, and the slot is free within `SLOT_TTL`.
 #
 # The refresh is compare-and-extend against a per-acquisition token, and so is
-# the release. Without one, a heartbeat that stalled long enough for its slot to
-# expire and be re-taken would go on extending — and a release would go on
-# deleting — a slot belonging to somebody else.
+# the release.
 
-#: How long a slot survives unrefreshed. Two missed beats of headroom: pure
-#: Python yields the GIL every few milliseconds, so only a C extension holding
-#: it for over a minute could starve the heartbeat, and nothing here does.
+#: How long a slot survives unrefreshed. Two missed beats of headroom.
 SLOT_TTL = 90
 
 #: Seconds between refreshes.
@@ -363,8 +315,7 @@ end
 return -1
 """
 
-# Extend a slot we still hold. Returns 1 on success, 0 if it is no longer ours —
-# which means our own heartbeat fell behind and someone else took the index.
+# Extend a slot we still hold. Returns 1 on success, 0 if it is no longer ours.
 _REFRESH_SLOT_LUA = """
 if redis.call("GET", KEYS[1]) == ARGV[1] then
     return redis.call("EXPIRE", KEYS[1], tonumber(ARGV[2]))
@@ -405,8 +356,7 @@ def _slot_prefix(task_name: str, infospace_id: int) -> str:
 # violation) set a `:block` key with no TTL — dispatch skips indefinitely until
 # the user fixes their setup and the save handler clears the block.
 #
-# 30-day sanity backstop so stale blocks don't hang around forever if a cleanup
-# is missed; any reasonable fix cycle is much shorter.
+# 30-day sanity backstop so stale blocks don't hang around forever.
 
 _STRUCTURAL_BLOCK_TTL = 30 * 24 * 3600
 
@@ -528,11 +478,7 @@ def list_structural_blocks(infospace_id: int) -> dict[str, str]:
 
 def acquire_slot(r, task_name: str, infospace_id: int, max_concurrency: int,
                  token: str, ttl: int = SLOT_TTL) -> int:
-    """Take a concurrency slot. Returns its index (>= 0), or -1 if all are held.
-
-    ``token`` identifies THIS acquisition; ``refresh_slot`` and ``release_slot``
-    both check it, so an invocation can only ever extend or free its own slot.
-    """
+    """Take a concurrency slot. Returns its index (>= 0), or -1 if all are held."""
     prefix = _slot_prefix(task_name, infospace_id)
     return r.eval(_ACQUIRE_SLOT_LUA, 1, prefix, max_concurrency, ttl, token)
 
@@ -563,14 +509,9 @@ def slot_held(r, task_name: str, infospace_id: int,
         slot taken    ──► True   refreshed every SLOT_HEARTBEAT until the block ends
         all held      ──► False  caller decides: re-queue, or give up this cycle
 
-    The heartbeat is a daemon thread, which is the whole mechanism: a thread
-    cannot outlive the process it belongs to, so "the worker died" and "the slot
-    stops being refreshed" are the same event. Nothing has to notice the death
-    or clean up after it.
-
     Release is in a ``finally``, so an orderly exit — including
     ``SoftTimeLimitExceeded``, which is raised in this thread — frees the slot at
-    once rather than leaving it to expire.
+    once.
     """
     if r is None:
         yield True
@@ -600,8 +541,6 @@ def slot_held(r, task_name: str, infospace_id: int,
                     return
             except Exception as e:
                 # A Redis blip must not kill the task it is only accounting for.
-                # Missing a beat costs at most the slot, and only if the blip
-                # outlasts the TTL.
                 logger.debug("Slot heartbeat for %s failed: %s", task_name, e)
 
     beat = threading.Thread(target=_beat, name=f"slot-hb:{task_name}:{slot}",
@@ -692,12 +631,6 @@ def task(
     """
     triggers = triggers or []
 
-    # ── Decorator-time invariants ────────────────────────────────────────
-    #
-    # ``params_model`` is direct-invocation-only. Mixing it with triggers or
-    # schedules would mean the dispatcher/event bus needs to know the params
-    # schema, which it doesn't. Fail fast at module load time — a
-    # misconfigured @task should not be silently half-wired.
     if params_model is not None:
         assert not triggers, (
             f"@task {name}: params_model is direct-invocation-only. "
@@ -937,31 +870,21 @@ def task(
         if triggers:
             from app.core.events import subscribe
 
-            # Build config-level gate for tasks with dispatch_filter (enrichers).
-            # This prevents the task from being sent at all when globally disabled,
-            # eliminating log noise and wasted worker slots.
+            # The event bus carries no infospace, so the gate may only answer what
+            # is deployment-wide: a capability nothing can serve. Whether the task
+            # runs for a given infospace is dispatch_filter's question, and the
+            # wrapper asks it before doing any work.
             event_gate = None
-            if dispatch_filter is not None:
-                def _make_gate(task_name, cap):
+            if capability:
+                def _make_gate(cap):
                     def _gate() -> bool:
-                        # Deployment switch: my-hq.yml enrichers block
                         try:
-                            from app.core.dispatch import _get_enabled_enrichers
-                            if task_name not in _get_enabled_enrichers():
-                                return False
+                            from app.core.dispatch import _is_capability_configured
+                            return _is_capability_configured(cap)
                         except Exception:
-                            pass
-                        # Check capability availability
-                        if cap:
-                            try:
-                                from app.core.dispatch import _is_capability_configured
-                                if not _is_capability_configured(cap):
-                                    return False
-                            except Exception:
-                                pass
-                        return True
+                            return True
                     return _gate
-                event_gate = _make_gate(name, capability)
+                event_gate = _make_gate(capability)
 
             for event_name in triggers:
                 subscribe(event_name, name, args_key="infospace_id", null_prefix=True, gate=event_gate)

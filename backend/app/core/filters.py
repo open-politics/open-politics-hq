@@ -26,9 +26,6 @@ from sqlalchemy import text
 # ---------------------------------------------------------------------------
 
 # Matches dotted field paths with optional [*] for array explosion.
-# ``[*]`` may appear after any segment (``emails[*].sender``,
-# ``doc.emails[*].sender``, ``a[*]``) but only once — the backend grammar
-# supports a single explosion per path (``core.filters.parse_explosion``).
 # Valid:   "sentiment", "doc.topics.0", "emails[*].sender",
 #          "doc.emails[*].sender", "a[*].b.c"
 # Invalid: ""; DROP TABLE", "foo[1]", "foo[*][*].bar"
@@ -37,14 +34,6 @@ _PATH_RE = re.compile(rf"^{_SEGMENT_RE}(?:\.{_SEGMENT_RE})*$")
 
 
 def _valid_path(path: str) -> bool:
-    # Any number of explosion markers. The cap used to be one, on the grounds
-    # that "backend can't chain lateral joins on a single accessor" — true when
-    # written, and untrue since ``parse_explosion_chain`` and the relation
-    # engine's nested-LATERAL builder landed. The cost of leaving it was that
-    # the dimension side could GROUP BY ``observations[*].by[*]`` while the
-    # filter side rejected the very key it had just produced, so every
-    # click-to-filter gesture on a nested path failed validation before it
-    # reached SQL.
     return bool(_PATH_RE.match(path))
 
 
@@ -60,8 +49,6 @@ Operator = Literal[
     "between",
     "exists", "not_exists",
     # Relational filter family: scope inspection by entity-pair co-occurrence.
-    # Future siblings (relational.path, relational.cluster) plug in here as a
-    # closed namespace — the operator string carries the family.
     "relational.cooccurs",
 ]
 
@@ -91,8 +78,6 @@ class FieldCondition(BaseModel):
     @field_validator("path")
     @classmethod
     def _check_path(cls, v: str) -> str:
-        # `$` is a placeholder for relational operators where the real target
-        # lives in the value dict — see the FieldCondition docstring.
         if v == "$":
             return v
         if not _valid_path(v):
@@ -127,8 +112,7 @@ class MergeMapEntry(BaseModel):
 class MergeMap(BaseModel):
     """Value normalization applied at query time via SQL CASE WHEN.
 
-    Stored per-run in ``views_config``.  Same shape as the graph module's
-    ``entity_merges`` in ``graph_config`` (convergence planned).
+    Stored per-run in ``views_config``.
     """
 
     field_path: str
@@ -148,14 +132,7 @@ class MergeMap(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class ExplosionPath:
-    """Result of splitting a field path at ``[*]``.
-
-    Attributes:
-        array_field:   Part before ``[*]`` (e.g. ``"emails"``), or None.
-        remainder:     Part after ``[*]`` (e.g. ``"sender"``), or the full
-                       path if no explosion.
-        is_exploded:   Whether the original path contained ``[*]``.
-    """
+    """Result of splitting a field path at ``[*]``."""
 
     array_field: str | None
     remainder: str
@@ -261,8 +238,7 @@ class ExplosionChain:
 
 
 def _safe_segment(s: str) -> str:
-    """Normalise an array_path leaf into a SQL-alias-safe slug. Keeps
-    alphanumerics + underscore; collapses anything else to ``_``."""
+    """Normalise an array_path leaf into a SQL-alias-safe slug."""
     out = []
     for ch in s:
         if ch.isalnum() or ch == "_":
@@ -278,10 +254,7 @@ def parse_explosion_chain(path: str) -> ExplosionChain:
 
     Aliases are deterministic from ``(depth, last_segment_of_array_path)``
     so two paths sharing an outer array share the same alias — the engine
-    builds each LATERAL exactly once. Two paths that disagree on an outer
-    array (e.g. ``mails[*].sender`` vs ``calls[*].speaker``) would produce
-    different aliases at depth 0 and a Cartesian product; the engine's tree
-    builder rejects that explicitly.
+    builds each LATERAL exactly once.
     """
     segments: list[ExplosionSegment] = []
     cursor = path
@@ -318,9 +291,7 @@ def jsonb_accessor(
     Returns ``(sql_fragment, params_dict)`` suitable for use with
     ``sqlalchemy.text(...).bindparams(**params)``.
 
-    The accessor always extracts as text (``->>`` or ``#>>``).  Pass
-    *cast* to wrap in a type cast, e.g. ``cast="float"`` produces
-    ``(accessor)::float``.
+    The accessor always extracts as text (``->>`` or ``#>>``).
 
     Examples::
 
@@ -362,14 +333,6 @@ def _path_branches(
     Callers COALESCE across all of them so nobody needs to know which applies.
     ``CAST(... AS text[])`` rather than ``::text[]`` because SQLAlchemy's
     ``text()`` bind-param regex skips ``:name::cast``.
-
-    Returned as JSONB rather than text because that is the form every caller
-    can narrow *from*: text is one ``#>> '{}'`` away, the entity name is one
-    :func:`scalar_of` away, and ``jsonb_array_elements`` needs the JSONB
-    itself. Rendering the operator is the caller's job — and it matters which
-    one, because a JSON ``null`` is a *value* that wins a JSONB-level COALESCE
-    but SQL NULL that falls through a text-level one. See
-    :func:`jsonb_value_accessor` for the one caller that wants the former.
     """
     parts = path.split(".")
     if len(parts) == 1:
@@ -402,34 +365,18 @@ def _path_branches(
 
 def _text_coalesce(exprs: list[str]) -> str:
     """COALESCE at the TEXT level — a convention that yielded JSON ``null``
-    falls through to the next one, which is what every text reader wants."""
+    falls through to the next one."""
     return exprs[0] if len(exprs) == 1 else f"COALESCE({', '.join(exprs)})"
 
 
 def scalar_of(value_expr: str) -> str:
-    """What a JSONB value MEANS as a scalar. The one rule.
+    """What a JSONB value MEANS as a scalar.
 
     Entity-typed fields store ``{name, type, additional_types}`` (built by
     ``adapters.ts:buildEntityObjectSchema`` / ``annotation.templates.entity``).
     Wherever such a value is grouped, filtered, aliased or displayed, what is
-    meant is the **name** — ``{"name": "Merkel", "type": "Person"}`` is not a
-    group key a human ever wants to read, and it is not a value any filter can
-    round-trip against. Everything else extracts as text unchanged.
-
-    **Read from the value, not from the contract.** Deliberate, and it matches
-    the rule this module already lives by: :func:`jsonb_accessor` COALESCEs
-    three storage conventions rather than asking the schema which one applies,
-    and :func:`safe_array_elements` exists because the LLM emits ``null`` where
-    the contract says array. A declaration-driven unwrap would be wrong in the
-    three cases that actually occur — a run whose annotations span contracts
-    that disagree, rows written before a field became entity-typed, and the
-    very common case of a model emitting a bare string where the contract
-    declares an entity object. All three read correctly here, because the
-    value is the thing being asked.
-
-    An object with no ``name`` falls through to its raw JSON, unchanged from
-    the behaviour before this existed: it is not an entity, and inventing a
-    rendering for it would be this function overreaching.
+    meant is the **name**. Everything else extracts as text unchanged. An
+    object with no ``name`` falls through to its raw JSON.
 
     No ``jsonb_typeof`` guard is needed. JSONB extraction operators "return
     NULL, rather than failing, if the JSON input does not have the right
@@ -453,10 +400,6 @@ def jsonb_scalar_accessor(
     This is what every **grouping and comparison** site should use. The plain
     text accessor remains correct for key-existence tests, which is why
     ``exists``/``not_exists`` in :func:`condition_sql` keep it.
-
-    Identical NULL semantics to :func:`jsonb_accessor`: the COALESCE is at the
-    text level, so a convention that yielded JSON ``null`` still falls through
-    to the next one.
     """
     branches, params = _path_branches(column, path, param_name)
     accessor = _text_coalesce([scalar_of(b) for b in branches])
@@ -492,10 +435,9 @@ def jsonb_value_accessor(
         → COALESCE across flat-with-dots / nested / unwrapped-root.
 
     The COALESCE here is at the **JSONB** level, unlike every other accessor in
-    this module. That is load-bearing rather than incidental: a JSON ``null``
-    is a value, so it wins the COALESCE instead of falling through to the next
-    storage convention — and the callers that wrap this in
-    ``jsonb_array_elements`` need exactly that, which is what
+    this module: a JSON ``null`` is a value, so it wins the COALESCE instead of
+    falling through to the next storage convention — and the callers that wrap
+    this in ``jsonb_array_elements`` need exactly that, which is what
     :func:`safe_array_elements` then guards.
     """
     branches, params = _path_branches(column, path, param_name)
@@ -516,12 +458,7 @@ def safe_array_elements(expr: str) -> str:
     which is a value (not SQL NULL) and so survives ``COALESCE``. The LLM
     routinely emits ``"field": null`` for unfilled optional arrays, so every
     explosion call-site that targets a user-defined field must guard against
-    it. Use::
-
-        f"jsonb_array_elements({safe_array_elements(arr_acc)}) AS elem"
-
-    Returns ``[]::jsonb`` when *expr* is null/scalar/object — same effect as
-    "no rows" without a runtime error.
+    it.
     """
     return f"CASE WHEN jsonb_typeof({expr}) = 'array' THEN {expr} ELSE '[]'::jsonb END"
 
@@ -535,10 +472,6 @@ def merge_case(
     accessor: str,
 ) -> str:
     """Build a SQL CASE expression for value normalization.
-
-    The caller provides the *accessor* (a SQL fragment that extracts the
-    raw value as text, e.g. ``"elem->>'party'"``).  The returned CASE
-    expression normalizes values according to the merge map entries.
 
     Values are compared case-insensitively via ``lower()``.
 
@@ -574,12 +507,6 @@ def apply_merge_map_value(merge_map: MergeMap | None, raw_value: str | None) -> 
     """Python-side mirror of :func:`merge_case` — used by the projection
     engine's per-row loop where canon resolution and snippet extraction
     happen outside SQL.
-
-    Returns the normalised value when an entry matches (case-insensitive),
-    the raw value otherwise. ``None`` short-circuits to ``None``.
-
-    Same casing convention as ``merge_case``: ``lower()`` on both sides
-    of the comparison.
     """
     if raw_value is None:
         return None
@@ -621,15 +548,10 @@ def condition_sql(
     *self_value* says **the element IS the value** — there is no field beneath
     it, as for ``tags[*]`` or ``actors[*]`` where the caller has already joined
     the array and *column* is the element alias. The path is then only an
-    address, not something to read through. Without this the caller had to
-    carry a parallel operator table for the leaf-less case, and it supported
-    "the operators the UI produces" rather than all of them.
+    address, not something to read through.
 
     Returns ``(sql_fragment, params)`` or raises ValueError for unknown ops.
     """
-    # Relational operators are pre-handled — they don't fit the single-path
-    # FieldCondition shape (multi-entity, multi-path) so they generate their
-    # own SQL via dedicated helpers.
     if cond.operator == "relational.cooccurs":
         return _cooccurs_sql(cond, column, param_prefix=param_prefix)
 
@@ -637,16 +559,13 @@ def condition_sql(
         field = ""
     else:
         ep = parse_explosion(cond.path)
-        # If the path has [*], the caller should have split it already and
-        # passed the element alias.  We use the remainder for the accessor.
         field = ep.remainder if ep.is_exploded else cond.path
 
         if not field and cond.operator not in ("exists", "not_exists"):
-            # Path like "emails[*]" with no field — only exists/not_exists make sense
             raise ValueError(f"No field after [*] for operator {cond.operator}")
 
     params: dict[str, Any] = {}
-    pp = param_prefix  # shorter alias
+    pp = param_prefix
 
     if cond.operator in ("exists", "not_exists"):
         if self_value:
@@ -654,8 +573,6 @@ def condition_sql(
             # can still distinguish is a JSON `null` sitting in the array.
             fragment = f"{scalar_of(column)} IS NOT NULL"
         elif not field:
-            # Existence of the array itself — check on the original column
-            # before explosion.  Caller handles this differently.
             fragment = "TRUE"  # placeholder; caller should handle array existence
         else:
             parts = field.split(".")
@@ -670,10 +587,8 @@ def condition_sql(
             fragment = f"NOT ({fragment})"
         return fragment, params
 
-    # Entity-aware, and this is the line that keeps the filter side honest: a
-    # dimension groups on `scalar_of`, so a gesture that turns a group key back
-    # into an `eq` must compare against the same thing. Using the plain text
-    # accessor here is how "click the slice" stopped matching the slice.
+    # A dimension groups on `scalar_of`, so a gesture that turns a group key
+    # back into an `eq` must compare against the same thing.
     # (`exists`/`not_exists` returned above — those test key presence, not value.)
     if self_value:
         acc = scalar_of(column)
@@ -765,8 +680,7 @@ def _cooccurs_sql(
         }
 
     For each entity X we OR across paths (X may live in any of them); we then
-    AND across entities (every entity must appear). This is "all of these
-    appear somewhere on the same annotation/asset".
+    AND across entities (every entity must appear).
 
     Path conventions (entity field shape from the schema editor's adapter):
     every entity-typed leaf is an object ``{name, type?, additional_types?}``,

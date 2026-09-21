@@ -58,18 +58,7 @@ async def find_duplicates(
 
     Handles exact (case-insensitive) duplicates without embedding.
     Deduplicates identical strings before calling embed to save tokens.
-    Pre-computes norms so each vector is normalized once, not n-1 times.
     Returns pairs sorted by similarity descending.
-
-    Args:
-        items: Strings to compare (entity names, labels, whatever).
-        embed: Async callable: list[str] -> list[list[float]].
-               Works with any EmbeddingProvider.embed_texts.
-        threshold: Minimum cosine similarity to report (0.0–1.0).
-        max_items: Hard cap on input size. O(n²) pairwise — default 500.
-
-    Raises:
-        ValueError: If len(items) exceeds max_items.
     """
     if len(items) > max_items:
         raise ValueError(f"Too many items ({len(items)}); max is {max_items}")
@@ -105,7 +94,6 @@ async def find_duplicates(
     if len(vectors) != len(representatives):
         return sorted(pairs, key=lambda p: p.similarity, reverse=True)
 
-    # Pre-compute norms once (each vector's norm used n-1 times in pairwise)
     norms = [_norm(v) for v in vectors]
 
     for i in range(len(representatives)):

@@ -78,14 +78,7 @@ SAFE_BUILTINS: dict[str, Callable[..., Any]] = {
 
 
 class FormulaLookup:
-    """A pluggable resolver for ``@formula_name[k1, k2].col`` expressions.
-
-    The default implementation returns ``None`` for every lookup, and since
-    the saved-formula registry was retired it is also the *only* one: a
-    ``derive`` that references another formula degrades to None rather than
-    resolving. The hook stays because it is the seam a future cross-query
-    composition would bind to.
-    """
+    """A pluggable resolver for ``@formula_name[k1, k2].col`` expressions."""
 
     def lookup(
         self,
@@ -102,9 +95,7 @@ class FormulaLookup:
 class _ExprEvaluator(ast.NodeVisitor):
     """Walk a parsed AST and evaluate against a namespace.
 
-    Raises ``ValueError`` on anything outside the supported grammar so
-    invalid expressions fail loudly at formula-save time rather than
-    silently returning a garbage value.
+    Raises ``ValueError`` on anything outside the supported grammar.
     """
 
     def __init__(
@@ -223,9 +214,6 @@ class _ExprEvaluator(ast.NodeVisitor):
         return fn(*args)
 
     # ── composition lookup: @formula_name[k1, k2].col ──────────────
-    # The @-prefix is rewritten to __FORMULA_ before parsing (Python's
-    # tokenizer can't ingest ``@`` mid-expression). The Subscript visitor
-    # recognises the rewritten prefix and dispatches to FormulaLookup.
     def visit_Subscript(self, node: ast.Subscript) -> Any:
         if not isinstance(node.value, ast.Name) or not node.value.id.startswith(_FORMULA_PREFIX):
             return self._unsupported(node)
@@ -261,11 +249,7 @@ class _ExprEvaluator(ast.NodeVisitor):
 
 
 def parse_expr(expr: str) -> ast.AST:
-    """Parse an expression to an AST. Raises ``ValueError`` on syntax errors.
-
-    Rewrites ``@formula_name`` to ``__FORMULA_formula_name`` before parsing
-    so Python's tokenizer accepts the formula-composition reference.
-    """
+    """Parse an expression to an AST. Raises ``ValueError`` on syntax errors."""
     rewritten = _AT_REF_RE.sub(lambda m: _FORMULA_PREFIX + m.group(1), expr)
     try:
         return ast.parse(rewritten, mode="eval").body
@@ -283,16 +267,6 @@ def evaluate(
     The ``namespace`` should contain whatever names the expression may
     reference — typically ``{"scalars": ..., "weight": ..., "roles": ...,
     "derived": ...}`` for a Formula derive step.
-
-    The ``formula_lookup`` resolves ``@formula_name[k].col`` references
-    for composition. ``None`` means lookups return ``None`` (safe default
-    for tests + standalone validation).
-
-    Raises ``ValueError`` on:
-    - syntax errors
-    - unsupported constructs (attribute access on arbitrary names, imports,
-      assignments, function definitions, comprehensions, generator expressions)
-    - unknown identifiers
     """
     tree = expr if isinstance(expr, ast.AST) else parse_expr(expr)
     return _ExprEvaluator(namespace, formula_lookup).visit(tree)

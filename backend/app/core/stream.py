@@ -9,9 +9,6 @@ Three components:
 ctx.send() on TaskContext delegates to StreamWriter. The SSE endpoint in
 routes/stream.py subscribes via StreamHub. If nobody's listening, events
 sit briefly in Redis and get trimmed by MAXLEN.
-
-No decorator, no registry, no hydration framework. Just a writer, a hub,
-and an endpoint.
 """
 
 from __future__ import annotations
@@ -39,10 +36,6 @@ def stream_key(
 
     Format: stream:{iid}:{topic}:{resource_id}
     With params: stream:{iid}:{topic}:{resource_id}:{param_hash}
-
-    param_hash is a truncated SHA-256 of deterministic JSON. This accommodates
-    future parameterized views (GQL queries, filtered projections) without
-    changing the key format.
     """
     base = f"stream:{iid}:{topic}:{resource_id}"
     if params:
@@ -69,7 +62,6 @@ class StreamWriter:
     """Fire-and-forget XADD to a Redis Stream.
 
     Used from Celery workers (ctx.send) and sync route handlers. Never raises.
-    Failures are counted, not propagated.
     """
 
     MAXLEN: int = 1000  # approximate XADD MAXLEN
@@ -112,11 +104,7 @@ class FamilyStreamWriter:
     """Writes the same event to a primary stream and an optional mirror stream.
 
     Used by annotation extension runs: events need to land on the child run's
-    own stream (so anyone watching the child sees them) AND on the parent
-    run's stream (so panels bound to the parent refetch on activity).
-
-    Construct with the primary key and an optional mirror key. ``send`` and
-    ``expire`` fan out to both. Mirror failures don't affect the primary.
+    own stream AND on the parent run's stream.
     """
 
     def __init__(self, primary_key: str, mirror_key: str | None = None):
@@ -158,7 +146,6 @@ def _get_async_redis():
 
 @dataclass
 class _HubEntry:
-    """One entry per unique stream key in the hub."""
     subscribers: set  # set of asyncio.Queue
     reader_task: Optional[asyncio.Task] = None
     last_activity: float = field(default_factory=time.time)
@@ -170,8 +157,6 @@ class StreamHub:
     For each unique stream key with active subscribers, runs exactly one
     background asyncio.Task that calls XREAD with BLOCK. When entries arrive,
     fans out to all subscriber Queues.
-
-    Subscriber count → 0: reader cancelled, key cleaned up, stream TTL set.
 
     Memory bounds:
     - Per-stream entries bounded by XADD MAXLEN (in StreamWriter)
@@ -204,7 +189,6 @@ class StreamHub:
         needs_catchup = False
         async with self._lock:
             if key not in self._entries:
-                # First subscriber — reader starts from their position
                 entry = _HubEntry(subscribers=set())
                 self._entries[key] = entry
                 entry.reader_task = asyncio.create_task(
@@ -212,15 +196,10 @@ class StreamHub:
                     name=f"stream-reader:{key}",
                 )
             else:
-                # Joining an existing reader — may need catch-up
                 needs_catchup = last_id not in ("$", "0-0")
             self._entries[key].subscribers.add(q)
             self._entries[key].last_activity = time.time()
 
-        # Catch-up: replay events from last_id for reconnecting subscribers
-        # joining an existing reader that's already ahead. Some events may
-        # also arrive via fan-out (duplicates), which is documented as the
-        # client's responsibility to handle idempotently.
         if needs_catchup:
             try:
                 r = _get_async_redis()
@@ -254,7 +233,6 @@ class StreamHub:
                 if entry.reader_task and not entry.reader_task.done():
                     entry.reader_task.cancel()
                 del self._entries[key]
-                # Set TTL on idle stream so Redis cleans it up
                 try:
                     r = _get_async_redis()
                     await r.expire(key, StreamWriter.IDLE_TTL)
@@ -284,7 +262,7 @@ class StreamHub:
                                 "type": fields.get("type", "message"),
                                 "data": fields.get("data", "{}"),
                             })
-                retry_delay = 1  # reset on success
+                retry_delay = 1
             except asyncio.CancelledError:
                 return
             except Exception as exc:
@@ -293,7 +271,6 @@ class StreamHub:
                 retry_delay = min(retry_delay * 2, 30)
 
     def _fan_out(self, key: str, message: dict) -> None:
-        """Distribute a message to all subscribers for a key."""
         entry = self._entries.get(key)
         if not entry:
             return
@@ -320,7 +297,6 @@ _hub: StreamHub | None = None
 
 
 def get_hub() -> StreamHub:
-    """Return the process-singleton StreamHub."""
     global _hub
     if _hub is None:
         _hub = StreamHub()
