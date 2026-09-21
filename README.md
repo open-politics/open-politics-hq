@@ -96,7 +96,7 @@ There's one shortcut and a couple of operations. Everything else is config:
 ### Configuration
 
 Two files. `.env` holds secrets and nothing else. Everything else lives in
-`my-hq.yml` — storage (local disk or any S3), which local models and services to
+`HQ.yml` — storage (local disk or any S3), which local models and services to
 run, which provider answers a given job and who's allowed to use your API keys,
 background enrichers, limits, ports, smtp, network mode. It's commented, it has
 an index at the bottom, and `./setup.sh` writes it for you. Edit it directly
