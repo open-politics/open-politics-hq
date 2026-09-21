@@ -1,6 +1,5 @@
 """
-language/dialects — which wires exist; registers blocks, turns, items.
-======================================================================
+language/dialects — registers the wires: blocks, turns, items.
 
   Language.dialect(name, module, adapter, path, quirks_type, baseline)
 
@@ -8,14 +7,8 @@ language/dialects — which wires exist; registers blocks, turns, items.
     turns    /chat/completions   TurnsQuirks    mistral   · ollama
     items    /responses          ItemsQuirks    openai
 
-  NOT IN THIS FILE
-    blocks.py / turns.py / items.py   the adapters themselves.
-    ../quirks.py    BlocksQuirks · TurnsQuirks · ItemsQuirks.
-    ../base.py      LanguageDialect, the contract each one implements.
-
-Only the conversation unit and the tool-result carrier cluster into a
-dialect boundary. Everything else that differs between endpoints is a
-quirk on top of one of these three — proof they are not separate dialects.
+The dialect boundary is the conversation unit and the tool-result carrier;
+everything else that differs between endpoints is a quirk on top of one.
 """
 
 from app.api.modules.foundation_service_providers.language.models import LLMModelSpec

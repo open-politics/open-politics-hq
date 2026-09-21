@@ -1,23 +1,17 @@
 """
 answer_engine.py — the Tavily wire.
-===================================
 
   query ──► POST {base}/search ──► { results[] · answer · images · … }
                                            │
-                                           └─ top-level extras, not
-                                              smuggled into results[0]["raw"]
+                                           └─ answer and images are
+                                              top-level, not per-hit
 
   NOT IN THIS FILE
     ../base.py     the SearchResults / SearchHit shapes these fill.
     metasearch.py  the other wire — no answer, no images, hits only.
 
-Those extras used to be smuggled into results[0]["raw"] under
-summary_answer / tavily_images, which is how mcp_server/server.py ended
-up reading Tavily-specific keys off whatever provider was configured.
-
-Talks HTTP directly, not through tavily-python: the SDK is synchronous
-(every call would need an executor hop), and going direct gives this
-adapter the same timeout policy as every other wire.
+Talks HTTP directly rather than through tavily-python, whose client is
+synchronous.
 """
 
 from __future__ import annotations

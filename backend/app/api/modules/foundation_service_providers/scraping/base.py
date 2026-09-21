@@ -1,6 +1,5 @@
 """
 scraping/base.py — the contract.
-================================
 
   url  ──►  scrape_url()  ──►  { text_content · title · publication_date
                                  top_image · summary · images  … }
@@ -13,7 +12,7 @@ scraping/base.py — the contract.
 
   discover_rss_feeds()  ──►  just the feed_urls from analyze_source()
 
-  article_parser   a library, no wire — a second parser would share this
+  article_parser   a library, no wire
 """
 
 from __future__ import annotations
@@ -26,12 +25,10 @@ class ScrapingProvider(Protocol):
 
     async def scrape_url(self, url: str, *, timeout: Optional[int] = None,
                          retry_attempts: int = 1) -> Dict[str, Any]:
-        """Scrape one URL. Raises ``ValueError`` if nothing could be extracted.
+        """Scrape one URL; raises ``ValueError`` if nothing could be extracted.
 
-        Returns a dict whose load-bearing keys are ``text_content``, ``title``,
-        ``publication_date``, ``top_image``, ``summary`` and ``images`` — the six
-        ``content/types/web_article.py`` reads. The rest is metadata that reaches
-        the HTTP surface unchanged.
+        ``content/types/web_article.py`` reads text_content, title,
+        publication_date, top_image, summary and images; the rest passes through.
         """
         ...
 

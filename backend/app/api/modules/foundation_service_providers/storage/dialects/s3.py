@@ -1,6 +1,5 @@
 """
 s3.py — any S3-compatible object store.
-=======================================
 
   UploadFile / bytes ──► asyncio.to_thread( Minio, sync SDK ) ──► bucket
 
@@ -10,9 +9,8 @@ s3.py — any S3-compatible object store.
 
   get_file_path  ──►  NotImplementedError   (no local path; use get_file())
 
-minio is used as a generic S3 client, not a MinIO-only one. It is
-synchronous, so every call goes through a thread — cheap, since the
-work is network-bound, not CPU-bound.
+The ``minio`` package is used as a generic S3 client, not a MinIO-only one,
+and its API is synchronous, so every call goes through a thread.
 """
 
 from __future__ import annotations
@@ -128,7 +126,7 @@ class S3Storage(Adapter):
     async def list_files(self, prefix: Optional[str] = None,
                          limit: Optional[int] = None, offset: int = 0) -> List[str]:
         def _collect() -> List[str]:
-            # The generator makes HTTP calls while iterated, so both run in-thread.
+            # list_objects is lazy — iterating it is what makes the HTTP calls.
             return [o.object_name for o in self.s3.list_objects(
                 bucket_name=self.bucket, prefix=prefix, recursive=True)]
 
@@ -162,7 +160,7 @@ class S3Storage(Adapter):
         except S3Error as e:
             if e.code == "NoSuchKey":
                 return
-            # Never raises: this runs in cleanup, where it would mask the real failure.
+            # Never raises: this runs in cleanup paths.
             logger.error("Sync delete failed for %r: %s", object_name, e, exc_info=True)
 
     async def move_file(self, source_object_name: str,

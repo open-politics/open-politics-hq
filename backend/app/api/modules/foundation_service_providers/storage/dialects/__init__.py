@@ -1,6 +1,5 @@
 """
 storage/dialects — which wires exist.
-=====================================
 
   s3           MinIO · Garage · R2 · B2 · Wasabi · AWS
   filesystem   a local volume

@@ -1,6 +1,5 @@
 """
 storage — bytes in, bytes out, wherever they live.
-==================================================
 
   base.py      the contract         StorageProvider
   models.py    the data             StorageQuirks
@@ -14,7 +13,7 @@ from app.api.modules.foundation_service_providers.storage.models import (
 )
 from app.api.modules.foundation_service_providers.storage.provider import Storage
 
-# Registers the dialects. Must follow the Domain it registers onto.
+# Must follow the Domain it registers the dialects onto.
 from app.api.modules.foundation_service_providers.storage import dialects  # noqa: F401
 
 

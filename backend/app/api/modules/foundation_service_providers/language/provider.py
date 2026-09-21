@@ -1,5 +1,5 @@
 """
-language/provider.py — the Domain itself.
+language/provider.py — the Language Domain.
 
    base.py    LanguageModelProvider ─┐
    quirks.py  LanguageQuirks        ─┴──►  Language = Domain(…)
@@ -7,9 +7,6 @@ language/provider.py — the Domain itself.
    dialects/__init__.py  ──►  blocks · turns · items
    features/__init__.py  ──►  six optional surfaces
    providers.py          ──►  Language(dialect=…, quirks=…) per endpoint
-
-   No system_default: a language provider and model must be chosen, never
-   inherited from a deployment env var.
 """
 
 from __future__ import annotations

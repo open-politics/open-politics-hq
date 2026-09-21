@@ -1,11 +1,9 @@
 """
 models.py — ModelSpec, the base every domain's spec derives from.
-=================================================================
 
   ModelSpec(name, description="")
        ├──► LLMModelSpec        language/models.py
        └──► EmbeddingModelSpec  embedding/models.py
-            (every domain that declares models grows its own subclass)
 
   .merged_with(other)
        per field: mine is unset (None/""/0/False) and theirs isn't
@@ -19,9 +17,6 @@ models.py — ModelSpec, the base every domain's spec derives from.
   NOT IN THIS FILE
     primitives.py  types Binding.models / ProviderDescriptor against this.
     resolve.py     runs the cascade above, inside _resolve_spec(). Zero I/O.
-
-  Declared specs are curated defaults, never an allowlist — an undeclared
-  model name still resolves and still runs.
 """
 
 from __future__ import annotations
@@ -37,14 +32,7 @@ class ModelSpec:
     description: str = ""
 
     def merged_with(self, other: Optional["ModelSpec"]) -> "ModelSpec":
-        """Fill this spec's unset fields from ``other``.
-
-        Used by the capability cascade: a runtime-discovered spec is merged
-        over the dialect baseline, and a declared spec is merged over both.
-        "Unset" means falsy-and-defaulted — a declared ``supports_tools=False``
-        on a model we curated is a statement, but the same value arriving from
-        a baseline that never knew is not.
-        """
+        """Fill this spec's unset fields (None/""/0/False) from ``other``."""
         if other is None:
             return self
         fields = {}

@@ -1,47 +1,8 @@
 """
-embedding/engine.py — the batch loop above the wire.
-====================================================
+embedding/engine.py — the batch loop above a dialect.
 
-  resolve("embedding", …)              Batcher  ── YOU ARE HERE
-        │                              ─────────────────────────
-        ▼                              wraps ONE dialect adapter
-  Batcher(adapter, descriptor)         __getattr__ ─► adapter
-        │                              features compose onto THIS object,
-        │                              which is why _max_chars looks up
-        │                              probe_model on `self`, not on adapter
-        ▼
-  embed_texts(texts, model)
-        │
-        ├─1─ _max_chars(model)
-        │        probe_model feature ─► live length  (ollama /api/show)
-        │        else descriptor spec ► max_sequence_length (declared)
-        │        else None ──────────► no truncation, logged once
-        │             │
-        │             ▼  context_length × quirks.char_budget_ratio
-        │        each text clipped to the budget
-        │
-        ├─2─ ONE call ─► adapter.embed_batch(prepared, model)
-        │                   │
-        │                   ├─ indexed.py  {data:[{index,embedding}]}
-        │                   │              openai · voyage · jina
-        │                   └─ flat.py     {embeddings:[[…]]}   ollama
-        │
-        └─3─ batch failed ─► retry each text ALONE
-                             keep every success · collect every failure
-                             raise ONCE at the end, naming the bad indices
-
-  NOT IN THIS FILE
-    dialects/           the HTTP call and the response unpacking.
-    features/           probe_model · verify · list_models.
-    ../models.py        EmbeddingModelSpec — dimension, max_sequence_length.
-    modules/embedding/  the APPLICATION module: chunking, storage, dimension
-                        validation. Different concern, same word.
-
-Step 3 keeps partial results on purpose. Retrying alone IS the salvage, so
-raising on the first bad text discards what was already recovered — one
-rejected input used to lose all 500 of its neighbours. It catches
-``Exception``, not ``RuntimeError``: dialects wrap errors by convention, and
-a convention is not what a data-loss path should rest on.
+  embed_texts ─► truncate to the char budget ─► adapter.embed_batch
+              ─► on failure, retry each text alone and keep what survives
 """
 
 from __future__ import annotations
@@ -53,11 +14,9 @@ logger = logging.getLogger(__name__)
 
 
 class Batcher:
-    """Wraps an embedding dialect adapter with the shared batch behaviour.
+    """Wraps an embedding dialect adapter with truncation and salvage retry.
 
-    Delegates everything it does not implement, so features composed onto it
-    (``probe_model``, ``verify``, ``list_models``) and adapter internals stay
-    reachable.
+    Delegates anything it does not implement to the adapter.
     """
 
     def __init__(self, adapter, descriptor):
@@ -65,22 +24,15 @@ class Batcher:
         self.descriptor = descriptor
 
     def __getattr__(self, name):
-        # Only called when normal lookup fails, so it never shadows our own.
         return getattr(self.adapter, name)
 
     # ── budget ───────────────────────────────────────────────────────────────
 
     async def _max_chars(self, model_name: str) -> Optional[int]:
-        """Character budget for this model, or None when unknown.
-
-        Both sources are needed: a runtime probe is the only truth for a model
-        nobody declared, and a declared spec is the only truth for an endpoint
-        with no probe. Declared models are curated defaults, not an allowlist,
-        so "neither knows" is a legitimate state rather than a misconfiguration.
-        """
+        """Character budget for this model — live probe, else declared spec, else None."""
         context_length = 0
 
-        # Features compose onto this Batcher, so look up on `self`, not the adapter.
+        # features compose onto the Batcher, not the adapter
         probe = getattr(self, "probe_model", None)
         if probe is not None:
             try:
@@ -133,11 +85,8 @@ class Batcher:
 
     async def _embed_individually(self, prepared: List[str],
                                   model_name: str) -> List[List[float]]:
-        """Salvage pass: every text alone, every success kept.
-
-        Raises only after trying all of them, and names the inputs that failed
-        so the caller can drop or fix those rather than losing the batch.
-        """
+        """Salvage pass: every text alone, every success kept, raising once at
+        the end with the indices that failed."""
         results: List[Optional[List[float]]] = []
         failures: List[str] = []
 

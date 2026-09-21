@@ -1,17 +1,7 @@
 """
-embedding/base.py — the contract.
-=================================
+embedding/base.py — the EmbeddingProvider protocol.
 
-  texts  ──►  embed_texts()  ──►  [[float]]   one vector per text, in order
-
-  indexed   {data:[{index,embedding}]}    openai · voyage · jina
-  flat      {embeddings:[[…]]}            ollama
-
-  NOT IN THIS FILE
-    models.py  EmbeddingQuirks — the deviations a dialect reads.
-    dialects/  embed_batch() — one level below this Protocol; called
-               only by the Batcher, never directly by a caller.
-    engine.py  Batcher — truncation budget, retry-alone-on-failure.
+  texts ──► embed_texts() ──► [[float]], one vector per text, in order
 """
 
 from __future__ import annotations

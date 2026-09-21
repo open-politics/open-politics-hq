@@ -1,6 +1,5 @@
 """
-filesystem.py — a directory on disk.
-====================================
+filesystem.py — a directory on disk. No object store, no network, no credentials.
 
   UploadFile ──► stream in 8KB chunks ──► base_path/<object_name>
                         │
@@ -12,8 +11,6 @@ filesystem.py — a directory on disk.
 
   _path()  ──►  resolves under base_path, rejects ".." traversal
                 (an object_name is untrusted: uploads, imported listings)
-
-The fully-local option: no object store, no network, no credentials.
 """
 
 from __future__ import annotations
@@ -46,11 +43,7 @@ class FilesystemStorage(Adapter):
         logger.info("Filesystem storage ready: root=%s", self.root)
 
     def _path(self, object_name: str) -> Path:
-        """Resolve under the root, refusing traversal.
-
-        An object name is untrusted input — it can come from an uploaded
-        filename or an imported directory listing — so ``..`` must not escape.
-        """
+        """Resolve under the root, refusing ``..`` traversal of an untrusted name."""
         path = (self.root / object_name).resolve()
         if not path.is_relative_to(self.root):
             raise ValueError(f"Path traversal rejected: {object_name}")
@@ -66,7 +59,7 @@ class FilesystemStorage(Adapter):
             with open(path, mode) as f:
                 f.write(buf)
 
-        # Stream: an upload can exceed memory. Truncate first chunk, append after.
+        # Streamed: truncate on the first chunk, append after.
         first = True
         while chunk := await file.read(CHUNK):
             await asyncio.to_thread(_write, chunk, "wb" if first else "ab")
@@ -97,7 +90,7 @@ class FilesystemStorage(Adapter):
         return path
 
     async def get_file(self, object_name: str) -> Any:
-        """An open handle. Prefer ``get_file_path`` here — it avoids the copy."""
+        """An open handle. ``get_file_path`` avoids the copy where it fits."""
         return open(self.get_file_path(object_name), "rb")
 
     def file_exists(self, object_name: str) -> bool:

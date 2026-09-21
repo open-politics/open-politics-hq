@@ -1,6 +1,5 @@
 """
 article_parser.py — article extraction via newspaper4k.
-=======================================================
 
   url ──► newspaper.article() ──► Article ──► the 21-key dict (public API)
              │   (sync; wrapped in asyncio.to_thread)
@@ -8,11 +7,8 @@ article_parser.py — article extraction via newspaper4k.
 
   base_url ──► newspaper.build() ──► Source
                   ├─ feed_urls()
-                  ├─ category_urls()      each independent; one failing
-                  └─ articles[:20]        source still reports the rest
-
-No wire: newspaper4k is a local, synchronous library, so the "dialect"
-here is the parsing strategy, not a vendor.
+                  ├─ category_urls()      each step independent
+                  └─ articles[:20]
 """
 
 from __future__ import annotations
@@ -94,7 +90,7 @@ class ArticleParserScraper(Adapter):
         raise ValueError(f"Failed to scrape {url}: {last_error}")
 
     async def _extract(self, article: Any, original_url: str) -> Dict[str, Any]:
-        """newspaper4k Article → the 21-key dict that is already public API."""
+        """newspaper4k Article → the 21-key dict that is public API."""
         if self.quirks.enable_nlp and hasattr(article, "nlp"):
             try:
                 await asyncio.to_thread(article.nlp)
@@ -169,7 +165,7 @@ class ArticleParserScraper(Adapter):
             "analysis_method": "newspaper4k",
         }
 
-        # Independent steps: a site with no feeds still reports its categories.
+        # Independent steps: one failing does not lose the others.
         try:
             feeds = list(source.feed_urls())
             result["feed_urls"] = feeds

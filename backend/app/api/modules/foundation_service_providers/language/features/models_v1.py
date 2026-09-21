@@ -1,6 +1,5 @@
 """
 models_v1.py — feature: list models from an OpenAI-style endpoint.
-==================================================================
 
   PROVIDES = ("list_models",)
 
@@ -11,15 +10,8 @@ models_v1.py — feature: list models from an OpenAI-style endpoint.
       ──►  LLMModelSpec(name=id, …capabilities copied from the DIALECT
            BASELINE — this response gives names only, no capabilities)
 
-  NOT IN THIS FILE
-    ../dialects/__init__.py   the baseline capabilities this inherits for
-                               any name the declared specs don't curate.
-    registry.list_models()    merges this behind the curated, declared
-                               specs, so recommended models sort first.
-
-Feature and dialect are independent choices: llama.cpp exposes this
-endpoint while speaking the `blocks` wire, proving one doesn't imply
-the other.
+Independent of the dialect: llama.cpp serves this endpoint while speaking
+the `blocks` wire.
 """
 
 from __future__ import annotations
@@ -36,7 +28,6 @@ PROVIDES = ("list_models",)
 
 async def list_models(p) -> List[LLMModelSpec]:
     """Models the endpoint reports right now."""
-    # Derived, not declared — whether the base URL carries /v1 is observable.
     versioned = (p.base_url or "").rstrip("/").endswith("/v1")
     path = "/models" if versioned else "/v1/models"
     try:
@@ -47,7 +38,7 @@ async def list_models(p) -> List[LLMModelSpec]:
         logger.warning("Could not list models from %s: %s", p.provider_key, e)
         return []
 
-    # Unknown here, so inherit the baseline; defaulting False disabled tool features.
+    # This endpoint reports no capabilities, so inherit the baseline.
     baseline = p.descriptor.binding.dialect.baseline
     specs = [
         LLMModelSpec(

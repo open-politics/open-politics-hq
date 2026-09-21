@@ -1,12 +1,5 @@
 """
-ocr/provider.py — the Domain itself.
-====================================
-
-  base.py     OcrProvider  ─┐
-  models.py   OcrQuirks    ─┴──►  Ocr = Domain(…)
-                                      │
-  dialects/__init__.py  ──►  Ocr.dialect("local_engine") · ("vision_prompt")
-  providers.py           ──►  Ocr(dialect=…, quirks=…) per endpoint
+ocr/provider.py — the Ocr domain: protocol, quirks, package root.
 """
 
 from __future__ import annotations

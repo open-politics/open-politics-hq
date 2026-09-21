@@ -10,12 +10,9 @@ language/models.py — the vocabulary a turn is written in.
    Delta  ◄── one streamed chunk ──────────┘
      reply · done
 
-   GenerationResponse   the PUBLIC snapshot the SSE route relays
+   GenerationResponse   the public snapshot the SSE route relays
    GenerationOptions    caller knobs; extra="forbid", so a typo raises
    ToolDef/Call/Outcome a tool as declared · as requested · as executed
-
-  Beside the contract, not in the engine, so no dialect imports an engine —
-  a dialect implements a contract and does not know one exists.
 """
 
 from __future__ import annotations
@@ -46,16 +43,9 @@ ToolExecutor = Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]]
 class LLMModelSpec(ModelSpec):
     """What a language model can do.
 
-    These are **model** capabilities. How an *endpoint* expresses them on the
-    wire is a separate question answered by ``LanguageQuirks`` — a model either
-    reasons or it does not (``supports_thinking``), while a server either wraps
-    that reasoning in ``<think>`` tags or does not (``thinking_tags``). Ollama
-    serves both kinds of model over one wire that always needs tag salvage,
-    which is why the two must stay independent.
-
-    ``max_tokens`` is a **default**, never a ceiling: a caller's
-    ``GenerationOptions.max_tokens`` always outranks it. Advanced extraction
-    depends on being able to raise it per run.
+    Model capabilities, not wire shape: a model reasons or it does not
+    (``supports_thinking``); whether the server wraps that in ``<think>`` tags
+    is ``TurnsQuirks.thinking_tags``. ``max_tokens`` is a default, not a cap.
     """
     supports_tools: bool = False
     supports_streaming: bool = True
@@ -69,22 +59,11 @@ class LLMModelSpec(ModelSpec):
 
 @dataclass
 class GenerationResponse:
-    """One snapshot of a generation. The public contract, unchanged.
+    """One snapshot of a generation; streaming yields many, non-streaming one.
 
-    Streaming yields many of these; non-streaming returns one. Three invariants
-    the whole stack depends on:
-
-    * ``content`` is **cumulative**, never a delta. The frontend assigns it on
-      every chunk rather than appending, and across tool-loop iterations it is
-      ``\\n\\n``-joined so earlier narration is not overwritten.
-    * ``tool_executions`` is the **whole list on every yield**, with ids stable
-      across yields — the UI keys directive dedup and ``<tool_results id=…/>``
-      resolution off them.
-    * A generation always yields **at least once**, or ``_drain_stream`` in the
-      annotation task returns ``None`` and Phase A raises.
-
-    ``raw_response`` is gone: it was produced by every provider and read by
-    nothing.
+    Three invariants callers rely on: ``content`` is cumulative, never a delta;
+    ``tool_executions`` is the whole list on every yield, with stable ids; and
+    a generation always yields at least once.
     """
     content: str
     model_used: str
@@ -96,21 +75,13 @@ class GenerationResponse:
 
 
 class GenerationOptions(BaseModel):
-    """Everything tunable about one generation.
-
-    **Unknown keys are refused, not dropped.** Before this existed, the
-    annotation task splatted a run's free-form ``configuration`` JSONB straight
-    into ``generate(**kwargs)`` and every provider swallowed what it did not
-    recognise — so a typo'd ``temperatur`` silently did nothing. A silent drop
-    teaches an operator that the switch is broken rather than that the name is
-    wrong.
-    """
+    """Everything tunable about one generation. Unknown keys raise."""
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     temperature: Optional[float] = None
     top_p: Optional[float] = None
 
-    #: Output cap. Always outranks ``LLMModelSpec.max_tokens``, a starting default.
+    #: Output cap. Outranks ``LLMModelSpec.max_tokens``.
     max_tokens: Optional[int] = None
 
     #: Iterations of the tool loop before giving up. Clamped to [1, 100].
@@ -125,7 +96,6 @@ class GenerationOptions(BaseModel):
     #: For the last user turn: ``{type, content: bytes, mime_type, uuid?}``.
     media: List[Dict[str, Any]] = Field(default_factory=list)
 
-    #: Stop sequences.
     stop: Optional[List[str]] = None
 
     #: Penalise by prior frequency / presence. Never sent when unset.
@@ -152,7 +122,7 @@ class ToolDef:
     name: str
     description: str
     parameters: Dict[str, Any]
-    #: An MCP server's promised result shape; dropping it broke that promise.
+    #: An MCP server's declared result shape, when it declares one.
     output_schema: Optional[Dict[str, Any]] = None
 
 
@@ -168,10 +138,8 @@ class ToolCall:
 class ToolOutcome:
     """What came back from executing one tool call.
 
-    ``llm_content`` is what the model sees — a string, or a list of content
-    blocks when the tool returned images. ``display`` is the full structured
-    payload the UI renders. They are different on purpose: the model gets a
-    summary, the interface gets everything.
+    ``llm_content`` is what the model sees — a string, or content blocks when
+    the tool returned images. ``display`` is the full payload the UI renders.
     """
     llm_content: Union[str, List[Dict[str, Any]]]
     display: Any
@@ -199,11 +167,8 @@ class Reply:
 
 @dataclass(slots=True)
 class Delta:
-    """One streaming chunk. Slotted because it is allocated per chunk.
-
-    ``reply`` is the running accumulation for *this* turn, not the delta — the
-    engine folds it into the cross-turn transcript.
-    """
+    """One streaming chunk. ``reply`` is the running accumulation for this
+    turn, not the delta."""
     reply: Reply
     done: bool = False
 
@@ -224,11 +189,10 @@ class Turn:
         return replace(self, messages=messages)
 
     def with_tools(self, extra: List[Dict[str, Any]]) -> "Turn":
-        """Grow the tool set mid-turn.
+        """Grow the tool set mid-turn, deduped by name.
 
         A catalogue ``load`` op returns ``_load_tools`` so the model can call
-        newly-relevant tools on *later* iterations of the same turn — browse,
-        then load, then act. Dedup by name.
+        newly-relevant tools on later iterations of the same turn.
         """
         have = {t.get("name") or (t.get("function") or {}).get("name") for t in self.tools}
         additions = [
@@ -239,11 +203,7 @@ class Turn:
 
     @property
     def max_tokens(self) -> Optional[int]:
-        """Caller's cap, else the model's declared default.
-
-        Precedence matters: a declared ``max_tokens`` is a sensible starting
-        point, not a ceiling the caller has to argue with.
-        """
+        """Caller's cap, else the model's declared default."""
         if self.options.max_tokens:
             return self.options.max_tokens
         return getattr(self.spec, "max_tokens", None)

@@ -1,26 +1,8 @@
 """
 flat.py — the Ollama-shaped embeddings wire.
-============================================
 
-  embed_batch(texts, model)
-       │
-       ▼
-  POST {base}/api/embed  {model, input: texts, truncate?}
-       │
-       ▼
-  { embeddings: [ [float, …], … ] }
-       │
-       └─ positional  ─►  vectors, array order IS the input's order
-
-  quirks read here: server_truncate — char_budget_ratio is spent one
-                    level up, in engine.py's truncation budget.
-
-  NOT IN THIS FILE
-    ../base.py    the embed_texts()/embed_single() contract one level up.
-    ../engine.py  Batcher — where char_budget_ratio is actually spent.
-
-  Nothing to sort by, unlike indexed.py — that is the whole difference
-  between the two wires.
+  POST {base}/api/embed ──► {embeddings:[[…]]}, positional
+  quirks: server_truncate
 """
 
 from __future__ import annotations
@@ -38,7 +20,7 @@ logger = logging.getLogger(__name__)
 class FlatEmbedder(Adapter):
     """Ollama-shaped embeddings."""
 
-    timeout = 600.0     # embedding on CPU is slow, and local means no meter running
+    timeout = 600.0     # embedding on CPU is slow
 
     async def embed_batch(self, texts: List[str], model_name: str) -> List[List[float]]:
         payload: dict = {"model": model_name, "input": texts}

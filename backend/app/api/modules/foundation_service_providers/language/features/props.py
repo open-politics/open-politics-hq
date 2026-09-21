@@ -1,25 +1,18 @@
 """
 props.py — feature: ask llama-server about its own launch config.
-=================================================================
 
   PROVIDES = ("server_props", "server_context_length")
 
-  server_props(p)                cached on p._props_cache — needs a
-    GET /props ──► {...}         restart to change, so one read per
-                                  process is enough
+  server_props(p)
+    GET /props ──► {...}         cached on p._props_cache
 
   server_context_length(p)
     server_props(p) ──► first present, positive int of:
       n_ctx │ default_generation_settings.n_ctx │ n_ctx_train
     none present ──► None
 
-  NOT IN THIS FILE
-    ../quirks.py   `fixed_context` said the same thing this feature now
-                   answers directly; graduated here 2026-09-17, deleted.
-
-n_ctx is a launch flag, not a model property: the same GGUF loaded twice
-with different flags reports two different context lengths, so only the
-running server can say — nothing declared ahead of time can know it.
+n_ctx is a launch flag, not a model property: the same GGUF loaded twice with
+different flags reports two different context lengths.
 """
 
 from __future__ import annotations

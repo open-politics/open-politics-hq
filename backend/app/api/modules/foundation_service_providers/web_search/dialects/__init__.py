@@ -1,6 +1,5 @@
 """
 web_search/dialects — which wires exist.
-========================================
 
   answer_engine   tavily    a ranked list plus a synthesized answer
   metasearch      searxng   a ranked list, nothing else

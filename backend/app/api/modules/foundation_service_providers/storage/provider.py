@@ -1,6 +1,5 @@
 """
 storage/provider.py — the Domain itself.
-========================================
 
   base.py     StorageProvider  ─┐
   models.py   StorageQuirks    ─┴──►  Storage = Domain(…)
@@ -22,4 +21,6 @@ Storage = Domain(
     package="app.api.modules.foundation_service_providers.storage",
     system_default="STORAGE_PROVIDER_TYPE",
     quirks_type=StorageQuirks,
+    # Infrastructure: no infospace_id, no credential cascade.
+    per_user=False,
 )

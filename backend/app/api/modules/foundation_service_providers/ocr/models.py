@@ -1,9 +1,5 @@
 """
-ocr/models.py — this domain's data models.
-==========================================
-
-  OcrResult   text · confidence · engine · page_count
-  OcrQuirks   endpoint deviations within a dialect
+ocr/models.py — OcrResult · OcrQuirks.
 """
 
 from __future__ import annotations
@@ -21,12 +17,8 @@ class OcrResult:
 
 @dataclass(frozen=True)
 class OcrQuirks:
-    """Endpoint deviations within an OCR dialect.
-
-    Every field names the endpoint that forced it, so the graduation review in
-    ``MAP.md`` can actually be done.
-    """
-    #: Engine language when a caller passes none. (tesseract — once unreachable.)
+    """Endpoint deviations within an OCR dialect."""
+    #: engine language code when the caller passes none. (tesseract.)
     default_language: str = "eng"
-    #: Seconds to wait. (vision_prompt/ollama — CPU multimodal beats no OCR binary.)
+    #: seconds to wait on the model. (vision_prompt/ollama.)
     timeout: float = 120.0

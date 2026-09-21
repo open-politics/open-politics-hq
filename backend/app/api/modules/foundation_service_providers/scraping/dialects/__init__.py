@@ -1,6 +1,5 @@
 """
 scraping/dialects — which wires exist.
-======================================
 
   article_parser   newspaper4k — a library, not a wire
 """

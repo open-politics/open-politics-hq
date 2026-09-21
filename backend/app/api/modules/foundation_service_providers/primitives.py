@@ -1,8 +1,7 @@
 """
 primitives.py — the vocabulary a declaration is written in.
-===========================================================
 
-  Setting     an env value, read at construction time
+  Setting     a reference to an AppSettings field
   Dialect and Feature each carry .domain: Domain — asserted in __call__
 
   Domain.__call__(dialect, features, quirks, models, …) ──► Binding
@@ -11,8 +10,7 @@ primitives.py — the vocabulary a declaration is written in.
 
   @provider
        one Endpoint (key/name/api_key/base_url/contexts) shared by every
-       Binding on the class; attribute name must equal the domain name,
-       or the AssertionError names the fix
+       Binding on the class; the attribute name must equal the domain name
                     │
                     ▼
        Endpoint + Binding ──► ProviderDescriptor ──► _registry[(cap, key)]
@@ -29,7 +27,6 @@ primitives.py — the vocabulary a declaration is written in.
 from __future__ import annotations
 
 import logging
-import os
 from dataclasses import dataclass, field
 from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type
@@ -41,14 +38,11 @@ from app.api.modules.foundation_service_providers.models import ModelSpec
 logger = logging.getLogger(__name__)
 
 
-# ── Errors & return type ──────────────────────────────────────────────────────
+# Errors and return type
 
 
 class ProviderError(RuntimeError):
-    """Raised by ``resolve()`` for any failure to produce a provider instance.
-
-    The message is user-facing — it should tell a human operator what to fix.
-    """
+    """Any failure to produce a provider instance. The message is user-facing."""
 
 
 class Resolved:
@@ -56,12 +50,8 @@ class Resolved:
 
     Carries the resolved ``model``, ``provider_key`` and ``spec`` so callers can
     feed them back into provider methods (``p.generate(messages,
-    model_name=p.model)``) and read capability facts (``p.spec.supports_tools``)
-    without re-plumbing configuration or making a network call.
-
-    ``hasattr(p, "pull_model")`` works through ``__getattr__`` — that is the
-    question the UI asks instead of ``key == "ollama"``. Reaching for
-    ``p._instance`` is never necessary.
+    model_name=p.model)``) and read capability facts (``p.spec.supports_tools``).
+    ``hasattr(p, "pull_model")`` works through ``__getattr__``.
     """
     __slots__ = ("_instance", "model", "provider_key", "spec")
 
@@ -79,39 +69,21 @@ class Resolved:
         return f"Resolved(provider_key={self.provider_key!r}, model={self.model!r})"
 
 
-# ── Declaration vocabulary ────────────────────────────────────────────────────
+# Declaration vocabulary
 
 
 @dataclass(frozen=True)
 class Setting:
-    """Reference to a deployment setting, read at construction time.
+    """An ``AppSettings`` field, plus what a key picker shows.
 
-    ``label`` and ``url`` exist so an API-key setting knows its own human name
-    and where a user gets one. That absorbs the hand-maintained
-    ``_PROVIDER_DISPLAY`` table that used to live in ``routes/utils.py``.
+    ``attr`` names a declared field; that field's default is the only default.
     """
     attr: str
-    default: Any = None
     label: Optional[str] = None
     url: Optional[str] = None
 
     def read(self, settings: AppSettings) -> Any:
-        """Declared field first, then the raw environment, then the default.
-
-        The environment fallback is what makes a catalog entry self-sufficient.
-        ``AppSettings`` is ``extra="ignore"``, so before this a ``Setting`` whose
-        attribute had no hand-written ``Field`` returned ``None`` silently and the
-        failure surfaced much later as "no credentials for x/y" — a message that
-        blames the operator for a developer's omission. Compose injects
-        ``env_file`` into the container environment, so ``os.environ`` sees
-        everything ``.env`` holds whether or not ``AppSettings`` declares it.
-        Declared fields still win, so nothing existing changes behaviour.
-        """
-        return (
-            getattr(settings, self.attr, None)
-            or os.environ.get(self.attr)
-            or self.default
-        )
+        return getattr(settings, self.attr, None)
 
 
 @dataclass(frozen=True)
@@ -171,18 +143,19 @@ class Domain:
     mutually-exclusive slots. A wrong-shape binding is a ``TypeError`` at
     import; a wrong-domain dialect is an ``AssertionError`` at import.
 
-    ``engine`` names the loop that sits *above* the wire, where one exists:
-    language has the turn loop, embedding has the batch loop. The other five
-    domains have no engine — dialect encode → send → decode is the whole story.
-    It lives here and never on the declaration, so a provider always says
-    ``language = Language(...)``, never ``engine = ...``.
+    ``engine`` names the loop that sits above the wire, where one exists:
+    language has the turn loop, embedding has the batch loop. It lives here and
+    never on the declaration, so a provider always says ``language = Language(...)``.
     """
     name: str
     protocol: Type
     package: str                            # dotted path of this domain's package
     engine: Optional[str] = None            # "module.ClassName" under the package
-    system_default: Optional[str] = None    # env var holding the deployment default key
+    system_default: Optional[str] = None    # settings field holding the deployment default key
     quirks_type: Optional[Type] = None      # this domain's Quirks dataclass
+    #: Resolution looks up per-infospace credentials, so resolve() demands an
+    #: infospace_id. False for pure infrastructure — storage, scraping.
+    per_user: bool = True
 
     # Filled by __post_init__/.dialect()/.feature() — a Dialect needs its Domain first.
     dialects: SimpleNamespace = field(default=None, init=False, compare=False, repr=False)
@@ -283,10 +256,6 @@ class ProviderDescriptor:
         return self.binding.domain
 
     @property
-    def protocol(self) -> Type:
-        return self.binding.domain.protocol
-
-    @property
     def provider_key(self) -> str:
         return self.endpoint.key
 
@@ -307,18 +276,11 @@ class ProviderDescriptor:
         return self.endpoint.is_local
 
     @property
-    def contexts(self) -> Set[str]:
-        return set(self.endpoint.contexts)
-
-    @property
     def path(self) -> Optional[str]:
         """Where this endpoint's requests go — its override, else the dialect's.
 
-        A dialect is a packaging, not a URL, so two endpoints can share one
-        packaging and still answer on different paths. They did, and the shared
-        default silently won: Ollama speaks the ``turns`` packaging but serves it
-        at ``/api/chat``, while the dialect default ``/chat/completions`` is
-        Mistral's. Every Ollama request went to a path that does not exist.
+        A dialect is a packaging, not a URL: Ollama speaks the ``turns`` packaging
+        but serves it at ``/api/chat``, not the dialect default ``/chat/completions``.
         """
         return self.binding.path or self.binding.dialect.path
 
@@ -331,35 +293,26 @@ class ProviderDescriptor:
         return self.binding.features
 
     def get_model(self, name: str) -> Optional[ModelSpec]:
-        """A *declared* spec by name, or None. Absence is not an error — declared
-        models are curated defaults, and an undeclared name still resolves."""
+        """A declared spec by name, or None. Declared models are curated defaults,
+        not an allowlist — an undeclared name still resolves."""
         return next((m for m in self.binding.models if m.name == name), None)
 
 
-# ── Registry state ────────────────────────────────────────────────────────────
+# Registry state
 
 _domains: Dict[str, Domain] = {}
 _registry: Dict[Tuple[str, str], ProviderDescriptor] = {}
 
-
-class _Capabilities(dict):
-    """``{domain name: protocol}``, derived from the registered Domains.
-
-    Survives as a public name (``routes/providers.py``, ``core/dispatch.py``,
-    ``core/tasks.py`` and several internal call sites read it) but is no longer
-    a hand-maintained table — it is a view over what the domain packages
-    actually registered.
-    """
-    def __missing__(self, key):
-        raise KeyError(key)
-
-    def _refresh(self):
-        self.clear()
-        self.update({name: d.protocol for name, d in _domains.items()})
-        return self
+#: {domain name: protocol}. Filled by _refresh_capabilities() once the
+#: declarations are loaded, so it is a view over what registered rather than a
+#: hand-maintained table.
+CAPABILITIES: Dict[str, Type] = {}
 
 
-CAPABILITIES = _Capabilities()
+def _refresh_capabilities() -> Dict[str, Type]:
+    CAPABILITIES.clear()
+    CAPABILITIES.update({name: d.protocol for name, d in _domains.items()})
+    return CAPABILITIES
 
 
 def _register(descriptor: ProviderDescriptor) -> None:
@@ -370,31 +323,24 @@ def _register(descriptor: ProviderDescriptor) -> None:
 
 
 def descriptor_for(capability: str, provider_key: str) -> Optional[ProviderDescriptor]:
-    """Look up one descriptor. Public — ``selection.py`` uses it for save-time checks."""
+    """One descriptor, or None. ``user_config.py`` uses it for save-time checks."""
     return _registry.get((capability, provider_key.lower()))
 
 
 def list_providers(capability: str) -> List[Tuple[str, ProviderDescriptor]]:
-    """All registered providers for a domain. Public — used by discovery UIs."""
+    """All registered providers for a domain. Used by discovery UIs."""
     return [(pk, desc) for (cap, pk), desc in _registry.items() if cap == capability]
 
 
 def capabilities_for(provider_key: str) -> Set[str]:
     """Every domain this endpoint serves.
 
-    ``openai`` serves language *and* embedding; ``ollama`` serves language,
-    embedding *and* ocr. Saving one credential therefore has to clear structural
-    blocks across several domains, which is what ``routes/users.py`` uses this
-    for. It previously reached into ``_registry`` directly from ``core/tasks``.
+    ``openai`` serves language and embedding; ``ollama`` serves language,
+    embedding and ocr. Saving one credential therefore clears structural blocks
+    across several domains — ``core/tasks.py`` uses this for that.
     """
     key = provider_key.lower()
     return {cap for (cap, pk) in _registry if pk == key}
-
-
-def get_model_spec(capability: str, provider_key: str, model_name: str) -> Optional[ModelSpec]:
-    """A declared model spec (no credentials, no I/O). None if not declared."""
-    desc = descriptor_for(capability, provider_key)
-    return desc.get_model(model_name) if desc else None
 
 
 def _system_default_provider_key(capability: str, settings: AppSettings) -> Optional[str]:
@@ -405,16 +351,14 @@ def _system_default_provider_key(capability: str, settings: AppSettings) -> Opti
     return val.lower() if val else None
 
 
-# ── @provider ─────────────────────────────────────────────────────────────────
+# @provider
 
 
 def provider(cls):
     """Class decorator: read every ``Binding`` off the declaration and register it.
 
-    The attribute name must equal the bound domain's name. That assert is what
-    makes "there are only a few acceptable keys" structural rather than a list
-    somewhere — ``langauge = Language(...)`` fails at import with the fix in the
-    message.
+    The attribute name must equal the bound domain's name, so ``langauge =
+    Language(...)`` fails at import with the fix in the message.
     """
     key = cls.key
     api_key: Optional[Setting] = getattr(cls, "api_key", None)

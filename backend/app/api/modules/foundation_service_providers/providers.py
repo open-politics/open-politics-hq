@@ -1,6 +1,5 @@
 """
 providers.py — every provider declaration. Nothing here is code.
-================================================================
 
   @provider
   class Anthropic:
@@ -21,13 +20,8 @@ providers.py — every provider declaration. Nothing here is code.
   the attribute name (``language =``) must equal the bound domain's
   name, or the AssertionError names the fix.
 
-  TWO THINGS THE FILE PROVES
-    LlamaCpp     blocks (Anthropic's packaging) + models_v1 (OpenAI's
-                 listing) — dialect and features are independent, so a
-                 new language provider is ~26 lines, not ~900.
-    Nominatim×2  one dialect, two endpoints, differing in a URL, a rate
-                 limit and a User-Agent — three GeocodingQuirks fields
-                 where two 200-line files used to be.
+  A Setting names an AppSettings field and nothing more. That field's own
+  declaration carries the default, here and everywhere.
 
   NOT IN THIS FILE
     primitives.py  the vocabulary, Domain.__call__, @provider, _registry.
@@ -46,11 +40,11 @@ from app.api.modules.foundation_service_providers.language import (
 )
 from app.api.modules.foundation_service_providers.ocr import Ocr, OcrQuirks
 from app.api.modules.foundation_service_providers.scraping import Scraping, ScrapingQuirks
-from app.api.modules.foundation_service_providers.storage import Storage, StorageQuirks
+from app.api.modules.foundation_service_providers.storage import Storage
 from app.api.modules.foundation_service_providers.web_search import WebSearch, WebSearchQuirks
 
 
-# ── Language ──────────────────────────────────────────────────────────────────
+# Language
 
 
 @provider
@@ -60,7 +54,7 @@ class Anthropic:
     description = "Claude language models from Anthropic."
     api_key = Setting("ANTHROPIC_API_KEY", label="Anthropic API Key",
                       url="https://console.anthropic.com/settings/keys")
-    base_url = Setting("ANTHROPIC_BASE_URL", default="https://api.anthropic.com")
+    base_url = Setting("ANTHROPIC_BASE_URL")
     contexts = {"cloud"}
 
     language = Language(
@@ -95,19 +89,17 @@ class LlamaCpp:
     key = "llamacpp"
     name = "llama.cpp"
     description = "Local GGUF inference via llama-server."
-    base_url = Setting("LLAMACPP_BASE_URL", default="http://host.docker.internal:4000")
+    base_url = Setting("LLAMACPP_BASE_URL")
     contexts = {"local", "self_hosted"}
 
     language = Language(
         dialect=Language.dialects.blocks,       # Anthropic's packaging…
         features=[Language.features.models_v1,  # …OpenAI's model listing
                   Language.features.props],     # …and its own /props
-        # Probed live 2026-09-17: /v1/messages emits typed thinking + tool_use.
         quirks=BlocksQuirks(
             auth_header="bearer",               # llama-server's --api-key reads Bearer
             placeholder_api_key="no-key",       # keyless, but a client wants a string
-            # A GGUF reasons because its chat template does, not because we asked;
-            # silence leaves it on and it can eat the whole output cap.
+            # A GGUF reasons because its chat template does, not because we asked.
             no_thinking_template_kwarg="enable_thinking",
         ),
     )
@@ -120,7 +112,7 @@ class OpenAI:
     description = "GPT models and text embeddings from OpenAI."
     api_key = Setting("OPENAI_API_KEY", label="OpenAI API Key",
                       url="https://platform.openai.com/api-keys")
-    base_url = Setting("OPENAI_BASE_URL", default="https://api.openai.com/v1")
+    base_url = Setting("OPENAI_BASE_URL")
     contexts = {"cloud"}
 
     language = Language(
@@ -132,10 +124,9 @@ class OpenAI:
             store=False,
             strict_tools=True,
         ),
-        extra=lambda s, models: {
-            # Unset ⇒ the `mcp` feature declines and our own executor runs tools.
-            "mcp_server_url": getattr(s, "MCP_PUBLIC_URL", None),
-        },
+        # No connector for the tool's label ⇒ the `mcp` feature declines and
+        # our own executor runs the tool instead.
+        extra=lambda s, models: {"mcp_connectors": s.MCP_CONNECTOR_URLS},
         models=[
             LLMModelSpec("gpt-5.2", "Best for coding and agentic tasks",
                          supports_tools=True, supports_multimodal=True,
@@ -177,7 +168,7 @@ class Mistral:
     description = "Mistral and Codestral language models. EU-hosted."
     api_key = Setting("MISTRAL_API_KEY", label="Mistral API Key",
                       url="https://console.mistral.ai/api-keys/")
-    base_url = Setting("MISTRAL_BASE_URL", default="https://api.mistral.ai/v1")
+    base_url = Setting("MISTRAL_BASE_URL")
     contexts = {"cloud"}
 
     language = Language(
@@ -198,14 +189,14 @@ class Ollama:
     key = "ollama"
     name = "Ollama"
     description = "Run open-source models locally via Ollama. Language, embedding and OCR."
-    base_url = Setting("OLLAMA_BASE_URL", default="http://host.docker.internal:11434")
+    base_url = Setting("OLLAMA_BASE_URL")
     contexts = {"local", "self_hosted"}
 
     language = Language(
         dialect=Language.dialects.turns,        # same packaging as Mistral…
         path="/api/chat",                       # …at a different address
         features=[Language.features.models_ollama, Language.features.model_pull],
-        quirks=TurnsQuirks(                     # …and seven flags are the difference
+        quirks=TurnsQuirks(
             tool_args_encoding="object",        # Mistral sends a JSON string
             tool_result_needs_call_id=False,    # no such field on this endpoint
             image_placement="message_array",    # message-level `images: [b64]`
@@ -227,11 +218,11 @@ class Ollama:
     ocr = Ocr(
         dialect=Ocr.dialects.vision_prompt,
         model_required=False,
-        extra=lambda s, models: {"model": getattr(s, "OLLAMA_OCR_MODEL", "llava")},
+        extra=lambda s, models: {"model": s.OLLAMA_OCR_MODEL},
     )
 
 
-# ── Embedding ─────────────────────────────────────────────────────────────────
+# Embedding
 
 
 @provider
@@ -241,7 +232,7 @@ class Jina:
     description = "High-quality multilingual text embeddings."
     api_key = Setting("JINA_API_KEY", label="Jina API Key",
                       url="https://jina.ai/embeddings/#apiform")
-    base_url = Setting("JINA_BASE_URL", default="https://api.jina.ai/v1/embeddings")
+    base_url = Setting("JINA_BASE_URL")
     contexts = {"cloud"}
 
     embedding = Embedding(
@@ -267,7 +258,7 @@ class Voyage:
     description = "Specialised embeddings for code, law and finance."
     api_key = Setting("VOYAGE_API_KEY", label="Voyage API Key",
                       url="https://dash.voyageai.com/")
-    base_url = Setting("VOYAGE_BASE_URL", default="https://api.voyageai.com/v1")
+    base_url = Setting("VOYAGE_BASE_URL")
     contexts = {"cloud"}
 
     embedding = Embedding(
@@ -288,7 +279,7 @@ class Voyage:
     )
 
 
-# ── OCR ───────────────────────────────────────────────────────────────────────
+# OCR
 
 
 @provider
@@ -302,11 +293,11 @@ class Tesseract:
         dialect=Ocr.dialects.local_engine,
         model_required=False,
         # Engine language; a caller still overrides per document via `language_hint`.
-        quirks=OcrQuirks(default_language=Setting("OCR_DEFAULT_LANGUAGE", default="eng")),
+        quirks=OcrQuirks(default_language=Setting("OCR_DEFAULT_LANGUAGE")),
     )
 
 
-# ── Geocoding ─────────────────────────────────────────────────────────────────
+# Geocoding
 
 
 @provider
@@ -314,13 +305,13 @@ class NominatimLocal:
     key = "nominatim_local"
     name = "Local Nominatim"
     description = "Self-hosted Nominatim geocoding instance."
-    base_url = Setting("NOMINATIM_BASE_URL", default="http://nominatim:8080")
+    base_url = Setting("NOMINATIM_BASE_URL")
     contexts = {"local", "self_hosted"}
 
     geocoding = Geocoding(
         dialect=Geocoding.dialects.osm,
         model_required=False,
-        # Self-hosted: real boundary geometry, no rate limit, no User-Agent policy.
+        # Self-hosted: no rate limit, no User-Agent policy.
         quirks=GeocodingQuirks(polygons=True),
     )
 
@@ -330,7 +321,7 @@ class NominatimAPI:
     key = "nominatim_api"
     name = "Nominatim Public API"
     description = "OpenStreetMap's free public geocoding API (rate-limited)."
-    base_url = Setting("NOMINATIM_API_URL", default="https://nominatim.openstreetmap.org")
+    base_url = Setting("NOMINATIM_API_URL")
     contexts = {"cloud"}
 
     geocoding = Geocoding(
@@ -339,9 +330,8 @@ class NominatimAPI:
         quirks=GeocodingQuirks(
             polygons=True,
             rate_limit_seconds=1.0,         # the public usage policy
-            # OSM rejects a request without one, and attributes traffic by it,
-            # so the operator's own identity has to reach the wire. stack.user_agent.
-            user_agent=Setting("GEOCODING_USER_AGENT", default="OpenPoliticsHQ/1.0"),
+            # nominatim's public API rejects a request that sends none
+            user_agent=Setting("GEOCODING_USER_AGENT"),
         ),
     )
 
@@ -353,8 +343,7 @@ class Mapbox:
     description = "Commercial geocoding API from Mapbox."
     api_key = Setting("MAPBOX_ACCESS_TOKEN", label="Mapbox Access Token",
                       url="https://account.mapbox.com/access-tokens/")
-    base_url = Setting("MAPBOX_BASE_URL",
-                       default="https://api.mapbox.com/geocoding/v5/mapbox.places")
+    base_url = Setting("MAPBOX_BASE_URL")
     contexts = {"cloud"}
 
     geocoding = Geocoding(
@@ -365,7 +354,7 @@ class Mapbox:
     )
 
 
-# ── Storage ───────────────────────────────────────────────────────────────────
+# Storage
 
 
 @provider
@@ -373,15 +362,15 @@ class S3:
     key = "s3"
     name = "Object storage (S3)"
     description = "Any S3-compatible bucket — Garage, AWS, Hetzner, R2, B2, Wasabi."
-    # Both: the same protocol whether the bucket is a container on this machine
-    # or somebody else's region. Which one it is lives in my-hq.yml, not here.
+    # The same protocol whether the bucket is a container on this machine or
+    # somebody else's region. Which one it is lives in HQ.yml, not here.
     contexts = {"self_hosted", "cloud"}
 
     storage = Storage(
         dialect=Storage.dialects.s3,
         model_required=False,
         # Six values, none named like the standard api_key/base_url pair.
-        # region matters: Garage rejects a request without one.
+        # Garage rejects a request that sends no region.
         extra=lambda s, models: {
             "endpoint_url": s.S3_ENDPOINT,
             "access_key": s.S3_ACCESS_KEY_ID,
@@ -407,7 +396,7 @@ class LocalFS:
     )
 
 
-# ── Scraping ──────────────────────────────────────────────────────────────────
+# Scraping
 
 
 @provider
@@ -430,7 +419,7 @@ class Newspaper4k:
     )
 
 
-# ── Web search ────────────────────────────────────────────────────────────────
+# Web search
 
 
 @provider
@@ -440,7 +429,7 @@ class Tavily:
     description = "AI-optimised web search with synthesized answers."
     api_key = Setting("TAVILY_API_KEY", label="Tavily API Key",
                       url="https://tavily.com/#api")
-    base_url = Setting("TAVILY_BASE_URL", default="https://api.tavily.com")
+    base_url = Setting("TAVILY_BASE_URL")
     contexts = {"cloud"}
 
     web_search = WebSearch(
@@ -455,7 +444,7 @@ class SearXNG:
     key = "searxng"
     name = "SearXNG"
     description = "Self-hosted metasearch. No API key, no outbound budget."
-    base_url = Setting("SEARXNG_BASE_URL", default="http://searxng:8080")
+    base_url = Setting("SEARXNG_BASE_URL")
     contexts = {"local", "self_hosted"}
 
     web_search = WebSearch(

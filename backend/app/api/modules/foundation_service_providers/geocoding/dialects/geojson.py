@@ -1,30 +1,7 @@
 """
 geojson.py — Mapbox's FeatureCollection wire.
-=============================================
 
-  geocode(location)
-       │
-       ▼
-  GET {base}/{url-encoded location}.json?access_token=…
-       │
-       ▼
-  { features: [ {center, bbox, place_type, place_name, geometry} ] }
-       │
-       └─ top = features[0]
-             center                      ─►  coordinates ([lon,lat])
-             place_type[0], WIRE_TYPES    ─►  location_type
-             bbox [minLon,minLat,maxLon,maxLat], reordered
-                                         ─►  [south, north, west, east]
-             geometry                     ─►  geometry (point only)
-
-  NOT IN THIS FILE
-    ../base.py  the six-key return contract this fills in.
-    osm.py      same contract, different packaging: query in the
-                path, a FeatureCollection, GeoJSON's own bbox order.
-
-  401 ─► bad token. 429 ─► rate limit. Both logged distinctly before
-  the generic HTTP-error fallback. Point geometry only — real
-  boundaries need a separate paid API.
+  GET {base}/{location}.json ──► features[0] ──► the domain's six keys
 """
 
 from __future__ import annotations
@@ -65,7 +42,7 @@ class GeoJsonGeocoder(Adapter):
         if language:
             params["language"] = language
 
-        # Query is in the path, so an unescaped space or slash 404s, not misses.
+        # the query goes in the path: an unescaped space or slash 404s
         url = self.url(f"/{quote(location.strip(), safe='')}.json")
 
         try:
@@ -91,7 +68,7 @@ class GeoJsonGeocoder(Adapter):
         top = features[0]
         place_types = top.get("place_type") or []
 
-        # Mapbox [min_lon,min_lat,max_lon,max_lat] → contract [S,N,W,E]. Reorder only.
+        # mapbox bbox is [minLon, minLat, maxLon, maxLat]; the contract wants [S, N, W, E]
         bbox = top.get("bbox")
         normalised = None
         area = None
@@ -105,12 +82,12 @@ class GeoJsonGeocoder(Adapter):
             "bbox": normalised,
             "area": area,
             "display_name": top.get("place_name", location),
-            # Point only; real boundaries need a separate paid API, hence no `polygons`.
+            # mapbox returns a point, never boundary geometry
             "geometry": top.get("geometry"),
         }
 
 
-# Drift guard: a wire may only map into the domain's vocabulary.
+# drift guard: a wire may only map into the domain's vocabulary
 assert set(WIRE_TYPES.values()) <= PLACE_TYPES, (
     f"{sorted(set(WIRE_TYPES.values()) - PLACE_TYPES)} is not in geocoding's PLACE_TYPES"
 )

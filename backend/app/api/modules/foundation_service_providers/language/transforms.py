@@ -1,6 +1,5 @@
 """
 language/transforms.py — shared shaping, called by every dialect.
-=================================================================
 
   TOOL RESULTS
     tool_result(result, name)  ──►  ToolOutcome (llm_content · display ·
@@ -20,23 +19,14 @@ language/transforms.py — shared shaping, called by every dialect.
 
   DECODE SALVAGE                 (only where a quirk says the wire needs it —
     salvage_thinking(text)        see TurnsQuirks.thinking_tags)
-      ──► (thinking, clean_text); handles both <think>…</think> and a bare
-          trailing </think> some models emit with no opening tag
+      ──► (thinking, clean_text)
     salvage_tool_calls(text)  ──►  [ToolCall, …] recovered from prose JSON
 
   TOOL DEFS / USAGE / TRANSCRIPT
     tool_parts(tool)       ──►  ToolDef, from an MCP / OpenAI-nested / bare
                                  tool-dict shape, or None to skip it
     usage_from(raw, keys)  ──►  wire usage dict → ours, via a key table
-    join_transcript(prefix, current)  ──►  prefix + current, \n\n-joined
-
-  NOT IN THIS FILE
-    dialects/*.py   the one caller of each of these per wire.
-    engine.py       join_transcript's other caller — the Ledger.
-
-No speculative helpers: a step lands here only once a SECOND dialect actually
-reuses it. Four old copies of the tool-result split had drifted; only one
-supported image-returning tools, so three endpoints silently broke on them.
+    join_transcript(prefix, current)  ──►  the two, blank-line joined
 """
 
 from __future__ import annotations
@@ -70,18 +60,9 @@ SCHEMA_BRANCH_KEYS = ("items", "not", "if", "then", "else")
 def tool_result(result: Any, tool_name: str) -> ToolOutcome:
     """Split a tool's return into what the model sees and what the UI renders.
 
-    A tool may return:
-      * ``{"content": str, "structured_content": ...}`` — a summary for the
-        model, full data for the interface. The common case.
-      * ``{"content_blocks": [...]}`` — typed blocks, which is how a tool
-        returns an **image**. Only one of the four old copies understood this.
-      * ``{"error": ...}`` — a failure the model should see and can react to.
-      * anything else — serialized to both.
-
-    Two sentinels are recognised because the engine acts on them:
-    ``_terminate_loop`` ends the loop cleanly (otherwise ``tool_choice="any"``
-    forces another call and the loop only stops at the iteration cap), and
-    ``_load_tools`` grows the tool set mid-turn.
+    Understands ``{content, structured_content}``, ``{content_blocks}`` (how a
+    tool returns an image), ``{error}``, and the ``_terminate_loop`` /
+    ``_load_tools`` sentinels the engine acts on.
     """
     if hasattr(result, "model_dump"):
         result = result.model_dump()
@@ -97,7 +78,6 @@ def tool_result(result: Any, tool_name: str) -> ToolOutcome:
     load_tools = result.get("_load_tools") or []
 
     if error:
-        # Verbatim, on replay too, so the model never retries a known failure.
         return ToolOutcome(
             llm_content=json.dumps(result), display=result,
             error=str(error), terminate=terminate, load_tools=load_tools,
@@ -115,7 +95,6 @@ def tool_result(result: Any, tool_name: str) -> ToolOutcome:
 
     content = result.get("content")
     if not content:
-        # No summary: sending the whole payload would blow the context.
         content = f"[Tool {tool_name} executed - no summary available]"
 
     return ToolOutcome(
@@ -129,21 +108,11 @@ def tool_result(result: Any, tool_name: str) -> ToolOutcome:
 
 
 def normalize_media(media: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Validate and base64-encode image inputs. Drops what cannot be sent.
+    """Validate and base64-encode image inputs, dropping what cannot be sent.
 
-    Returns entries of ``{mime_type, data (base64 str), raw_bytes}``.
-
-    Three checks, all salvaged from the one provider that had them:
-
-    1. **Type allowlist** — anything else is not an image we can send.
-    2. **Magic bytes must match the claimed MIME.** Upstream detectors fall back
-       to ``image/png`` when the content is really a PDF or another container;
-       sending those produces a generic "could not process image" 400 that is
-       miserable to diagnose. Reject at this boundary instead of trusting the
-       label.
-    3. **Size cap.** Skip an oversized image rather than failing the whole
-       request — the text still reaches the model, and the skip is logged so the
-       operator can fix it upstream (usually by lowering PDF render DPI).
+    Returns ``{mime_type, data (base64 str), raw_bytes}``. Magic bytes must
+    match the claimed MIME: upstream detectors label a PDF ``image/png`` and
+    vendors answer that with an opaque "could not process image" 400.
     """
     out: List[Dict[str, Any]] = []
 
@@ -198,11 +167,9 @@ def normalize_media(media: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def shape_schema(schema: Dict[str, Any], *, strict: bool = False) -> Dict[str, Any]:
     """Prepare a JSON schema for a structured-output request.
 
-    ``strict`` mode (OpenAI) demands ``additionalProperties: false`` on every
-    object and *every* property listed in ``required``, and rejects ``default``.
-    Other endpoints accept the schema as authored. Recursion covers ``items``,
-    ``$defs``, the union keywords and the conditional keywords, because a nested
-    object that misses the treatment fails the whole request.
+    ``strict`` mode (openai) demands ``additionalProperties: false`` on every
+    object and every property listed in ``required``, and rejects ``default``;
+    a nested schema that misses the treatment fails the whole request.
     """
     if not isinstance(schema, dict):
         return schema
@@ -247,12 +214,9 @@ _TOOLCALL_JSON = re.compile(r'\{[^{}]*"function"[^{}]*\}')
 def salvage_thinking(content: str) -> Tuple[Optional[str], str]:
     """Pull inline ``<think>`` reasoning out of a content stream.
 
-    Returns ``(thinking, clean_content)``.
-
-    Handles the Qwen shape as well as the complete one: some models bake the
-    *opening* tag into their chat template and emit only ``</think>``, so
-    everything before that marker is the reasoning. Treating that as content
-    leaks a model's scratchpad into the answer.
+    Returns ``(thinking, clean_content)``. Some models bake the opening tag
+    into their chat template and emit only ``</think>``, so everything before
+    that marker is reasoning.
     """
     matches = _THINK_BLOCK.findall(content)
     if matches:
@@ -269,9 +233,8 @@ def salvage_thinking(content: str) -> Tuple[Optional[str], str]:
 def salvage_tool_calls(content: str) -> List[ToolCall]:
     """Recover tool calls a model emitted as prose instead of structured output.
 
-    Only used where ``native_tool_parsing`` is false. Small local models
-    routinely describe the call in text rather than using the grammar, and
-    losing those turns the loop into a no-op.
+    Only used where ``native_tool_parsing`` is false: small local models
+    routinely describe the call in text rather than using the grammar.
     """
     calls: List[ToolCall] = []
     for i, match in enumerate(_TOOLCALL_JSON.findall(content or "")):
@@ -297,10 +260,8 @@ def salvage_tool_calls(content: str) -> List[ToolCall]:
 def join_transcript(prefix: str, current: str) -> str:
     """Join completed-iteration narration with the current turn's text.
 
-    ``content`` is cumulative on the wire to the frontend, which *assigns* it on
-    every chunk rather than appending. Without carrying the prefix, a later
-    tool-loop iteration's text overwrites everything the model said before it
-    and the message appears to vanish.
+    ``content`` is cumulative on the wire to the frontend, which assigns it on
+    every chunk rather than appending.
     """
     if prefix and current:
         return f"{prefix}\n\n{current}"
@@ -311,12 +272,8 @@ def join_transcript(prefix: str, current: str) -> str:
 
 
 def tool_parts(tool: Dict[str, Any]) -> Optional[ToolDef]:
-    """Any tool-dict shape → one ToolDef, or None to skip it.
-
-    Callers hand us three shapes interchangeably — MCP, OpenAI-nested and bare.
-    ``output_schema`` is optional and rides along: the MCP client populates it
-    whenever a server declares one, and dropping it silently stripped that
-    contract before it reached the endpoint.
+    """Any tool-dict shape — MCP, OpenAI-nested or bare — → one ToolDef, or
+    None to skip it. ``output_schema`` rides along when the MCP client set one.
     """
     if tool.get("type") == "function" and isinstance(tool.get("function"), dict):
         src = tool["function"]

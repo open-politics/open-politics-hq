@@ -1,6 +1,5 @@
 """
 scraping — a URL in, structured article content out.
-====================================================
 
   base.py      the contract         ScrapingProvider
   models.py    the data             ScrapingQuirks
@@ -14,7 +13,7 @@ from app.api.modules.foundation_service_providers.scraping.models import (
 )
 from app.api.modules.foundation_service_providers.scraping.provider import Scraping
 
-# Registers the dialects. Must follow the Domain it registers onto.
+# Must follow the Domain it registers the dialects onto.
 from app.api.modules.foundation_service_providers.scraping import dialects  # noqa: F401
 
 

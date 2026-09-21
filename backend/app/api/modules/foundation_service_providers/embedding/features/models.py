@@ -1,20 +1,5 @@
 """
-embedding/features/models.py — list_models, from the endpoint itself.
-=====================================================================
-
-  GET /api/tags  ──►  every pulled model (generative AND embedding)
-                    │
-                    ▼  for each: probe_model(name)
-             not is_embedding  ─►  dropped (most pulled models are)
-                 is_embedding  ─►  EmbeddingModelSpec(dim, max_seq_len)
-
-  registry.list_models()  merges this OVER the curated declared specs,
-                          so a picker ranks recommended models first.
-
-  NOT IN THIS FILE
-    probe.py     probe_model — the per-model metadata this feature calls.
-    provider.py  Embedding.feature("list_models", module="models") —
-                 the registration binding this name to the surface.
+embedding/features/models.py — list_models, from the endpoint's own model list.
 """
 
 from __future__ import annotations
@@ -32,9 +17,8 @@ PROVIDES = ("list_models",)
 async def list_models(p) -> List[EmbeddingModelSpec]:
     """Embedding models the endpoint reports right now.
 
-    Non-embedding models are filtered out: ``/api/tags`` lists every pulled
-    model, most of which are generative, and offering those in an embedding
-    picker produces a confusing failure later rather than an honest absence now.
+    ``/api/tags`` lists every pulled model, so each one is probed and the
+    non-embedding ones dropped.
     """
     try:
         response = await p.client.get(p.url("/api/tags"))

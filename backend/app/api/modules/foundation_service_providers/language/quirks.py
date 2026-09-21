@@ -1,35 +1,13 @@
 """
-quirks.py — where an endpoint deviates INSIDE its dialect.
-==========================================================
+quirks.py — where an endpoint deviates inside its dialect.
 
-  A quirk is typed by the DIALECT that reads it, never by the domain.
-  One a dialect cannot read is a TypeError at import, not a silent no-op.
+  LanguageQuirks          read by every dialect
+  ├── BlocksQuirks        blocks   · anthropic · llamacpp
+  ├── TurnsQuirks         turns    · mistral   · ollama
+  └── ItemsQuirks         items    · openai
 
-    LanguageQuirks          read by every dialect
-    ├── BlocksQuirks        blocks   · anthropic · llamacpp
-    ├── TurnsQuirks         turns    · mistral   · ollama
-    └── ItemsQuirks         items    · openai
-
-  WHY SCOPED                        THREE EXITS — it stages, never accumulates
-  ──────────                        ──────────────────────────────────────────
-  One flat class let llamacpp         → feature      it gates an API surface
-  declare thinking_tags and           → dialect step a cluster co-occurs and
-  native_tool_parsing against           describes a wire shape
-  `blocks`, which reads neither.      → deleted      its one endpoint is gone
-  Declared, accepted, inert — and
-  only a cold read found it.        REVIEW TRIGGER
-                                      a NEW endpoint needs a flag that already
-  NAMING                              exists. That is the first real evidence
-  `supports_*` is reserved for        of a pattern.
-  MODEL capability on LLMModelSpec.
-  Nothing here uses it, so the two
-  vocabularies never read as one.
-
-Every field names the endpoint that forced it: provenance is what makes the
-graduation review possible. Three fields were deleted rather than scoped —
-`stream_options` (no setter, no reader), `fixed_context` (redundant with the
-`props` feature, its own graduation candidate) and `base_url_has_version`
-(derivable from the base URL, and dead in both directions).
+A quirk is typed by the dialect that reads it. `supports_*` belongs to model
+capability on LLMModelSpec and is never used here.
 """
 
 from __future__ import annotations
@@ -59,23 +37,8 @@ class BlocksQuirks(LanguageQuirks):
     #: Placeholder for a keyless server whose client wants a string. (llamacpp.)
     placeholder_api_key: Optional[str] = None
 
-    #: Template kwarg that turns the model's OWN reasoning off. (llamacpp.)
-    #:
-    #: On this wire `thinking` is opt-IN — Anthropic reasons only when the
-    #: request asks it to, so "caller wants no thinking" is expressed by sending
-    #: nothing. A GGUF served by llama-server reasons because its *chat template*
-    #: does, and silence leaves that on. There is no way to say "off" through the
-    #: Anthropic vocabulary, so llama-server exposes `chat_template_kwargs`.
-    #:
-    #: Measured on Ornith-1.5-35B: reasoning ran to the whole 8192-token output
-    #: cap before emitting any tool call, on every turn of the annotation tool
-    #: loop. The turn stopped on `max_tokens` with no call in it, which the loop
-    #: correctly reads as "the model chose not to call a tool" — so a forced-tool
-    #: turn silently produced nothing. With this set, the same document reaches
-    #: `done` in one turn and ~25% fewer output tokens.
-    #:
-    #: Only consulted when the caller asked for thinking OFF; a caller that wants
-    #: reasoning gets it, and an endpoint that does not declare this is untouched.
+    #: llama-server `chat_template_kwargs` key turning the GGUF's own reasoning
+    #: off — this wire has no other way to say "do not reason". (llamacpp.)
     no_thinking_template_kwarg: Optional[str] = None
 
 

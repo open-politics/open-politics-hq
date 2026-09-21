@@ -1,15 +1,10 @@
 """
-metasearch.py — the SearXNG wire.
-=================================
+metasearch.py — the SearXNG wire. Keyless and self-hostable.
 
   query ──► GET {base}/search ──► { results[] }        (nothing else)
                                          │
                                          └─ sliced to `limit` client-side —
                                             no reliable server-side cap
-
-Keyless and self-hostable: a deployment with no outbound API budget still
-gets working web search. Note published_date reads the wire's camelCase
-publishedDate.
 """
 
 from __future__ import annotations
@@ -55,7 +50,7 @@ class MetasearchSearch(Adapter):
             logger.error("SearXNG search failed for %r: %s", query, e, exc_info=True)
             raise IOError(f"Web search failed: {e}") from e
 
-        # No reliable server-side cap, so this slice is what enforces `limit`.
+        # SearXNG has no reliable server-side cap; this slice enforces `limit`.
         hits: List[SearchHit] = [
             SearchHit(
                 title=r.get("title", ""),

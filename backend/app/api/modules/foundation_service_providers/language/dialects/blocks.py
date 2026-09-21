@@ -1,6 +1,5 @@
 """
 blocks.py — typed content blocks; a tool result rides inside a user turn.
-=========================================================================
 
   POST {base}/v1/messages          serves: anthropic · llamacpp
 
@@ -13,27 +12,18 @@ blocks.py — typed content blocks; a tool result rides inside a user turn.
     tools │ schema   mutually exclusive ─┐
                                     ├─ tools ─► encode_tools + tool_choice
                                     └─ schema ─► ONE forced `extract` tool
+                                        (no native JSON mode on this wire)
 
   DECODE  SSE ───────────────────────────────────────────► Reply
     content_block_start   opens a thinking block or a tool_use slot
     content_block_delta   text│thinking│signature│input_json append
     message_delta         finish_reason + usage
-    on close              parse each tool_use slot's JSON arguments
-                          then UNDO the extract fiction ─► reply.text
+    on close              parse each tool_use slot's JSON arguments,
+                          then undo the extract fiction ─► reply.text
 
-  MESSAGE SHAPE                     WHY A FORCED TOOL
-    assistant [ text, tool_use ]      no native JSON mode here, so `encode`
-    user      [ tool_result, … ]      expresses structured output as a forced
-              ▲                       tool call whose arguments ARE the obj.
-              └─ the signature that   `stream` reverses it, so a caller asking
-                 separates this wire  for structured output never learns a
-                 from `turns`         tool was involved.
-
-  NOT IN THIS FILE
-    ../transforms.py   normalize_media · shape_schema · tool_parts — shared.
-    ../engine.py       the turn loop, the ledger, retries.
-    ../quirks.py       auth_header · placeholder_api_key · strict_tools.
-    features/caching   `cacheable` ─► cache_control, 4 breakpoints.
+  MESSAGE SHAPE
+    assistant [ text, tool_use ]
+    user      [ tool_result, … ]
 
 Talks HTTP directly, not through the Anthropic SDK: the SDK refuses
 non-streaming requests whose max_tokens implies a long wall time, and it
@@ -61,7 +51,7 @@ INTERLEAVED_THINKING = "interleaved-thinking-2025-05-14"
 #: Neutral tool_choice → this wire's shape. A named tool is shaped below.
 TOOL_CHOICE = {"auto": {"type": "auto"}, "any": {"type": "any"}, "none": {"type": "none"}}
 
-#: Wire usage key → our key. The cache fields are the only way to verify caching fires.
+#: Wire usage key → our key; the cache fields are how caching is verified.
 USAGE_KEYS = {
     "input_tokens": "input_tokens",
     "output_tokens": "output_tokens",
@@ -126,10 +116,8 @@ class BlocksDialect(LanguageDialect):
                 "budget_tokens": turn.options.thinking_budget or 2000,
             }
         elif self.quirks.no_thinking_template_kwarg:
-            # This wire has no way to say "do not reason" — on Anthropic that is
-            # the default, so absence means off. An endpoint serving a model
-            # whose chat template reasons on its own needs to be told, and
-            # llama-server takes it through the template's own kwargs.
+            # No "do not reason" on this wire; llama-server takes it through
+            # the chat template's own kwargs.
             payload["chat_template_kwargs"] = {
                 self.quirks.no_thinking_template_kwarg: False,
             }
@@ -156,8 +144,6 @@ class BlocksDialect(LanguageDialect):
                 "description": parts.description,
                 "input_schema": shape_schema(parts.parameters, strict=self.quirks.strict_tools),
             }
-            if tool.get("cacheable"):
-                entry["cacheable"] = True      # translated by the caching feature
             out.append(entry)
         return out
 
@@ -165,17 +151,9 @@ class BlocksDialect(LanguageDialect):
     def _split_system(messages: List[Dict[str, Any]]):
         """Hoist system turns into the top-level parameter this wire requires.
 
-        Returns ``(system, rest)`` where system is a **string** or a **flat list
-        of blocks** — the only two shapes the wire accepts. Never a list holding
-        a bare string, and never a list of lists.
-
-        Coalescing is the whole job. Appending each system message's content
-        produced ``["You are…"]`` for a chat turn and ``[[{"type":"text",…}]]``
-        for an annotation turn, because that content is already block-shaped when
-        it carries a cache marker. Both are rejected. Strings collapse to one
-        joined string so an ordinary request keeps the simplest form; any
-        block-shaped fragment forces the flat block list, since that is the only
-        form that can carry ``cache_control``.
+        Returns ``(system, rest)``: a string, or a flat list of blocks — the
+        only two shapes the wire accepts, never a list of lists. Any fragment
+        that carries ``cache_control`` forces the block form.
         """
         fragments: List[Any] = []
         rest: List[Dict[str, Any]] = []
@@ -208,10 +186,8 @@ class BlocksDialect(LanguageDialect):
     def _drop_empty(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Remove messages this wire would reject for having no content.
 
-        Runs **after** media attaches, never before. An image-only user turn
-        arrives with empty text and its image in ``options.media``; filtering
-        first deleted that turn, and ``_attach_media`` then found no user message
-        to attach to and silently dropped the image.
+        Runs after media attaches: an image-only user turn arrives with empty
+        text and its image still in ``options.media``.
         """
         kept = []
         for msg in messages:
@@ -227,11 +203,8 @@ class BlocksDialect(LanguageDialect):
     def _attach_media(messages: List[Dict[str, Any]],
                       media: List[Dict[str, Any]],
                       spec: Any = None) -> List[Dict[str, Any]]:
-        """Put images in the last user turn, before its text.
-
-        Images first is this wire's documented preference, and the ordering is
-        stable so it does not disturb a cached prefix.
-        """
+        """Put images in the last user turn, before its text — this wire's
+        documented preference."""
         images = normalize_media(media)
         if not images:
             return messages
@@ -263,25 +236,13 @@ class BlocksDialect(LanguageDialect):
 
     @staticmethod
     def _call_id(e: Dict[str, Any], iteration: Any = None) -> str:
-        """The id linking a ``tool_use`` to its ``tool_result``.
-
-        Both sides must agree or the wire rejects the pair, so the fallback lives
-        here rather than at each call site: ``extend`` used to subscript ``e["id"]``
-        directly and raised ``KeyError`` on an execution that ``encode_history``
-        would have handled.
-        """
+        """The id linking a ``tool_use`` to its ``tool_result``. Both sides must
+        agree or the wire rejects the pair."""
         return e.get("id") or f"toolu_{e.get('tool_name')}_{iteration}"
 
     def _tool_result_block(self, e: Dict[str, Any], call_id: str) -> Dict[str, Any]:
-        """One ``tool_result`` block, shaped identically wherever it is built.
-
-        ``encode_history`` (replaying an older turn) and ``extend`` (appending the
-        turn just executed) produce the same block. They used to hold two copies
-        of this and the copies drifted: history flagged ``is_error`` on
-        ``error or status == "failed"`` while extend checked ``error`` alone, so a
-        failure carrying only a status read as success live and as failure on
-        replay. One builder makes that divergence unrepresentable.
-        """
+        """One ``tool_result`` block, shaped the same for a replayed turn and for
+        the turn just executed."""
         content = self.replay_content(e)
         block: Dict[str, Any] = {
             "type": "tool_result",
@@ -294,12 +255,11 @@ class BlocksDialect(LanguageDialect):
         return block
 
     def encode_history(self, executions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Replay prior tool turns as this wire shapes them.
+        """Replay prior tool turns: per iteration an assistant turn of ``tool_use``
+        blocks, then a user turn of matching ``tool_result`` blocks.
 
-        Per iteration: an assistant turn of ``tool_use`` blocks, then a **user**
-        turn of matching ``tool_result`` blocks. The adjacency is required — a
-        ``tool_use`` must be answered by the immediately following turn — which
-        is why executions carry an ``iteration`` to group by.
+        The wire requires that adjacency — a ``tool_use`` must be answered by
+        the immediately following turn.
         """
         out: List[Dict[str, Any]] = []
         for iteration, entries in self.by_iteration(executions):
@@ -422,11 +382,7 @@ class BlocksDialect(LanguageDialect):
 
 
 def _beta_headers(turn: Turn) -> Optional[Dict[str, str]]:
-    """Opt in to reasoning that continues between tool calls.
-
-    Only meaningful when the model both reasons and has tools to interleave
-    with, so it is asked for exactly then rather than on every request.
-    """
+    """Opt in to reasoning that continues between tool calls."""
     if turn.thinking and turn.tools:
         return {"anthropic-beta": INTERLEAVED_THINKING}
     return None
@@ -443,18 +399,14 @@ def _usage(raw: Dict[str, Any]) -> Dict[str, int]:
 
 
 def _strip_cache_markers(system, messages):
-    """Remove ``cacheable`` markers when the caching feature is not attached.
-
-    The marker is a protocol-level hint from callers; an endpoint that cannot
-    cache must not forward an unknown key, which this wire rejects outright.
-    """
+    """Remove ``cacheable`` markers when the caching feature is not attached —
+    this wire rejects an unknown key outright."""
     def clean(blocks):
         if not isinstance(blocks, list):
             return blocks
         return [{k: v for k, v in b.items() if k != "cacheable"} if isinstance(b, dict) else b
                 for b in blocks]
 
-    # `system` is a string or a flat block list — never a list of fragments.
     return (
         clean(system),
         [{**m, "content": clean(m.get("content"))} for m in messages],

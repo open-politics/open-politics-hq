@@ -1,9 +1,5 @@
 """
-ocr/dialects — which wires exist.
-=================================
-
-  local_engine    a binary on this machine     (tesseract)
-  vision_prompt   a multimodal model            (ollama)
+ocr dialects — local_engine (tesseract) · vision_prompt (ollama).
 """
 
 from app.api.modules.foundation_service_providers.ocr.provider import Ocr

@@ -1,16 +1,7 @@
 """
 vision_prompt.py — OCR by asking a vision model to transcribe.
-==============================================================
 
   image bytes ──► base64 ──► POST {base}/api/chat ──► message.content
-                       │                                    │
-                       ▼                                    ▼
-             model, else default_model            OcrResult(confidence=0.85)
-
-A bad response or exception yields OcrResult(text="", confidence=0.0)
-rather than raising — "no text found" is a real outcome here, not a
-failure of the call. Slower and fuzzier than a dedicated OCR engine, but
-it reads handwriting, tables and layout that Tesseract will not.
 """
 
 from __future__ import annotations
@@ -36,12 +27,7 @@ PROMPT = (
 class VisionPromptOcr(Adapter):
     """A vision model asked to transcribe.
 
-    ``model`` resolution, in order: the caller's argument (i.e. what the user
-    actually selected, threaded through from ``Resolved.model``) → the
-    declaration's ``extra=`` default. Before the rewrite the selection was
-    *required* by ``model_required`` and then thrown away, because the adapter
-    read its model from an env var and ``extract_text`` had no model parameter
-    at all.
+    A bad response or an exception yields empty text rather than raising.
     """
 
     def __init__(self, model: str = "llava", **kw):
@@ -88,5 +74,4 @@ class VisionPromptOcr(Adapter):
         except Exception as e:
             logger.warning("Vision OCR failed: %s", e, exc_info=True)
 
-        # A miss is empty text, not an exception: "no text found" is a real outcome.
         return OcrResult(text="", confidence=0.0, engine=f"vision:{chosen}", page_count=1)

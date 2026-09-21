@@ -1,6 +1,5 @@
 """
 items.py — the /responses flat item log; call and output are siblings.
-======================================================================
 
   POST {base}/responses            serves: openai
 
@@ -11,8 +10,7 @@ items.py — the /responses flat item log; call and output are siblings.
                         already wire items (function_call*) ─► pass through
     _attach_media    images ─► last user item's content, text first
     tools            encode_tools() tries `mcp` passthrough per tool first
-    response_format  text.format: json_schema — coexists with tools here,
-                      unlike `blocks`'s forced-tool fiction
+    response_format  text.format: json_schema — coexists with tools here
     store: false     opt out of server-side retention (ItemsQuirks.store)
 
   DECODE  SSE ───────────────────────────────────────────► Reply
@@ -20,28 +18,16 @@ items.py — the /responses flat item log; call and output are siblings.
     response.reasoning[_summary]_text.delta     thinking append
     response.output_item.added (function_call)  opens a call slot
     response.function_call_arguments.delta      slot's JSON append
-    response.completed                           finish_reason + usage
-    error                                         raise RuntimeError(message)
+    response.completed                          finish_reason + usage
+    error                                       raise RuntimeError(message)
 
-  ITEM SHAPE                             WHY SIBLINGS, NOT NESTED
-    {type: message, role, content}         `blocks` nests a tool_result
-    {type: function_call, call_id, …}      inside a user turn; `turns` gives
-    {type: function_call_output,           it a whole message with role:
-     call_id, output}                      "tool". Here a call and its
-    ▲                                      output are two items back-to-back
-    └─ the structural signature            in one flat list — the endpoint
-       that separates this wire            requires the output to
-       from `blocks` and `turns`           immediately follow its call.
+  ITEM SHAPE
+    {type: message, role, content}
+    {type: function_call, call_id, …}
+    {type: function_call_output, call_id, output}
 
-  NOT IN THIS FILE
-    ../transforms.py   normalize_media · shape_schema · tool_parts — shared.
-    ../engine.py        the turn loop, the ledger, retries.
-    features/mcp        native passthrough tried in encode_tools() first.
-
-The old provider streamed only without tools; its tool loop called the
-non-streaming endpoint instead, so every tool boundary blanked the assistant
-message in the UI until the final snapshot refilled it. Streaming the loop
-itself, as this file does, is what fixes that.
+  A call and its output are two items back-to-back in one flat list; the
+  endpoint requires the output to immediately follow its call.
 """
 
 from __future__ import annotations
@@ -65,7 +51,7 @@ TOOL_CHOICE = {"auto": None, "any": "required", "none": "none"}
 #: Wire usage key → our key.
 USAGE_KEYS = {"input_tokens": "input_tokens", "output_tokens": "output_tokens"}
 
-#: Nested usage detail. Reasoning tokens are billed, so they must survive.
+#: Nested usage detail; reasoning tokens are billed.
 INPUT_DETAIL_KEYS = {"cached_tokens": "cache_read_input_tokens"}
 OUTPUT_DETAIL_KEYS = {"reasoning_tokens": "reasoning_tokens"}
 
@@ -128,9 +114,8 @@ class ItemsDialect(LanguageDialect):
                      mcp_headers: Dict[str, str] | None = None) -> List[Dict[str, Any]]:
         """Flat definitions: ``{type: "function", name, description, parameters}``.
 
-        The ``mcp`` feature, when attached, converts declared MCP tools into
-        native passthrough entries so the endpoint calls our MCP server itself
-        rather than round-tripping every tool through our executor.
+        The ``mcp`` feature, when attached, turns a declared MCP tool into a
+        native passthrough entry the endpoint calls itself.
         """
         out: List[Dict[str, Any]] = []
         mcp = getattr(getattr(self, "host", None), "mcp_tool", None)
@@ -160,11 +145,8 @@ class ItemsDialect(LanguageDialect):
         return out
 
     def _to_items(self, messages: List[Dict[str, Any]]):
-        """Messages → (instructions, item list).
-
-        A leading system message becomes the top-level ``instructions``; any
-        later one becomes a ``developer`` or ``system`` item depending on the
-        endpoint's preference.
+        """Messages → (instructions, item list). A leading system message becomes
+        the top-level ``instructions``, a later one a ``developer``/``system`` item.
         """
         instructions = None
         items: List[Dict[str, Any]] = []
@@ -226,12 +208,8 @@ class ItemsDialect(LanguageDialect):
     # ── history ──────────────────────────────────────────────────────────────
 
     def encode_history(self, executions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Per iteration: every ``function_call``, then every matching output.
-
-        The endpoint requires a call to be followed by its output, so the calls
-        of one iteration are emitted together and then their outputs together —
-        which is why executions carry an ``iteration`` to group by.
-        """
+        """Per iteration: every ``function_call``, then every matching output —
+        the endpoint requires a call to be followed by its output."""
         out: List[Dict[str, Any]] = []
         for iteration, entries in self.by_iteration(executions):
             for e in entries:
@@ -328,12 +306,8 @@ class ItemsDialect(LanguageDialect):
 
 
 def _flatten(content: Any) -> str:
-    """Content blocks → plain text.
-
-    Callers hand this wire the same block lists they hand ``blocks``, because
-    the annotation task marks text blocks cacheable regardless of endpoint. This
-    endpoint has no equivalent, so the blocks collapse to their text.
-    """
+    """Content blocks → plain text: callers hand every dialect the same block
+    lists, and this wire has no block form."""
     if isinstance(content, str):
         return content
     if isinstance(content, list):

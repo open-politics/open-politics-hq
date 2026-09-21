@@ -1,6 +1,5 @@
 """
 resolve.py — a declaration becomes a live object.
-=================================================
 
   resolve(capability, infospace_id)
 
@@ -35,7 +34,7 @@ import logging
 from dataclasses import dataclass
 from functools import partial
 from importlib import import_module
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from sqlmodel import Session
 
@@ -43,18 +42,19 @@ from app.core.config import AppSettings
 from app.core.security import CredentialDecryptionError
 
 from app.api.modules.foundation_service_providers.models import ModelSpec
-from app.api.modules.foundation_service_providers.user_config import ProviderSelection
+from app.api.modules.foundation_service_providers.user_config import (
+    SELECTABLE_ENRICHERS, ProviderSelection,
+)
 from app.api.modules.foundation_service_providers.primitives import (
-    CAPABILITIES, Binding, Dialect, Domain, Endpoint, Feature, ProviderDescriptor,
-    ProviderError, Resolved, Setting, _domains, _registry, _system_default_provider_key,
-    capabilities_for, descriptor_for, get_model_spec, list_providers, provider,
+    ProviderDescriptor, ProviderError, Resolved, Setting, _domains,
+    _refresh_capabilities, _system_default_provider_key, descriptor_for, list_providers,
 )
 
 logger = logging.getLogger(__name__)
 
 
 
-# ── Access gate ───────────────────────────────────────────────────────────────
+# Access gate
 
 
 def _provider_access(settings: AppSettings, capability: str, provider_key: str) -> Optional[str]:
@@ -65,15 +65,10 @@ def _provider_access(settings: AppSettings, capability: str, provider_key: str) 
 def _first_available_default(capability: str, settings: AppSettings) -> Optional[str]:
     """The deployment default for a domain — first usable entry of `use`.
 
-    `foundation.use.<cap>` may name several providers, comma-separated: an
-    ordered preference, not a list of equals. "nominatim_local, nominatim_api"
-    is the local instance when it is running and the public API when it is not,
-    which is the fallback the old config could only describe in prose.
-
-    Usable means registered and not blocked. No I/O — this runs on every
-    resolve, so reachability is deliberately not probed; a provider that is
-    configured and permitted but down is an error worth surfacing, not a reason
-    to silently answer with something else.
+    `foundation.use.<cap>` is comma-separated: an ordered preference, not a list
+    of equals. Usable means registered and not blocked. No I/O — reachability is
+    not probed, so a permitted provider that is down raises rather than silently
+    resolving to something else.
     """
     raw = _system_default_provider_key(capability, settings)
     if not raw:
@@ -89,15 +84,10 @@ def _first_available_default(capability: str, settings: AppSettings) -> Optional
 def _is_access_blocked(settings: AppSettings, desc: ProviderDescriptor) -> bool:
     """Blocked when explicitly `none`, or when a KEYED provider is unlisted.
 
-    Default-deny is scoped to providers that carry an ``api_key``, because those
-    are the only ones where forgetting to configure something could end up
-    spending the deployment's money. A keyless provider — Ollama on our own
-    hardware, Tesseract in-process, local_fs — has nothing to leak, so silence
-    about it is not a security decision and must not brick the stack.
-
-    `byok` is the explicit way to say "usable, our key stays ours", which is
-    what an absent entry used to mean implicitly. Making it explicit is what
-    lets absence mean deny.
+    Default-deny is scoped to providers carrying an ``api_key`` — the only ones
+    where an unconfigured entry could spend the deployment's money. A keyless
+    provider has nothing to leak, so silence about it must not brick the stack.
+    `byok` is how a keyed provider says "usable, our key stays ours".
     """
     level = _provider_access(settings, desc.capability, desc.provider_key)
     if level == "none":
@@ -110,9 +100,8 @@ def _env_key_if_granted(
 ) -> Optional[str]:
     """Deployment key, only on an explicit `all` / `superuser` grant.
 
-    Allow-list, not a deny-list: anything that is not one of those two — byok,
-    none, or unlisted — gets nothing. A level nobody anticipated therefore
-    fails closed by construction rather than by remembering to exclude it.
+    Allow-list, not a deny-list: byok, none and unlisted all get nothing, so a
+    level nobody anticipated fails closed by construction.
     """
     if not desc.endpoint.api_key:
         return None
@@ -124,7 +113,7 @@ def _env_key_if_granted(
     return getattr(settings, desc.endpoint.api_key.attr, None) or None
 
 
-# ── Selection + credential context ────────────────────────────────────────────
+# Selection and credential context
 
 
 @dataclass
@@ -153,7 +142,7 @@ def _load_from_session(
 
     selection: Optional[ProviderSelection] = None
 
-    if capability in {"embedding", "ocr", "geocoding"} and infospace.enrichment_config is not None:
+    if capability in SELECTABLE_ENRICHERS and infospace.enrichment_config is not None:
         ec = infospace.enrichment_config
         if isinstance(ec, dict):
             ec = EnrichmentConfig(**ec)
@@ -191,10 +180,9 @@ def get_configured_foundation_provider(
     """Effective selection for (infospace, domain) via the cascade.
 
     Walks the same path ``resolve()`` does — ``infospace.enrichment_config`` →
-    ``owner.provider_defaults`` — and deliberately does NOT consult deployment
-    system defaults. Use it as the precondition helper before ``resolve()``:
-    it answers "has the user picked anything", which is the right gate for
-    routes and tasks that want to reject fast before credential lookup.
+    ``owner.provider_defaults`` — and deliberately does not consult deployment
+    system defaults. It answers "has the user picked anything", so it is the
+    precondition helper for callers that want to reject before credential lookup.
     """
     if capability not in _domains:
         raise ProviderError(f"Unknown capability: {capability}")
@@ -204,9 +192,8 @@ def get_configured_foundation_provider(
 def _decrypt_owner_credentials(encrypted: Optional[str]) -> Dict[str, str]:
     """Decrypt once. ``{}`` only when nothing is stored.
 
-    Propagates ``CredentialDecryptionError`` for a present-but-undecryptable
-    blob — masking that as "no credentials" would push the user to re-save and
-    hit the wipe hazard.
+    Propagates ``CredentialDecryptionError`` for a present-but-undecryptable blob
+    rather than masking it as "no credentials".
     """
     if not encrypted:
         return {}
@@ -214,7 +201,7 @@ def _decrypt_owner_credentials(encrypted: Optional[str]) -> Dict[str, str]:
     return decrypt_credentials(encrypted)
 
 
-# ── Construction ──────────────────────────────────────────────────────────────
+# Construction
 
 
 def _build_config(
@@ -223,9 +210,9 @@ def _build_config(
 ) -> dict:
     """Build constructor kwargs from the endpoint + an optional api_key.
 
-    Defense in depth: refuses to read the deployment key without an explicit
-    foundation.access grant, so internal code that ever bypasses ``resolve()``
-    still cannot leak the credential.
+    Defence in depth: refuses to read the deployment key without an explicit
+    foundation.access grant, so code that bypasses ``resolve()`` still cannot
+    leak the credential.
     """
     ep = desc.endpoint
     config: dict = {"quirks": _resolve_quirks(desc.quirks, settings), "descriptor": desc}
@@ -241,7 +228,7 @@ def _build_config(
                 raise ProviderError(
                     f"Provider '{desc.capability}/{desc.provider_key}' has a deployment API "
                     f"key but no grant. Add it under foundation.access."
-                    f"{desc.capability}.{desc.provider_key} in my-hq.yml "
+                    f"{desc.capability}.{desc.provider_key} in HQ.yml "
                     f"(all | superuser), or let the infospace owner supply their own."
                 )
 
@@ -258,11 +245,9 @@ def _build_config(
 def _resolve_quirks(quirks: Any, settings: AppSettings) -> Any:
     """Read any ``Setting`` a quirk holds, so flags can be operator-editable.
 
-    A quirk is usually a literal, but some are genuinely deployment config —
-    the OCR engine language, a required User-Agent. Letting a quirk field hold a
-    ``Setting`` means those stay in the declaration (visible in the flag table,
-    reviewable alongside every other quirk) while still being settable from the
-    environment.
+    A quirk is usually a literal, but some are deployment config — the OCR engine
+    language, a required User-Agent. Holding a ``Setting`` keeps those in the
+    declaration while still being settable from ``HQ.yml``.
     """
     if quirks is None:
         return None
@@ -286,9 +271,8 @@ def _compose_features(instance: Any, desc: ProviderDescriptor) -> None:
     """Bind each feature's functions onto the instance.
 
     The feature module declares ``PROVIDES`` next to its functions, so the
-    declaration never restates names that could drift. Binding is lazy — a
-    feature module is imported only when a provider that declares it is
-    actually constructed.
+    declaration never restates names that could drift. A feature module is
+    imported only when a provider that declares it is constructed.
     """
     for feat in desc.features:
         mod = import_module(f"{desc.domain.package}.features.{feat.module}")
@@ -323,7 +307,7 @@ def _construct(desc: ProviderDescriptor, config: dict) -> Any:
     return instance
 
 
-# ── Model capability cascade ──────────────────────────────────────────────────
+# Model capability cascade
 
 
 def _resolve_spec(desc: ProviderDescriptor, model: Optional[str]) -> Optional[ModelSpec]:
@@ -331,17 +315,10 @@ def _resolve_spec(desc: ProviderDescriptor, model: Optional[str]) -> Optional[Mo
 
         declared spec  →  dialect baseline
 
-    A runtime-discovered spec is the third source, but it needs a network call,
-    so it is not consulted here — ``list_models()`` is the door for that, and a
-    caller that has one can merge it themselves. The cascade exists because
-    declared models are curated defaults, not an allowlist: an undeclared model
-    must still come back with usable facts rather than a silent ``None`` that
-    reads as "supports nothing".
-
-    That silent None is precisely the bug this replaces: the old providers kept
-    capability facts in a ``_model_cache`` populated only by ``discover_models()``,
-    which no worker ever called — so extended thinking never switched on and
-    two-phase extraction never ran.
+    A runtime-discovered spec is the third source but needs a network call, so
+    ``list_models()`` is the door for that and the caller merges it. Declared
+    models are curated defaults, not an allowlist, so an undeclared name falls
+    back to the baseline rather than to a ``None`` that reads as "supports nothing".
     """
     baseline = desc.binding.dialect.baseline
     if model is None:
@@ -352,7 +329,18 @@ def _resolve_spec(desc: ProviderDescriptor, model: Optional[str]) -> Optional[Mo
     return declared.merged_with(baseline)
 
 
-# ── resolve ───────────────────────────────────────────────────────────────────
+def get_model_spec(capability: str, provider_key: str,
+                   model_name: Optional[str]) -> Optional[ModelSpec]:
+    """The same cascade, for a caller holding names rather than a resolution.
+
+    ``resolve()`` already hands back ``Resolved.spec``; prefer that where you
+    have it. This door exists for the callers that only know the strings.
+    """
+    desc = descriptor_for(capability, provider_key)
+    return _resolve_spec(desc, model_name) if desc else None
+
+
+# resolve
 
 
 def resolve(
@@ -374,8 +362,8 @@ def resolve(
                        config / owner defaults / deployment default.
         model:         model name. When None, comes from config. An undeclared
                        name is accepted — declared specs are curated defaults.
-        infospace_id:  required for credential-bearing domains; optional for
-                       pure infrastructure (storage, scraping).
+        infospace_id:  required wherever the domain declares ``per_user``;
+                       optional for pure infrastructure (storage, scraping).
         context:       "chat" | "annotation" — language only, ignored elsewhere.
         runtime_key:   BYOK for this call. Highest priority in the credential chain.
         session:       reuse an open DB session instead of opening one.
@@ -393,8 +381,7 @@ def resolve(
     if capability not in _domains:
         raise ProviderError(f"Unknown capability: {capability}")
 
-    credential_bearing = capability in {"language", "embedding", "ocr", "geocoding", "web_search"}
-    if credential_bearing and infospace_id is None:
+    if _domains[capability].per_user and infospace_id is None:
         raise ProviderError(
             f"{capability} resolve requires infospace_id for credential resolution"
         )
@@ -434,8 +421,7 @@ def _instantiate(desc: ProviderDescriptor, ctx: _Context,
     """Credential chain, then build. Everything except model handling.
 
     Split out so ``list_models()`` can reach an endpoint without inventing a
-    placeholder model name — which is exactly the hack (``model="probe"``) that
-    made runtime discovery unreachable in the first place.
+    placeholder model name.
     """
     api_key: Optional[str] = None
     if desc.requires_api_key:
@@ -457,13 +443,13 @@ def _instantiate(desc: ProviderDescriptor, ctx: _Context,
             raise ProviderError(
                 f"No credentials for {desc.capability}/{desc.provider_key}. Store a key "
                 f"in your profile, or ask the operator for foundation.access."
-                f"{desc.capability}.{desc.provider_key}: all in my-hq.yml"
+                f"{desc.capability}.{desc.provider_key}: all in HQ.yml"
             )
 
     return _construct(desc, _build_config(desc, settings, api_key, ctx.owner_is_superuser))
 
 
-# ── list_models ───────────────────────────────────────────────────────────────
+# list_models
 
 
 async def list_models(
@@ -476,14 +462,9 @@ async def list_models(
 ) -> List[ModelSpec]:
     """Curated specs first, then everything the endpoint reports right now.
 
-    Listing models is the operation you do *before* you have one, so it does not
-    sit behind ``resolve()``'s model handling. The old shape —
-    ``resolve(cap, key, "probe").discover_models()`` — only worked by tripping
-    the membership check on purpose and catching the error, which meant runtime
-    discovery was unreachable for every provider that declared any models.
-
-    Declared specs come first and are never dropped: they are the curated,
-    ranked set a picker should surface at the top. Discovered models the
+    Listing models is what you do before you have one, so it does not sit behind
+    ``resolve()``'s model handling. Declared specs come first and are never
+    dropped — they are the ranked set a picker surfaces at the top. Models the
     declaration doesn't know about are appended.
     """
     desc = descriptor_for(capability, provider_key)
@@ -517,15 +498,12 @@ async def list_models(
     return declared + [m for m in discovered if m.name not in known]
 
 
-# ── Availability probes ───────────────────────────────────────────────────────
+# Availability probes
 
 
 def is_capability_available(capability: str, settings: AppSettings) -> bool:
-    """Cheap deployment-level probe — is any provider for this domain available?
-
-    Used by the dispatch filter as a circuit breaker. Settings and
-    Settings and grants only: no DB, no per-infospace credential lookup.
-    """
+    """Is any provider for this domain available? The dispatch filter's circuit
+    breaker. Settings and grants only: no DB, no per-infospace credential lookup."""
     if capability not in _domains:
         return False
     for _pk, desc in list_providers(capability):
@@ -538,9 +516,9 @@ def is_capability_available(capability: str, settings: AppSettings) -> bool:
 def probe_providers(settings: Optional[AppSettings] = None) -> Dict[str, list]:
     """Log what this deployment can reach, and on whose credential.
 
-    Runs at worker start. The distinction that matters to an operator is not
-    "is a key present" but **whose key gets used**, so every non-blocked
-    provider is listed with its honest access mode:
+    Runs at worker start. What matters to an operator is not "is a key present"
+    but whose key gets used, so every non-blocked provider is listed with its
+    access mode:
 
         local       keyless, runs on this machine or network
         open        keyless, public service
@@ -548,10 +526,6 @@ def probe_providers(settings: Optional[AppSettings] = None) -> Dict[str, list]:
         superuser   deployment key, superuser-owned infospaces only
         byok        users bring their own key
         byok*       a deployment key exists but no grant shares it
-
-    The previous version listed only providers that had a key *present*, which
-    hid every BYOK provider entirely — so an operator whose users authenticate
-    with their own OpenAI keys saw "language: not configured".
     """
     if settings is None:
         from app.core.config import settings as _settings
@@ -589,28 +563,22 @@ def probe_providers(settings: Optional[AppSettings] = None) -> Dict[str, list]:
     return status
 
 
-# ── Load declarations ─────────────────────────────────────────────────────────
+# Load declarations
 # providers.py imports every domain package, then runs the @provider decorators.
 
 from app.api.modules.foundation_service_providers.providers import *  # noqa: E402,F401,F403
 
-CAPABILITIES._refresh()
+_refresh_capabilities()
 
 
 def _validate_foundation_names() -> None:
     """Every name in the foundation block must refer to something that exists.
 
     Shape is checked in config.py; names can only be checked here, once the
-    declarations are loaded. A typo used to fail closed *silently* —
-    ``foundation.access.langauge.openai: all`` granted nothing and said nothing,
-    which looks identical to a deliberate BYOK deployment. For a control that
-    decides whose API key gets spent, "did nothing, told no one" is not an
-    acceptable outcome.
-
-    The same reasoning covers `use` and `providers`, which the reachability gate
-    cannot check: it keys on the ADDRESS, and an unknown name simply has no
-    address, so ``use.ocr: tesserakt`` read as an in-process provider that is
-    always fine. OCR then answered with nothing, quietly, forever.
+    declarations are loaded. Unchecked, ``access.langauge.openai: all`` grants
+    nothing and says nothing — indistinguishable from a deliberate BYOK
+    deployment. The reachability gate cannot cover `use` and `providers` either:
+    it keys on the address, and an unknown name simply has none.
     """
     from app.core.config import HQ_CONFIG_FILE, settings
 
@@ -634,8 +602,7 @@ def _validate_foundation_names() -> None:
                     f"Known: {known_in(cap_l)}"
                 )
 
-    # `use` picks who answers. A name nobody implements is not a fallback, it is
-    # a gap — and a comma list hides it, because the entries after it still work.
+    # A comma list hides a bad entry, because the ones after it still answer.
     for capability, chosen in settings.chosen_providers:
         where = ("deployment.storage.use" if capability == "storage"
                  else f"foundation.use.{capability}")
@@ -646,9 +613,8 @@ def _validate_foundation_names() -> None:
                     f"Known: {known_in(capability)}"
                 )
 
-    # A typo'd key here is worse than an unused block: editing
     # `providers.openia.base_url` leaves the real openai on its default, so the
-    # change appears to have been made and has no effect.
+    # edit looks made and does nothing.
     every_provider = {pk for d in _domains for pk, _ in list_providers(d)}
     for provider in (settings.FOUNDATION_PROVIDERS or {}):
         if provider.lower() not in every_provider:

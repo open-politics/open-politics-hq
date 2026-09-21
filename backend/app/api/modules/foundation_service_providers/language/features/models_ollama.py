@@ -1,6 +1,5 @@
 """
 models_ollama.py — feature: list local models with their real capabilities.
-===========================================================================
 
   PROVIDES = ("list_models", "model_capabilities")
 
@@ -14,14 +13,6 @@ models_ollama.py — feature: list local models with their real capabilities.
       └─ else  ──►  LLMModelSpec(supports_tools="tools" in caps,
                                  supports_multimodal="vision" in caps,
                                  supports_thinking="thinking" in caps, …)
-
-  NOT IN THIS FILE
-    embedding/features/probe.py   same /api/show endpoint, a different
-                                   question (probe one model, not list all).
-
-Discovery, not declaration: a local endpoint's model list can't be curated
-ahead of time, so without this a pulled model would inherit only the
-dialect baseline and its real capabilities would stay invisible.
 """
 
 from __future__ import annotations
@@ -74,7 +65,7 @@ async def list_models(p) -> List[LLMModelSpec]:
             continue
         caps = await model_capabilities(p, name)
         if "embedding" in caps:
-            continue                     # embedding models belong to that domain's picker
+            continue                     # belongs to the embedding domain's picker
         specs.append(LLMModelSpec(
             name=name,
             description=f"{name} (local)",

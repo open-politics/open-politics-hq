@@ -1,16 +1,15 @@
 """
-mcp.py — feature: let the endpoint call our own MCP server itself.
-==================================================================
+mcp.py — feature: let the endpoint call an MCP server itself.
 
   PROVIDES = ("mcp_tool",)  ──►  p.mcp_tool(tool, headers)
                                   ──► passthrough entry, or None (caller
-                                      falls back to running it via our
-                                      own executor)
+                                      falls back to our own executor)
 
-  requires p.extra["mcp_server_url"]; unset ──► always None, always safe
+  p.extra["mcp_connectors"]   {server_label: url}, from HQ.yml
+       tool's label not in it ──► None
 
-  our server: /tools (main.py) · stateless_http · JWT'd against SECRET_KEY
-              · gated on the COMPUTE deployment capability
+  our own server is the `hq` label: /tools (main.py) · stateless_http
+       · JWT'd against SECRET_KEY · gated on COMPUTE
 
   {tool, headers} ──► {type: "mcp", server_label, server_url,
                         require_approval: "never", headers?, allowed_tools?}
@@ -21,10 +20,8 @@ mcp.py — feature: let the endpoint call our own MCP server itself.
     conversation_service    mints the scoped token passed in as
                             `mcp_headers`.
 
-Opt-in per deployment: reachable for a cloud API against a public instance,
-impossible for an air-gapped one. The old OpenAI provider accepted
-`mcp_headers` and never read it — minted and threaded through three call
-sites for nothing.
+Opt-in per deployment: an air-gapped instance declares no connectors and
+every tool runs through our executor.
 """
 
 from __future__ import annotations
@@ -41,15 +38,15 @@ def mcp_tool(p, tool: Dict[str, Any],
              headers: Optional[Dict[str, str]] = None) -> Optional[Dict[str, Any]]:
     """Declared MCP tool → a native passthrough entry, or ``None``.
 
-    Returning ``None`` means "not eligible" and the caller falls back to
-    treating it as an ordinary function the executor will run — which is the
-    safe default whenever the server URL is unset.
+    ``None`` means "not eligible": the caller treats it as an ordinary function
+    and runs it through our executor. That is the default for any label this
+    deployment has no connector for.
     """
-    server_url = p.extra.get("mcp_server_url")
-    if not server_url:
-        return None            # not reachable from this endpoint; use our executor
-
     label = tool.get("server_label") or "hq"
+    server_url = (p.extra.get("mcp_connectors") or {}).get(label)
+    if not server_url:
+        return None
+
     entry: Dict[str, Any] = {
         "type": "mcp",
         "server_label": label,

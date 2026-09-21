@@ -1,19 +1,7 @@
 """
 local_engine.py — OCR via Tesseract, on this machine.
-=====================================================
 
-  image bytes
-      │
-      ▼  asyncio.to_thread          (pytesseract is synchronous)
-  pytesseract.image_to_string(lang)
-      │
-      ▼
-  OcrResult(text, confidence=0.8, engine="tesseract:<lang>")
-
-  language_hint ──► lang, else quirks.default_language
-
-Confidence is a flat constant: pytesseract exposes per-word confidences
-but no clean per-page number, and inventing one would be worse.
+  image bytes ──► asyncio.to_thread ──► pytesseract.image_to_string(lang)
 """
 
 from __future__ import annotations
@@ -40,9 +28,8 @@ except ImportError:                                     # optional dependency
 class LocalEngineOcr(Adapter):
     """Tesseract via pytesseract.
 
-    Confidence is reported as a flat 0.8: pytesseract exposes per-word
-    confidences but no clean per-page number, and inventing one would be worse
-    than a documented constant.
+    Confidence is a flat 0.8 — pytesseract exposes per-word confidences but no
+    per-page number.
     """
 
     def __init__(self, **kw):
@@ -59,7 +46,6 @@ class LocalEngineOcr(Adapter):
         language_hint: Optional[str] = None,
         model: Optional[str] = None,      # one engine — accepted and ignored
     ) -> OcrResult:
-        # Caller's hint wins, else the declared default — this was once unreachable.
         lang = language_hint or self.quirks.default_language
 
         def _run() -> OcrResult:

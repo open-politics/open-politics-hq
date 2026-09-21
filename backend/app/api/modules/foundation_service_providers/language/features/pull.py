@@ -1,24 +1,12 @@
 """
 pull.py — feature: pull or delete a model on the endpoint itself.
-=================================================================
 
   PROVIDES = ("pull_model", "delete_model")
 
   pull_model(p, name)     POST /api/pull {name}      timeout: PULL_TIMEOUT
   delete_model(p, name)   DELETE /api/delete {name}
 
-  both: raise RuntimeError(...) on failure — the bool return is never
-        actually False, only True or an exception
-
-  NOT IN THIS FILE
-    ProviderHub.tsx (frontend)   should gate its model-management panel
-                                 on `hasattr(p, "pull_model")`, not on
-                                 `provider.id === 'ollama'`.
-
-Only meaningful where the model inventory is mutable: an operator can pull
-a model onto their own machine, nobody pulls one onto someone else's API.
-PULL_TIMEOUT is generous (an hour) because a multi-gigabyte download over
-a slow link legitimately takes a while.
+Both raise RuntimeError on failure; the bool return is never False.
 """
 
 from __future__ import annotations

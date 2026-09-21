@@ -1,6 +1,5 @@
 """
 storage/base.py — the contract.
-===============================
 
   upload_file / upload_from_bytes   ──►  put
   get_file                          ──►  an open, caller-closed stream
@@ -14,10 +13,6 @@ storage/base.py — the contract.
 
   s3          MinIO · Garage · R2 · B2 · Wasabi · AWS
   filesystem  a local volume
-
-hasattr(provider, "get_file_path") is the WRONG test for "can I get a
-local path": s3 HAS the method and refuses at call time instead of
-lacking it. ../content/utils/storage_access.py is the shim that knows.
 """
 
 from __future__ import annotations
@@ -43,10 +38,9 @@ class StorageProvider(Protocol):
     def get_file_path(self, object_name: str) -> Path:
         """Local path for zero-copy access.
 
-        Filesystem storage only. Object storage raises ``NotImplementedError``,
-        and ``content/utils/storage_access.py`` is the shim that handles both —
-        note that ``hasattr`` is the *wrong* test here, because object storage
-        has the method and refuses at call time.
+        Object storage has this method and raises ``NotImplementedError`` from
+        it, so ``hasattr`` is the wrong test; ``content/utils/storage_access.py``
+        is the shim that handles both.
         """
         ...
 
@@ -56,7 +50,7 @@ class StorageProvider(Protocol):
                             destination_local_path: str) -> None: ...
 
     async def delete_file(self, object_name: str) -> None:
-        """Idempotent — deleting what is already gone is success."""
+        """Idempotent: deleting what is already gone is success."""
         ...
 
     def delete_file_sync(self, object_name: str) -> None:

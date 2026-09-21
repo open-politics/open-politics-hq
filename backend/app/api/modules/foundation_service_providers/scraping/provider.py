@@ -1,6 +1,5 @@
 """
 scraping/provider.py — the Domain itself.
-=========================================
 
   base.py     ScrapingProvider  ─┐
   models.py   ScrapingQuirks    ─┴──►  Scraping = Domain(…)
@@ -22,4 +21,6 @@ Scraping = Domain(
     package="app.api.modules.foundation_service_providers.scraping",
     system_default="SCRAPING_PROVIDER_TYPE",
     quirks_type=ScrapingQuirks,
+    # Infrastructure: no infospace_id, no credential cascade.
+    per_user=False,
 )

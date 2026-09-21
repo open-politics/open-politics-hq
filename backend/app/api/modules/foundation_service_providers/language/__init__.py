@@ -1,19 +1,16 @@
 """
 language — messages in, a streamed reply out.
-=============================================
 
   models.py      the data       Turn · Reply · Delta · GenerationResponse …
   base.py        the contracts  LanguageModelProvider · LanguageDialect
   quirks.py      the deviations scoped per dialect
   provider.py    the Domain     Language = Domain(name="language", …)
+  transforms.py  shared shaping used by every dialect
+  engine.py      the turn loop built on those contracts
        │
-       ▼  only now can dialects/ and features/ call Language.dialect(...)
+       ▼
   dialects/  ──►  blocks · turns · items
   features/  ──►  six optional surfaces
-
-  NOT IN THIS FILE
-    transforms.py   shared shaping used by every dialect.
-    engine.py       the turn loop built on the contracts above.
 """
 
 from app.api.modules.foundation_service_providers.language.models import (

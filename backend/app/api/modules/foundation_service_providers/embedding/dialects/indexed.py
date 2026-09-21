@@ -1,27 +1,8 @@
 """
 indexed.py — the OpenAI-shaped embeddings wire.
-===============================================
 
-  embed_batch(texts, model)
-       │
-       ▼
-  POST {base}/embeddings  {model, input: texts, encoding_format?, …}
-       │
-       ▼
-  { data: [ {index, embedding}, … ] }
-       │
-       └─ sorted by index  ─►  vectors, request order guaranteed
-
-  quirks read here: encoding_format · input_type · base_url_is_full_path
-
-  NOT IN THIS FILE
-    ../base.py    the embed_texts()/embed_single() contract one level up.
-    ../engine.py  Batcher — truncation, retry-alone-on-failure.
-
-  Was three separate files, 524 lines combined, sending the same request
-  and parsing the same response. Jina did not sort by index; a response
-  returned out of order would have silently mispaired vectors with texts
-  — sorting once here closes that for all three.
+  POST {base}/embeddings ──► {data:[{index, embedding}]}, sorted by index
+  quirks: encoding_format · input_type · base_url_is_full_path
 """
 
 from __future__ import annotations
@@ -48,7 +29,7 @@ class IndexedEmbedder(Adapter):
         }
 
     def _endpoint(self) -> str:
-        # Jina's configured base_url is already the full endpoint path.
+        # jina's configured base_url is already the full endpoint path
         if self.quirks.base_url_is_full_path:
             return self.base_url
         return self.url(self.descriptor.path)
@@ -79,7 +60,7 @@ class IndexedEmbedder(Adapter):
             logger.error("No `data` field in embedding response: %s", str(data)[:300])
             raise RuntimeError("Embedding response contained no data")
 
-        # Sort by index — the wire does not promise request order.
+        # the wire does not promise request order
         vectors: List[List[float]] = []
         for item in sorted(items, key=lambda x: x.get("index", 0)):
             vector = item.get("embedding")

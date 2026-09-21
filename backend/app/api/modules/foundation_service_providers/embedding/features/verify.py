@@ -1,19 +1,5 @@
 """
-verify.py — is this credential good?
-====================================
-
-  verify(model_name=None)
-       │
-       ├─ no model_name given  ─►  first declared spec (needs *some* model)
-       ▼
-  embed_texts([" "], model_name)  ─►  vector came back?  ─►  True / False
-
-  Called from the setup flow, right after a user pastes a key —
-  the cheapest possible proof it works, before it gets saved.
-
-  NOT IN THIS FILE
-    ../provider.py  Embedding.feature("verify", …) — who gets this
-                    surface (openai · jina · voyage; ollama has no key).
+verify.py — credential check: embed one space, see whether a vector comes back.
 """
 
 from __future__ import annotations
@@ -26,11 +12,8 @@ PROVIDES = ("verify",)
 
 
 async def verify(p, model_name: str | None = None) -> bool:
-    """True if the endpoint accepts our credential.
-
-    ``model_name`` defaults to the first declared spec — verification needs
-    *some* model and the curated list is exactly the right place to get one.
-    """
+    """True if the endpoint accepts our credential. ``model_name`` defaults to
+    the first declared spec."""
     if model_name is None:
         declared = p.descriptor.models
         if not declared:

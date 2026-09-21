@@ -1,21 +1,15 @@
 """
 language/base.py — the two contracts a dialect sits between.
-============================================================
 
-  LanguageModelProvider          what a CALLER may rely on
+  LanguageModelProvider          what a caller may rely on
     generate(...)  ──►  GenerationResponse, or an async generator of them
 
-  LanguageDialect                what a WIRE must implement
+  LanguageDialect                what a wire must implement
     ── to implement ──               ── provided ──
     encode(turn)       body          expand_history   replay tool history
     stream(turn)       Deltas        by_iteration     group execs by turn
     encode_history()   replay        replay_content   model_view → content
     extend()           append
-
-  NOT IN THIS FILE
-    models.py   Turn · Reply · Delta — what these methods pass around.
-    quirks.py   LanguageQuirks — what a dialect reads to vary its shape.
-    engine.py   the loop, ledger and retries built above these four.
 """
 
 from __future__ import annotations
@@ -51,31 +45,17 @@ class LanguageModelProvider(Protocol):
     ) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
         """Run one generation.
 
-        With ``stream=True`` this returns a **bare async generator** — callers
-        ``await`` the coroutine and then ``async for`` the result. That shape is
-        load-bearing: all three consumers in the codebase are written against it.
-
-        ``**options`` is validated into ``GenerationOptions``; unknown keys are
-        refused rather than silently dropped.
+        ``stream=True`` returns a bare async generator: await the coroutine,
+        then ``async for`` the result. ``**options`` is validated into
+        ``GenerationOptions``; unknown keys raise.
         """
         ...
 
 
 class LanguageDialect(Adapter):
-    """What a language dialect must implement.
-
-    Four methods. ``encode`` shapes a request, ``stream`` sends it and decodes
-    the reply, ``encode_history`` replays prior tool activity, and ``extend``
-    appends the turn just completed. Everything else — the loop, the ledger, the
-    retries — belongs to the engine.
-
-    ``expand_history`` below is the piece worth reading. Conversation history
-    arrives with prior tool activity attached to assistant messages as
-    ``tool_executions``: the ledger the engine wrote on an earlier turn. Each
-    dialect must turn that back into its own wire shape or the model forgets
-    what it looked up. Three of the five old providers did this; Mistral did
-    not, which is exactly why a two-turn Mistral conversation lost its tool
-    results. Here the base drives it and a dialect only fills in the shape.
+    """What a language dialect must implement: four methods shaping a request,
+    decoding a reply, replaying prior tool activity and appending a finished
+    turn. The loop, the ledger and the retries belong to the engine.
     """
 
     timeout = 900.0
@@ -104,9 +84,8 @@ class LanguageDialect(Adapter):
     def expand_history(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Replace assistant messages carrying tool history with wire items.
 
-        The assistant's own prose is kept *after* the replayed exchange, so a
-        later turn sees both the raw tool data and the model's last summary of
-        it. Dropping either measurably degrades follow-up answers.
+        The assistant's own prose is kept after the replayed exchange, so a
+        later turn sees both the tool data and the model's summary of it.
         """
         out: List[Dict[str, Any]] = []
         for msg in messages:
@@ -126,11 +105,7 @@ class LanguageDialect(Adapter):
 
     @staticmethod
     def by_iteration(executions: List[Dict[str, Any]]):
-        """Group executions by the turn they happened on, in order.
-
-        The grouping is load-bearing for ``blocks``, where a ``tool_use`` must
-        be answered by the immediately following turn.
-        """
+        """Group executions by the turn they happened on, in order."""
         ordered = sorted(executions, key=lambda e: e.get("iteration", 1))
         for iteration, group in groupby(ordered, key=lambda e: e.get("iteration", 1)):
             yield iteration, list(group)
@@ -139,10 +114,9 @@ class LanguageDialect(Adapter):
     def replay_content(execution: Dict[str, Any]) -> Any:
         """What the model should see for this execution on a later turn.
 
-        Prefers ``model_view`` — the exact bytes it saw originally, so replay is
-        faithful and a cached prefix stays stable. Falls back to the structured
-        payload for entries written before ``model_view`` existed. ``None`` means
-        nothing is replayable and the entry is skipped.
+        Prefers ``model_view`` — the exact bytes it saw, so a cached prefix
+        stays stable — else the structured payload. ``None`` means nothing to
+        replay.
         """
         view = execution.get("model_view")
         if view is not None:

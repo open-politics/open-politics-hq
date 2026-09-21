@@ -1,31 +1,8 @@
 """
 osm.py — Nominatim jsonv2, self-hosted or public.
-=================================================
 
-  geocode(location)
-       │
-       ├─ in CUSTOM_PLACES?  ─►  return the canned hit (OSM has no
-       │                        node for a continent — "europe" etc.)
-       │
-       ├─ _throttle()  no-op unless quirks.rate_limit_seconds > 0
-       │
-       └─ GET {base}/search?q=…  ─►  [ {lat, lon, boundingbox, geojson,
-                                       display_name, class, type}, … ]
-               │
-               └─ top = data[0]
-                     WIRE_TYPES[class/type]  ─►  PLACE_TYPES
-                     boundingbox strings     ─►  bbox floats + area
-
-  headers()  quirks.user_agent ─►  User-Agent, or none (self-hosted
-            doesn't care; the public API rejects a request without one)
-
-  NOT IN THIS FILE
-    ../base.py    the six-key return contract this fills in.
-    ../models.py  PLACE_TYPES — the vocabulary WIRE_TYPES maps into.
-
-  Two ~200-line files (self-hosted, public) collapsed into one wire
-  plus three quirks. The trailing assert guards WIRE_TYPES from ever
-  drifting outside PLACE_TYPES.
+  geocode(location) ─► CUSTOM_PLACES, else GET {base}/search?q=…
+                    ─► top hit, WIRE_TYPES mapped into PLACE_TYPES
 """
 
 from __future__ import annotations
@@ -41,7 +18,7 @@ from app.api.modules.foundation_service_providers.geocoding import PLACE_TYPES
 
 logger = logging.getLogger(__name__)
 
-#: Continents have no OSM node, so "Europe" returns empty. Asked for constantly.
+#: continents have no OSM node, so "Europe" comes back empty.
 CUSTOM_PLACES: Dict[str, Dict[str, Any]] = {
     "europe": {
         "coordinates": [13.405, 52.52],
@@ -79,11 +56,11 @@ class OsmGeocoder(Adapter):
         self._last_request = 0.0
 
     def headers(self) -> dict:
-        # The public endpoint rejects a missing User-Agent; self-hosted does not care.
+        # the public endpoint rejects a request with no User-Agent
         return {"User-Agent": self.quirks.user_agent} if self.quirks.user_agent else {}
 
     async def _throttle(self) -> None:
-        """Client-side rate limit. No-op when the quirk is 0 (self-hosted)."""
+        """Client-side rate limit; no-op when rate_limit_seconds is 0."""
         gap = self.quirks.rate_limit_seconds
         if not gap:
             return
@@ -133,7 +110,7 @@ class OsmGeocoder(Adapter):
         top = data[0]
         lat, lon = float(top["lat"]), float(top["lon"])
 
-        # boundingbox arrives as strings; normalise once so the renderer gets numbers.
+        # boundingbox arrives as strings
         bbox = None
         area = None
         raw_bbox = top.get("boundingbox") or []
@@ -151,7 +128,7 @@ class OsmGeocoder(Adapter):
         }
 
 
-# Drift guard: a wire may only map into the domain's vocabulary.
+# drift guard: a wire may only map into the domain's vocabulary
 assert set(WIRE_TYPES.values()) <= PLACE_TYPES, (
     f"{sorted(set(WIRE_TYPES.values()) - PLACE_TYPES)} is not in geocoding's PLACE_TYPES"
 )

@@ -98,14 +98,14 @@
 ```
    resolve("language", infospace_id=5)
 
-     1  context       infospace.enrichment_config   embedding · ocr · geocoding
+     1  context       infospace.enrichment_config   SELECTABLE_ENRICHERS
                       owner.provider_defaults       fallback, all domains
                            └──► ProviderSelection        one DB round-trip
 
      2  credentials   runtime_key ────────────► per-call BYOK        ◄── wins
                       owner.encrypted ────────► per-user
-                      Setting.read ───────────► deployment env
-                         └─ only if PROVIDER_ACCESS_<CAP>_<KEY>
+                      Setting.read ───────────► deployment key
+                         └─ only if foundation.access grants all|superuser
                       nothing ────────────────► ProviderError
 
      3  construct     dialect module imported NOW, first time
@@ -151,7 +151,7 @@
    class Groq:
        key      = "groq"
        api_key  = Setting("GROQ_API_KEY", label="…", url="…")
-       base_url = Setting("GROQ_BASE_URL", default="https://api.groq.com/openai/v1")
+       base_url = Setting("GROQ_BASE_URL")
        contexts = {"cloud"}
 
        language = Language(
@@ -160,7 +160,8 @@
            quirks   = TurnsQuirks(max_tokens_field="max_completion_tokens"),
        )
 
-   no AppSettings field       Setting.read falls back to os.environ
+   every Setting attr         must be a declared AppSettings field; that
+                              field carries the default, Setting never does
    no models=                 an undeclared model still resolves and runs
 ```
 

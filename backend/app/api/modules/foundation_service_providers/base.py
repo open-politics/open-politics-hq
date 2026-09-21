@@ -1,6 +1,5 @@
 """
 base.py — the transport every dialect adapter shares.
-=====================================================
 
   Adapter(descriptor, quirks, api_key, base_url, **extra)
        ├──► .descriptor / .quirks / .api_key / .base_url / .extra
@@ -11,14 +10,9 @@ base.py — the transport every dialect adapter shares.
   .url(path) ──► f"{base_url}/{path.lstrip('/')}"
 
   ONE PRIMITIVE, TWO FRAMINGS
-    ._stream_lines(url, payload)
-         raises on HTTP >=400 BEFORE the first yield — so retry logic
-         can inspect the error instead of an already-consumed stream
+    ._stream_lines(url, payload)   raises on HTTP >=400 before the first yield
               ├──► .sse(...)     ``data:`` lines, JSON, skips "[DONE]"
               └──► .ndjson(...)  one JSON object per line, no prefix
-
-  Fourteen dialect adapters share this file. Before it existed, four
-  of five language providers configured no timeout at all.
 
   NOT IN THIS FILE
     primitives.py            Setting — what api_key/base_url resolve from.
@@ -35,24 +29,16 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
-# Generous, because local CPU inference is legitimately slow — but finite.
 DEFAULT_TIMEOUT_SECONDS = 900.0
 
 
 class Adapter:
-    """Base for every dialect adapter.
+    """Base for every dialect adapter: the resolved declaration plus transport.
 
-    Subclasses implement the domain protocol (``geocode``, ``embed_texts``,
-    ``extract_text``, …). They get ``self.base_url`` / ``self.api_key`` /
-    ``self.quirks`` / ``self.descriptor`` for free, plus a lazily-created shared
-    ``httpx`` client.
-
-    ``**extra`` swallows whatever an ``extra=`` lambda supplied on the
-    declaration; subclasses that need those values name them explicitly in
-    their own ``__init__`` and pass the rest up.
+    ``**extra`` swallows values from an ``extra=`` lambda that the subclass
+    does not name in its own ``__init__``.
     """
 
-    #: Per-adapter override. Set on a subclass when its wire needs a different budget.
     timeout: float = DEFAULT_TIMEOUT_SECONDS
 
     def __init__(
@@ -71,17 +57,16 @@ class Adapter:
         self.extra = extra
         self._client: Optional[httpx.AsyncClient] = None
 
+    @property
+    def provider_key(self) -> Optional[str]:
+        """Which declaration this adapter came from. Features name it in logs."""
+        return self.descriptor.provider_key if self.descriptor else None
+
     # ── transport ────────────────────────────────────────────────────────────
 
     @property
     def client(self) -> httpx.AsyncClient:
-        """Lazily-created async client. One per adapter instance.
-
-        Adapter instances are currently per-resolve (see
-        `docs/plans/found-adjacent-2026-09.md` §5 — pooling these is a
-        follow-up), so this is created on first use rather than in ``__init__``
-        to keep construction free for the many resolves that never make a call.
-        """
+        """Lazily-created async client, one per adapter instance."""
         if self._client is None:
             self._client = httpx.AsyncClient(timeout=self.timeout, headers=self.headers())
         return self._client
@@ -97,15 +82,9 @@ class Adapter:
         return f"{self.base_url}/{path.lstrip('/')}"
 
     # ── streaming frames ─────────────────────────────────────────────────────
-    # Two framings cover every endpoint; they live here because they are transport.
 
     async def _stream_lines(self, url: str, payload: dict, headers: dict | None = None):
-        """POST and iterate response lines, raising on a non-2xx before any yield.
-
-        Failing *before* the first yield is what lets the engine's retry logic
-        inspect the error — a failure surfacing mid-iteration is far harder to
-        recover from, because the caller has already seen partial output.
-        """
+        """POST and iterate response lines, raising on a non-2xx before any yield."""
         async with self.client.stream("POST", url, json=payload,
                                       headers=headers or None) as response:
             if response.status_code >= 400:
@@ -135,4 +114,8 @@ class Adapter:
         """Newline-delimited JSON: one complete object per line, no prefix."""
         async for line in self._stream_lines(url, payload):
             if not line.strip():
-                continu
+                continue
+            try:
+                yield json.loads(line)
+            except json.JSONDecodeError:
+                logger.debug("Unparseable NDJSON frame: %.120s", line)

@@ -1,6 +1,5 @@
 """
 user_config.py — what a user or infospace has *chosen*.
-=======================================================
 
   Infospace.enrichment_config ──► EnrichmentConfig   per-infospace, opt-in
        ocr, geocoding            True | ProviderSelection | None
@@ -18,7 +17,7 @@ user_config.py — what a user or infospace has *chosen*.
   ProviderSelection(provider_key, model_name, dimension=None)
        the one unit both configs bind down to
 
-  BACK-COMPAT, in the constructors only
+  BACK-COMPAT, for rows written before the renames
     ProviderSelection.type_key  ──► provider_key
     ProviderDefaults.search     ──► web_search
 
@@ -37,7 +36,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class ProviderSelection(BaseModel):
@@ -47,31 +46,17 @@ class ProviderSelection(BaseModel):
     # For variable-dimension models; inert until a `matryoshka` feature reads it.
     dimension: Optional[int] = None
 
-    class Config:
-        populate_by_name = True
+    model_config = {"populate_by_name": True}
 
+    @model_validator(mode="before")
     @classmethod
-    def __get_validators__(cls):
-        yield cls._compat_validator
-
-    @classmethod
-    def _compat_validator(cls, v):
-        if isinstance(v, dict) and "type_key" in v and "provider_key" not in v:
-            v = {**v, "provider_key": v.pop("type_key")}
-        return v
-
-    def __init__(self, **data):
-        # Backwards compat with rows written before the rename.
-        if "type_key" in data and "provider_key" not in data:
-            data["provider_key"] = data.pop("type_key")
-        elif "type_key" in data:
+    def _accept_type_key(cls, data):
+        """`type_key` was this field's first name; stored rows still carry it."""
+        if isinstance(data, dict) and "type_key" in data:
+            data = {**data}
+            data.setdefault("provider_key", data["type_key"])
             data.pop("type_key")
-        super().__init__(**data)
-
-    @property
-    def type_key(self) -> str:
-        """Backwards-compat accessor."""
-        return self.provider_key
+        return data
 
 
 class LanguageDefaults(BaseModel):
@@ -95,9 +80,9 @@ class LanguageDefaults(BaseModel):
 class ProviderDefaults(BaseModel):
     """A user's per-domain provider preferences.
 
-    Completeness checks live in ``validate_provider_defaults()`` — call it from
-    save-path endpoints only. The model itself stays permissive so existing DB
-    rows with partial selections still deserialize.
+    Completeness checks live in ``validate_provider_defaults()``, called from
+    save-path endpoints only — the model itself stays permissive so DB rows with
+    partial selections still deserialize.
     """
     language: Optional[LanguageDefaults] = None
     embedding: Optional[ProviderSelection] = None
@@ -105,13 +90,15 @@ class ProviderDefaults(BaseModel):
     ocr: Optional[ProviderSelection] = None
     geocoding: Optional[ProviderSelection] = None
 
-    def __init__(self, **data):
-        # "search" was the field's first name.
-        if "search" in data and "web_search" not in data:
-            data["web_search"] = data.pop("search")
-        elif "search" in data:
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_search(cls, data):
+        """`search` was `web_search`'s first name."""
+        if isinstance(data, dict) and "search" in data:
+            data = {**data}
+            data.setdefault("web_search", data["search"])
             data.pop("search")
-        super().__init__(**data)
+        return data
 
     def provider_for(
         self, capability: str, context: Optional[str] = None
@@ -126,11 +113,11 @@ class ProviderDefaults(BaseModel):
 
 
 class EnrichmentConfig(BaseModel):
-    """Per-infospace enrichment configuration. Every enricher is opt-in.
+    """What one infospace says about the enrichers. Three states per field:
 
-    Each field is either ``True`` (enable with system defaults), a
-    ``ProviderSelection`` (enable with a specific provider+model), or
-    ``None``/missing (disabled).
+      True | ProviderSelection   on, the second one naming provider and model
+      False                      off, overriding the deployment
+      None / absent              not stated — the deployment's default stands
 
     Embedding is always ``ProviderSelection`` — you cannot embed without
     choosing a provider and a model, because the vector dimension depends on it.
@@ -143,15 +130,14 @@ class EnrichmentConfig(BaseModel):
     embedding: Optional[ProviderSelection] = None
     embedding_dimension_override: Optional[int] = None
 
-    def is_enabled(self, enricher_name: str) -> bool:
+    def state_of(self, enricher_name: str) -> Optional[bool]:
+        """This infospace's answer for one enricher, or None for "not stated"."""
         val = getattr(self, enricher_name, None)
         if val is None:
-            return False
+            return None
         if isinstance(val, bool):
             return val
-        if isinstance(val, (ProviderSelection, dict)):
-            return True
-        return False
+        return True      # a ProviderSelection is a choice, so it is an enable
 
     def provider_for(self, capability: str) -> Optional[ProviderSelection]:
         val = getattr(self, capability, None)
@@ -162,6 +148,20 @@ class EnrichmentConfig(BaseModel):
         return None
 
 
+def enricher_enabled(
+    enricher_name: str,
+    config: Optional[EnrichmentConfig],
+    *,
+    deployment_default: bool,
+) -> bool:
+    """Deployment default, unless this infospace said otherwise about this one.
+
+    Silence is the point: turning ocr on must not turn hash off.
+    """
+    stated = config.state_of(enricher_name) if config is not None else None
+    return deployment_default if stated is None else stated
+
+
 #: Enrichment fields carrying a ProviderSelection. Derived, never hand-listed.
 SELECTABLE_ENRICHERS = tuple(
     name for name, f in EnrichmentConfig.model_fields.items()
@@ -169,16 +169,14 @@ SELECTABLE_ENRICHERS = tuple(
 )
 
 
-# ── Save-time validation ──────────────────────────────────────────────────────
-# Save-time only: validating on read would lock users out of older config.
+# Save-time validation. Validating on read would lock users out of older config.
 
 
 def _assert_model_required(capability: str, sel: Optional[ProviderSelection]) -> None:
     """Raise ``ValueError`` if the provider needs a model and none is set.
 
-    This is a *presence* check, not a membership check — an undeclared model
-    name is perfectly legal (declared specs are curated defaults, not an
-    allowlist). We only insist that *some* model was chosen where one is needed.
+    A presence check, not a membership check: an undeclared model name is legal,
+    so this only insists that some model was chosen where one is needed.
     """
     if sel is None or not sel.provider_key:
         return

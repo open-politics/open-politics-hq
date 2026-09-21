@@ -1,16 +1,15 @@
 """
 turns.py — role-tagged messages; a tool result is its own message.
-==================================================================
 
   POST {base}/chat/completions (mistral)  ·  {base}/api/chat (ollama)
 
-  SIX FLAGS, ZERO VENDOR BRANCHES BELOW (TurnsQuirks)
+  TurnsQuirks, so no vendor branches below
     tool_args_encoding          ollama sends a dict, mistral a JSON string
     tool_result_needs_call_id   mistral requires it, ollama has no such field
     image_placement             ollama: message-level `images` array
     schema_field                ollama: `format` · mistral: `response_format`
-    params_envelope              ollama nests sampling params under `options`
-    stream_frame                 ollama: NDJSON · mistral: SSE deltas
+    params_envelope             ollama nests sampling params under `options`
+    stream_frame                ollama: NDJSON · mistral: SSE deltas
 
   ENCODE  Turn ──────────────────────────────────────────► request body
     _apply_params    sampling params ─► nested or flat, by `params_envelope`
@@ -26,21 +25,9 @@ turns.py — role-tagged messages; a tool result is its own message.
     always     thinking_tags ─► salvage_thinking(raw)
                not native_tool_parsing ─► salvage_tool_calls(reply.text)
 
-  MESSAGE SHAPE                          WHY ITS OWN MESSAGE
-    assistant [content, tool_calls]        the structural signature that
-    tool {role: "tool", content,           separates this wire from `blocks`
-          tool_call_id?}                   (nested in a user turn) and
-                                            `items` (a sibling item)
-
-  NOT IN THIS FILE
-    ../transforms.py   normalize_media · salvage_* · shape_schema — shared.
-    ../engine.py        the turn loop, the ledger, retries.
-    ../quirks.py        TurnsQuirks — the six flags above, typed and named.
-
-Mistral and Ollama looked like different APIs and were two files, 1914 lines
-between them — the whole difference turned out to be the six flags above.
-Zero vendor branches in the loop is the test of whether a dialect boundary
-sits in the right place.
+  MESSAGE SHAPE
+    assistant [content, tool_calls]
+    tool      {role: "tool", content, tool_call_id?}
 """
 
 from __future__ import annotations
@@ -164,13 +151,8 @@ class TurnsDialect(LanguageDialect):
     def _attach_media(self, messages: List[Dict[str, Any]],
                       media: List[Dict[str, Any]],
                       spec: Any = None) -> List[Dict[str, Any]]:
-        """Attach images, but only to a model that can actually read them.
-
-        The capability gate is not cosmetic. A text-only model handed an
-        ``images`` array commonly hard-errors, where dropping them degrades to a
-        text-only answer that still succeeds. The old provider checked a live
-        probe; the spec cascade now answers the same question with no I/O.
-        """
+        """Attach images, but only to a model that reports multimodal support —
+        a text-only model handed an ``images`` array commonly hard-errors."""
         images = normalize_media(media)
         if not images:
             return messages
@@ -321,7 +303,6 @@ class TurnsDialect(LanguageDialect):
                 ToolCall(id=slot["id"] or f"call_{slot['name']}", name=slot["name"], arguments=args)
             )
 
-        # Decode pipeline — each step selected by a quirk, not by a provider name.
         if self.quirks.thinking_tags:
             thinking, clean = salvage_thinking(raw)
             reply.thinking, reply.text = thinking or "", clean

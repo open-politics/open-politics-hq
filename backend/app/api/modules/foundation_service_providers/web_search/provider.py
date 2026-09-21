@@ -1,6 +1,5 @@
 """
 web_search/provider.py — the Domain itself.
-===========================================
 
   base.py     WebSearchProvider  ─┐
   models.py   WebSearchQuirks    ─┴──►  WebSearch = Domain(…)

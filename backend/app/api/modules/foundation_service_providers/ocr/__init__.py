@@ -1,11 +1,10 @@
 """
 ocr — an image in, text out.
-============================
 
-  base.py      the contract         OcrProvider
-  models.py    the data             OcrResult · OcrQuirks
-  provider.py  the Domain           Ocr
-  dialects/    the wires            local_engine · vision_prompt
+  base.py      OcrProvider
+  models.py    OcrResult · OcrQuirks
+  provider.py  the Ocr domain
+  dialects/    local_engine (tesseract) · vision_prompt (ollama)
 """
 
 from app.api.modules.foundation_service_providers.ocr.base import OcrProvider
@@ -14,7 +13,7 @@ from app.api.modules.foundation_service_providers.ocr.models import (
 )
 from app.api.modules.foundation_service_providers.ocr.provider import Ocr
 
-# Registers the dialects. Must follow the Domain it registers onto.
+# side-effect import: registers the dialects onto the Domain
 from app.api.modules.foundation_service_providers.ocr import dialects  # noqa: F401
 
 

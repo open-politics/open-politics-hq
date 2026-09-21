@@ -1,6 +1,5 @@
 """
 __init__.py — the only import surface external callers use.
-===========================================================
 
   .primitives  ──► Resolution (vocabulary): CAPABILITIES, ProviderError,
                     Setting, descriptor_for, list_providers, …
@@ -16,8 +15,7 @@ __init__.py — the only import surface external callers use.
                      EnrichmentConfig, validate_*
 
   seven domain packages  ──► Contracts: the Provider Protocols and their
-                              result types — no implementation, so this
-                              import is safe at startup
+                              result types, no implementation
 
   resolve("language", infospace_id=5)      build a provider
   list_models("language", "ollama", ...)   what this endpoint can run NOW
@@ -27,7 +25,6 @@ __init__.py — the only import surface external callers use.
     MAP.md         why the package is shaped this way.
 """
 
-# The vocabulary a declaration is written in.
 from .primitives import (
     CAPABILITIES,
     ProviderError,
@@ -35,35 +32,34 @@ from .primitives import (
     Setting,
     capabilities_for,
     descriptor_for,
-    get_model_spec,
     list_providers,
 )
 
-# Importing this runs providers.py, so it must follow the vocabulary.
+# Runs providers.py, so it must follow the vocabulary above.
 from .resolve import (
     get_configured_foundation_provider,
+    get_model_spec,
     is_capability_available,
     list_models,
     probe_providers,
     resolve,
 )
 
-# Model specs.
 from .models import ModelSpec
 from .language import LLMModelSpec
 from .embedding import EmbeddingModelSpec
 
-# What a user or infospace has chosen.
 from .user_config import (
     ProviderSelection,
     LanguageDefaults,
     ProviderDefaults,
     EnrichmentConfig,
+    enricher_enabled,
     validate_provider_defaults,
     validate_enrichment_config,
 )
 
-# Contracts only — importing these pulls in no implementation, so startup is safe.
+# Contracts only — no implementation is imported here.
 from .language import LanguageModelProvider, GenerationResponse, GenerationOptions
 from .embedding import EmbeddingProvider
 from .ocr import OcrProvider, OcrResult
@@ -82,7 +78,7 @@ __all__ = [
     "ModelSpec", "LLMModelSpec", "EmbeddingModelSpec",
     # Selection
     "ProviderSelection", "LanguageDefaults", "ProviderDefaults", "EnrichmentConfig",
-    "validate_provider_defaults", "validate_enrichment_config",
+    "enricher_enabled", "validate_provider_defaults", "validate_enrichment_config",
     # Contracts
     "LanguageModelProvider", "GenerationResponse", "GenerationOptions",
     "EmbeddingProvider", "OcrProvider", "OcrResult", "GeocodingProvider",

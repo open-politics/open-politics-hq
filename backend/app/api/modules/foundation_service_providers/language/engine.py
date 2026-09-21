@@ -1,6 +1,5 @@
 """
 language/engine.py — the turn loop; every dialect runs through this one.
-========================================================================
 
   generate(stream=True)   ──►  _run(turn)                 (bare generator)
   generate(stream=False)  ──►  drains _run(turn), returns its last snapshot
@@ -14,24 +13,14 @@ language/engine.py — the turn loop; every dialect runs through this one.
           adapter.extend(...) ──► loop, or EXIT terminate_signal /
                                         max_iterations
 
-  Ledger   cross-turn state, rebuilt nowhere else
-    tool_executions   the WHOLE list, every yield — ids stable across yields
+  Ledger   cross-turn state
+    tool_executions   the whole list, every yield — ids stable across yields
     usage             summed across iterations
-    transcript        prefix + current, \n\n-joined so no iteration
-                       overwrites an earlier one
+    transcript        prefix + current, blank-line joined
 
   RETRIES — in _stream_turn, selected by quirk, never by vendor name
     "does not support tools"     ──► retry once, tools=[]
     "does not support <param>"   ──► retry once, bare sampling options
-
-  NOT IN THIS FILE
-    transforms.py   tool_result, join_transcript — the pure steps this calls.
-    <dialect>.py    the only place that varies per vendor: encode / decode.
-
-Five providers each carried two copies of this loop (streaming and not) —
-Anthropic's alone was 744 + 280 lines. Mistral's ledger copy forgot to store
-`model_view`, silently losing tool results on a second turn; one `Ledger`
-makes that bug unrepresentable.
 """
 
 from __future__ import annotations
@@ -58,9 +47,8 @@ logger = logging.getLogger(__name__)
 class Ledger:
     """Cross-turn state: tool executions, cumulative usage, running transcript.
 
-    Every snapshot carries the **whole** execution list, because the frontend
-    replaces rather than merges, and ids stay stable across yields because the
-    UI keys directive dedup and ``<tool_results id=…/>`` resolution off them.
+    Every snapshot carries the whole execution list with stable ids — the
+    frontend replaces rather than merges.
     """
 
     def __init__(self, model: str):
@@ -108,7 +96,7 @@ class Ledger:
         entry.update({
             "result": None if outcome.failed else outcome.display,
             "structured_content": None if outcome.failed else outcome.display,
-            # Written on failures too, or replay drops the entry and the model retries it.
+            # Written on failures too: replay needs the entry.
             "model_view": outcome.llm_content,
             "error": outcome.error,
             "status": "failed" if outcome.failed else "completed",
@@ -139,8 +127,8 @@ class Ledger:
 class DialectProvider:
     """Satisfies ``LanguageModelProvider`` over any language dialect.
 
-    Delegates unknown attributes to the dialect adapter so features composed
-    onto this object and adapter internals both stay reachable.
+    Unknown attributes delegate to the dialect adapter, so composed features
+    and adapter internals stay reachable.
     """
 
     def __init__(self, adapter, descriptor):
@@ -165,12 +153,8 @@ class DialectProvider:
         options: Optional[GenerationOptions] = None,
         **kwargs: Any,
     ) -> Union[GenerationResponse, AsyncIterator[GenerationResponse]]:
-        """Run one generation.
-
-        With ``stream=True`` this returns a bare async generator — the caller
-        awaits this coroutine, then iterates the result. That two-step shape is
-        what every consumer in the codebase is written against.
-        """
+        """Run one generation. ``stream=True`` returns a bare async generator:
+        await this coroutine, then iterate the result."""
         opts = options if options is not None else GenerationOptions(**kwargs)
 
         spec = self.descriptor.get_model(model_name) or self.descriptor.binding.dialect.baseline
@@ -180,7 +164,6 @@ class DialectProvider:
             options=opts,
             tools=list(tools or []),
             response_format=response_format,
-            # Only where the model actually reasons; this once read an empty cache.
             thinking=bool(thinking_enabled and getattr(spec, "supports_thinking", False)),
             executor=tool_executor,
             spec=spec,
@@ -196,7 +179,6 @@ class DialectProvider:
         async for snapshot in self._run(turn):
             last = snapshot
         if last is None:
-            # Belt-and-braces: a caller must never get None back.
             return GenerationResponse(content="", model_used=turn.model,
                                       finish_reason="empty")
         return last
@@ -228,7 +210,6 @@ class DialectProvider:
                 return
 
             if turn.executor is None:
-                # Tools offered, no executor: surface the calls, don't loop.
                 snap = ledger.snapshot(thinking=reply.thinking, finish="tool_calls", final=True)
                 snap.tool_calls = [
                     {"id": c.id, "type": "function",
@@ -281,14 +262,8 @@ class DialectProvider:
     # ── retries, driven by quirks ────────────────────────────────────────────
 
     async def _stream_turn(self, turn: Turn):
-        """One model turn, with the retries that used to live in five places.
-
-        ``retry_without_tools_on_400`` existed twice inside the Ollama provider
-        alone, with the two copies having drifted apart. The "does not support
-        tools" and "does not support temperature" retries lived in
-        ``conversation_service`` as string matches against error text — a
-        provider concern that had leaked into a service.
-        """
+        """One model turn, retried once when the endpoint rejects tools or a
+        sampling parameter."""
         try:
             async for delta in self.adapter.stream(turn):
                 yield delta

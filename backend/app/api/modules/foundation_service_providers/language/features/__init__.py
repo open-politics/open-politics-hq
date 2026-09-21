@@ -1,6 +1,5 @@
 """
 language/features — optional surfaces an endpoint may expose.
-=============================================================
 
   Language.feature(name, module)     PROVIDES ─► bound as p.<name>(...)
 
@@ -12,11 +11,8 @@ language/features — optional surfaces an endpoint may expose.
     prompt_caching  cacheable ─► cache_control ─► apply_cache_markers
     mcp             native MCP passthrough ─► mcp_tool
 
-  NOT IN THIS FILE
-    ../resolve.py   _compose_features — the loop that binds PROVIDES.
-
 models_v1 and models_ollama both bind `list_models`; a declaration attaches
-whichever matches the endpoint, and a caller never learns which one ran.
+whichever matches the endpoint.
 """
 
 from app.api.modules.foundation_service_providers.language.provider import Language
