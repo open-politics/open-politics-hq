@@ -12,7 +12,7 @@
  */
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Loader2, Plus, Save, Scale, Trash2, X } from 'lucide-react';
+import { Loader2, Plus, Save, Scale, Sparkles, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { LogicService } from '@/client';
@@ -90,6 +90,23 @@ function toCriteria(q: DraftQuestion): QuestionIn['criteria'] {
   return Object.keys(sides).length ? sides : null;
 }
 
+/** A drafted question → the shape the form edits. The inverse of `toCriteria`. */
+function fromWire(q: QuestionIn): DraftQuestion {
+  const type = (['noul', 'choice', 'score'].includes(q.type) ? q.type : 'noul') as QuestionKind;
+  const criteria: any = q.criteria;
+  return {
+    ...BLANK,
+    type,
+    instructions: q.instructions,
+    options: type === 'choice' && criteria && typeof criteria === 'object' && !Array.isArray(criteria)
+      ? Object.entries(criteria).map(([key, description]) => ({ key, description: String(description ?? '') }))
+      : BLANK.options,
+    levels: type === 'score' && Array.isArray(criteria) ? criteria.map(String) : BLANK.levels,
+    yes: type === 'noul' && criteria && !Array.isArray(criteria) ? String(criteria.true ?? '') : '',
+    no: type === 'noul' && criteria && !Array.isArray(criteria) ? String(criteria.false ?? '') : '',
+  };
+}
+
 /** What the answer says, in one line, before any of the numbers. */
 function headline(a: AnswerOut): string {
   if (a.kind === 'noul') return `${Math.round(Number(a.value) * 100)}% yes`;
@@ -114,6 +131,8 @@ export default function DecisionPanel({ infospaceId }: { infospaceId: number }) 
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<DecisionOut[]>([]);
   const [name, setName] = useState('');
+  const [prose, setProse] = useState('');
+  const [drafting, setDrafting] = useState(false);
 
   const loadSaved = useCallback(async () => {
     try {
@@ -127,6 +146,27 @@ export default function DecisionPanel({ infospaceId }: { infospaceId: number }) 
 
   const patch = (i: number, next: Partial<DraftQuestion>) =>
     setQuestions(qs => qs.map((q, j) => (j === i ? { ...q, ...next } : q)));
+
+  /** Optional: let the configured chat model write the questions. It fills the
+   *  form and decides nothing — the person still edits and runs. */
+  const draft = async () => {
+    if (!prose.trim()) return;
+    setDrafting(true); setError(null);
+    try {
+      const res = await LogicService.draft({
+        infospaceId,
+        requestBody: { prose: prose.trim(), state: state.trim() || null },
+      });
+      const drafted = Object.entries(res.questions);
+      if (!drafted.length) { toast.error('The model proposed no questions'); return; }
+      setQuestions(drafted.map(([key, q]) => ({ ...fromWire(q as QuestionIn), key })));
+      setAnswers(null);
+    } catch (e: any) {
+      setError(e?.body?.detail ?? e?.message ?? 'The draft could not be written.');
+    } finally {
+      setDrafting(false);
+    }
+  };
 
   const run = async () => {
     setRunning(true); setError(null); setAnswers(null);
@@ -201,6 +241,24 @@ export default function DecisionPanel({ infospaceId }: { infospaceId: number }) 
         </DialogHeader>
 
         <div className="space-y-4">
+          {/* ── draft (optional) ─────────────────────────────────────── */}
+          <div className="flex gap-2">
+            <Input
+              value={prose}
+              onChange={e => setProse(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') draft(); }}
+              className="h-8 text-sm"
+              placeholder="Describe what you want to decide, and let the model draft the questions…"
+            />
+            <Button
+              variant="outline" size="sm" className="h-8 gap-1.5 shrink-0"
+              onClick={draft} disabled={drafting || !prose.trim()}
+            >
+              {drafting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              Draft
+            </Button>
+          </div>
+
           {/* ── evidence ─────────────────────────────────────────────── */}
           <div className="space-y-1.5">
             <Label className="text-xs">Evidence</Label>
