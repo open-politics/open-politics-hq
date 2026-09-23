@@ -38,6 +38,9 @@ from app.api.modules.foundation_service_providers.geocoding import Geocoding, Ge
 from app.api.modules.foundation_service_providers.language import (
     Language, BlocksQuirks, TurnsQuirks, ItemsQuirks, LLMModelSpec,
 )
+from app.api.modules.foundation_service_providers.logic import (
+    Logic, QuestionsQuirks, RawQuirks,
+)
 from app.api.modules.foundation_service_providers.ocr import Ocr, OcrQuirks
 from app.api.modules.foundation_service_providers.scraping import Scraping, ScrapingQuirks
 from app.api.modules.foundation_service_providers.storage import Storage
@@ -102,6 +105,15 @@ class LlamaCpp:
             # A GGUF reasons because its chat template does, not because we asked.
             no_thinking_template_kwarg="enable_thinking",
         ),
+    )
+
+    # The same server answers decisions by reading the next token instead of
+    # generating one — no server flag, no second process. Untrained at the task,
+    # so nothing defaults here: `foundation.use.logic` has to name it.
+    logic = Logic(
+        dialect=Logic.dialects.raw,
+        model_required=False,           # llama-server serves the one GGUF it loaded
+        quirks=RawQuirks(),
     )
 
 
@@ -450,4 +462,49 @@ class SearXNG:
     web_search = WebSearch(
         dialect=WebSearch.dialects.metasearch,
         model_required=False,
+    )
+
+
+# Logic
+
+
+@provider
+class Kev:
+    key = "kev"
+    name = "Kev"
+    description = "Small calibrated decision models, in a container on this machine."
+    base_url = Setting("KEV_BASE_URL")
+    contexts = {"local", "self_hosted"}
+
+    # No models declared, and none to pick: the container loads one checkpoint at
+    # startup, named by `foundation.providers.kev.run` in HQ.yml. The feature
+    # reports which one that is; a picker here would offer a choice the server
+    # ignores. Switching means editing HQ.yml and recreating the container.
+    logic = Logic(
+        dialect=Logic.dialects.questions,
+        model_required=False,
+        features=[Logic.features.loaded_model],
+        # Every Kev checkpoint was trained on states up to 384 tokens. Longer
+        # ones are answered, not refused — the engine just says so in the log.
+        quirks=QuestionsQuirks(trained_state_tokens=384),
+    )
+
+
+@provider
+class TypeSafe:
+    key = "typesafe"
+    name = "TypeSafe Jev"
+    description = "Hosted decision models. Same wire as Kev, someone else's hardware."
+    api_key = Setting("TYPESAFE_API_KEY", label="TypeSafe API Key",
+                      url="https://docs.typesafe.ai/api")
+    base_url = Setting("TYPESAFE_BASE_URL")
+    contexts = {"cloud"}
+
+    logic = Logic(
+        dialect=Logic.dialects.questions,   # same packaging as the local one…
+        model_required=False,
+        features=[Logic.features.loaded_model],
+        # …behind a credential. No trained-state claim: what Jev was trained on
+        # is not published, and a guess would produce a warning nobody can act on.
+        quirks=QuestionsQuirks(auth_header="bearer"),
     )

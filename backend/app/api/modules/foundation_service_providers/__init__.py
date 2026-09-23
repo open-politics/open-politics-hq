@@ -14,7 +14,7 @@ __init__.py — the only import surface external callers use.
   .user_config  ──► Selection: ProviderSelection, ProviderDefaults,
                      EnrichmentConfig, validate_*
 
-  seven domain packages  ──► Contracts: the Provider Protocols and their
+  eight domain packages  ──► Contracts: the Provider Protocols and their
                               result types, no implementation
 
   resolve("language", infospace_id=5)      build a provider
@@ -32,6 +32,7 @@ from .primitives import (
     Setting,
     capabilities_for,
     descriptor_for,
+    domain_for,
     list_providers,
 )
 
@@ -62,6 +63,7 @@ from .user_config import (
 # Contracts only — no implementation is imported here.
 from .language import LanguageModelProvider, GenerationResponse, GenerationOptions
 from .embedding import EmbeddingProvider
+from .logic import LogicProvider, Noul, Choice, Score, Question, Answer
 from .ocr import OcrProvider, OcrResult
 from .geocoding import GeocodingProvider
 from .scraping import ScrapingProvider
@@ -71,7 +73,8 @@ from .web_search import WebSearchProvider, SearchHit, SearchResults
 __all__ = [
     # Resolution
     "resolve", "list_models", "Resolved", "ProviderError", "Setting",
-    "is_capability_available", "list_providers", "descriptor_for", "capabilities_for",
+    "is_capability_available", "list_providers", "descriptor_for", "domain_for",
+    "capabilities_for",
     "get_model_spec", "get_configured_foundation_provider", "probe_providers",
     "CAPABILITIES",
     # Model specs
@@ -81,6 +84,7 @@ __all__ = [
     "enricher_enabled", "validate_provider_defaults", "validate_enrichment_config",
     # Contracts
     "LanguageModelProvider", "GenerationResponse", "GenerationOptions",
+    "LogicProvider", "Noul", "Choice", "Score", "Question", "Answer",
     "EmbeddingProvider", "OcrProvider", "OcrResult", "GeocodingProvider",
     "ScrapingProvider", "StorageProvider", "WebSearchProvider",
     "SearchHit", "SearchResults",

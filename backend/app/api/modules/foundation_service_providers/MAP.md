@@ -15,16 +15,16 @@
                                                               │
       ┌───────────────────────────────────────────────────────┘
       ▼
-   ┌──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┐
-   │ language │embedding │ geocoding│web_search│ storage  │   ocr    │ scraping │
-   ├──────────┼──────────┼──────────┼──────────┼──────────┼──────────┼──────────┤
-   │ blocks   │ indexed  │ osm      │ answer_  │ s3       │ vision_  │ article_ │
-   │ turns    │ flat     │ geojson  │  engine  │ file     │  prompt  │  parser  │
-   │ items    │          │          │metasearch│  system  │ local_   │          │
-   │          │          │          │          │          │  engine  │          │
-   └──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┘
-        5          4          3          2          2          2          1
-                              19 endpoints · 7 domains
+   ┌──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬──────────┐
+   │ language │embedding │  logic   │ geocoding│web_search│ storage  │   ocr    │ scraping │
+   ├──────────┼──────────┼──────────┼──────────┼──────────┼──────────┼──────────┼──────────┤
+   │ blocks   │ indexed  │questions │ osm      │ answer_  │ s3       │ vision_  │ article_ │
+   │ turns    │ flat     │ raw      │ geojson  │  engine  │ file     │  prompt  │  parser  │
+   │ items    │          │          │          │metasearch│  system  │ local_   │          │
+   │          │          │          │          │          │          │  engine  │          │
+   └──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴──────────┘
+        5          4          3          3          2          2          2          1
+                              22 endpoints · 8 domains
 ```
 
 ## Every domain, same five files
@@ -142,6 +142,78 @@
             tool       one message per result
 
    items    … │ function_call │ function_call_output │ …   siblings
+```
+
+## The two logic wires
+
+```
+                questions           raw
+                kev                 llamacpp
+                typesafe
+   ───────────────────────────────────────────────────────────────
+   unit         one state,          one state,
+                many questions      one question per forward pass
+   reads        the server's        next-token logprobs, restricted
+                own distribution    to the answer letters
+   trained      yes — calibrated    no — any instruct GGUF
+   path         /v1/systemone       /completion (+ /apply-template, /tokenize)
+   ───────────────────────────────────────────────────────────────
+
+   Both return Readout{scores, kind, mass} and nothing else. Normalising,
+   calibrating and naming happen once, in transforms.to_answer — which is why
+   the engine cannot tell which wire replied, and why a threshold set on one
+   endpoint means the same thing on another.
+
+   A decision is one state and EVERY question about it: questions pack into a
+   single request, and a readout walks them over one cached prefix.
+```
+
+## Which model a logic endpoint runs
+
+```
+   NOT a picker. A decision server loads ONE checkpoint at startup and has no
+   endpoint to load another, so the choice is deployment config, not a request
+   parameter — and no model is declared on the provider.
+
+   HQ.yml  foundation.providers.kev.run: jaredpalmer/kev-4b
+     └─► setup.sh render ─► HQ_KEV_RUN ─► compose KEV_RUN ─► kev.serve --run
+                                          (downloads from HF on first boot)
+
+   switching   edit HQ.yml · ./setup.sh render · docker compose up -d kev
+               the old weights stay in the kev_models volume, so going back is free
+
+   reading     the `loaded_model` feature (GET /v1/models) reports what is
+               actually answering, so the setup UI shows it instead of offering
+               a menu the server ignores — the same bargain llama.cpp makes.
+
+   what the model can take — option ceiling, trained state window — is therefore
+   a quirk of the ENDPOINT, not a ModelSpec a caller picks.
+```
+
+## Calling logic from a task
+
+```
+   @task("<name>", check=lambda iid: select(...),   # rows still needing a judgment
+         queue="logic", batch=25, max_concurrency=1, self_chain=True,
+         capability="logic", tags=frozenset({"logic"}))
+   def judge_x(ctx, ids):
+       answers = await ctx.provider("logic").judge_many(items)
+
+   where the provider comes from — the ordinary cascade, nothing logic-specific
+     owner.provider_defaults.logic   a user's pick, saved from the settings UI
+     foundation.use.logic            the deployment's answer for everyone
+     neither                         ProviderError ─► @task structural block,
+                                     cleared the moment config is saved
+
+   aggregation, three levels, none of them new machinery
+     one request   one state, many questions        the dialect's unit
+     one task run  judge_many                       Semaphore(quirks.parallel),
+                                                    the width the ENDPOINT serves
+     across runs   queue="logic"                    celery_worker's -Q list
+
+   A backend that answers one request at a time says so with parallel=1. When a
+   consumer starts blocking the shared pool, split the queue onto its own worker
+   (--concurrency=1), the way celery_worker_processing already does for ingest.
 ```
 
 ## Add an endpoint

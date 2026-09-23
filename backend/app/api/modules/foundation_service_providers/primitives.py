@@ -150,6 +150,9 @@ class Domain:
     name: str
     protocol: Type
     package: str                            # dotted path of this domain's package
+    #: One line, for the humans picking a provider. Declared here so the setup UI
+    #: reads the domain instead of keeping its own table of capability blurbs.
+    description: str = ""
     engine: Optional[str] = None            # "module.ClassName" under the package
     system_default: Optional[str] = None    # settings field holding the deployment default key
     quirks_type: Optional[Type] = None      # this domain's Quirks dataclass
@@ -325,6 +328,16 @@ def _register(descriptor: ProviderDescriptor) -> None:
 def descriptor_for(capability: str, provider_key: str) -> Optional[ProviderDescriptor]:
     """One descriptor, or None. ``user_config.py`` uses it for save-time checks."""
     return _registry.get((capability, provider_key.lower()))
+
+
+def domain_for(name: str) -> Optional[Domain]:
+    """One registered domain, or None — its protocol, engine and description.
+
+    ``CAPABILITIES`` answers "which domains exist"; this answers "what is this
+    one", so a UI can render a domain without restating what the declaration
+    already says.
+    """
+    return _domains.get(name)
 
 
 def list_providers(capability: str) -> List[Tuple[str, ProviderDescriptor]]:

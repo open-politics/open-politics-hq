@@ -89,6 +89,9 @@ class ProviderDefaults(BaseModel):
     web_search: Optional[ProviderSelection] = None
     ocr: Optional[ProviderSelection] = None
     geocoding: Optional[ProviderSelection] = None
+    #: Decisions. Not in EnrichmentConfig — logic is a capability tasks call, not
+    #: an enricher an infospace switches on.
+    logic: Optional[ProviderSelection] = None
 
     @model_validator(mode="before")
     @classmethod
@@ -103,13 +106,19 @@ class ProviderDefaults(BaseModel):
     def provider_for(
         self, capability: str, context: Optional[str] = None
     ) -> Optional[ProviderSelection]:
-        """Configured provider for a domain, with optional context override."""
+        """Configured provider for a domain, with optional context override.
+
+        A domain whose defaults split by context says so by carrying a
+        ``resolve(context)`` — ``LanguageDefaults`` is the only one today. Asking
+        for that method instead of naming the class means the next domain that
+        needs chat/annotation-style overrides declares them and nothing here
+        changes.
+        """
         cap = getattr(self, capability, None)
         if cap is None:
             return None
-        if isinstance(cap, LanguageDefaults):
-            return cap.resolve(context)
-        return cap
+        by_context = getattr(cap, "resolve", None)
+        return by_context(context) if callable(by_context) else cap
 
 
 class EnrichmentConfig(BaseModel):
@@ -198,6 +207,7 @@ def validate_provider_defaults(pd: ProviderDefaults) -> None:
     _assert_model_required("web_search", pd.web_search)
     _assert_model_required("ocr", pd.ocr)
     _assert_model_required("geocoding", pd.geocoding)
+    _assert_model_required("logic", pd.logic)
 
 
 def validate_enrichment_config(ec: EnrichmentConfig) -> None:
