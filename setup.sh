@@ -134,7 +134,13 @@ prov_profile() {
 }
 
 prov_grant()     { yget "foundation.access.$1.$2"; }                 # CAP PROV
-prov_set_grant() { yadd "foundation.access.$1" "$2" "$3"; }          # CAP PROV LEVEL
+prov_set_grant() {                                                   # CAP PROV LEVEL
+  # yadd places a leaf under an existing parent; it cannot create the parent. A
+  # config written before this capability existed has no `access.<cap>:` block,
+  # so the grant lands nowhere and says nothing about it. Seed, then grant.
+  ykeys foundation.access | grep -qFx "$1" || yadd foundation.access "$1" ""
+  yadd "foundation.access.$1" "$2" "$3"
+}
 
 cap_default() {  # CAP
   case "$1" in
