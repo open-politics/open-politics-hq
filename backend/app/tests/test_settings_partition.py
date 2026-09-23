@@ -20,6 +20,7 @@ SECRETS = {
     "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY",
     "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "MISTRAL_API_KEY",
     "TAVILY_API_KEY", "JINA_API_KEY", "VOYAGE_API_KEY", "MAPBOX_ACCESS_TOKEN",
+    "TYPESAFE_API_KEY",
 }
 
 # Env-only, but not secret: wiring that tells the process where its config is
