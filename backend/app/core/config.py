@@ -315,6 +315,21 @@ class AppSettings(BaseSettings):
     FOUNDATION_PROVIDERS: Dict[str, Dict[str, Any]] = Field(
         default_factory=dict, validation_alias=AliasPath("foundation", "providers")
     )
+
+    @field_validator("FOUNDATION_RUN", "FOUNDATION_PROVIDERS", "FOUNDATION_ACCESS",
+                     "MCP_CONNECTOR_URLS", mode="before")
+    @classmethod
+    def _empty_block_is_empty(cls, v: Any) -> Any:
+        """A block with nothing under it means nothing, not a boot failure.
+
+        `default_factory` only covers an ABSENT key; YAML hands a present-but-
+        empty one over as ``None``, which a ``Dict`` field refuses — so deleting
+        the last entry under ``access:`` stopped the whole stack with a pydantic
+        error naming neither the file nor the fix. Mid-edit is a normal state for
+        a config a person hand-edits, and an empty block reads as empty.
+        """
+        return {} if v is None else v
+
     HQ_CONFIG_SHA: Optional[str] = None
 
     ENRICHERS: Dict[str, bool] = Field(
