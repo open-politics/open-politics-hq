@@ -5,6 +5,8 @@ import React from 'react';
 export interface SourceStream {
   sourceId: number;
   bundleId: number;
+  /** The source's group anchor key — its streams leave from the group header while collapsed. */
+  group: string;
 }
 
 interface DrawnStream {
@@ -64,6 +66,10 @@ function elbowPath(sx: number, sy: number, lx: number, ex: number, ey: number): 
  *    the top/bottom edge but keeps its own lane x, so off-screen streams stay
  *    staggered along the edge rather than funnelling to one point.
  *
+ * A source whose row isn't rendered (its group is collapsed) anchors to its
+ * group header (`[data-source-group]`) instead; members of one collapsed group
+ * that feed the same bundle are drawn once.
+ *
  * `streams` must arrive in source-list order (AssetManager builds it that way)
  * so lane ranks line up with the rail. Geometry is re-measured on anything that
  * could move an anchor: container resize, tree expand/collapse (MutationObserver),
@@ -97,17 +103,24 @@ export function SourceStreams({
     const raw: Raw[] = [];
     let railRightX = -Infinity;
     let treeLeftX = Infinity;
-    for (const { sourceId, bundleId } of streams) {
-      const srcEl = container.querySelector(`[data-source-id="${sourceId}"]`);
+    // A collapsed group has no rows, so its streams leave from the group header;
+    // several members feeding one bundle then collapse to a single line.
+    const seen = new Set<string>();
+    for (const { sourceId, bundleId, group } of streams) {
+      const rowEl = container.querySelector(`[data-source-id="${sourceId}"]`);
+      const srcEl = rowEl ?? container.querySelector(`[data-source-group="${CSS.escape(group)}"]`);
       const dstEl = container.querySelector(`[data-bundle-id="${bundleId}"]`);
       if (!srcEl || !dstEl) continue;
+      const id = rowEl ? `${sourceId}-${bundleId}` : `group:${group}-${bundleId}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
       const s = srcEl.getBoundingClientRect();
       const d = dstEl.getBoundingClientRect();
       const x1 = s.right - base.left;
       const y1 = s.top + s.height / 2 - base.top;
       const x2 = d.left - base.left;
       const y2 = d.top + d.height / 2 - base.top;
-      raw.push({ id: `${sourceId}-${bundleId}`, x1, y1, x2, y2 });
+      raw.push({ id, x1, y1, x2, y2 });
       if (x1 > railRightX) railRightX = x1;
       if (x2 < treeLeftX) treeLeftX = x2;
     }

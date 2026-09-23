@@ -131,7 +131,8 @@ import { useProvidersStore } from '@/zustand_stores/storeProviders';
 import { useDock } from '@/zustand_stores/storeDock';
 import { useAssetDetail } from './Views/AssetDetailProvider';
 import { DockHost } from '@/components/collection/intake/DockHost';
-import { SourceList, type SourceStreamControls } from '@/components/collection/intake/sources/SourceList';
+import { SourceList, groupSources, groupAnchorKey, type SourceStreamControls } from '@/components/collection/intake/sources/SourceList';
+import { useLocalStorage } from '@/lib/hooks/use-local-storage';
 import { SourceStreams, type SourceStream } from './SourceStreams';
 import type { AssetFeedItem } from './Feed/types';
 
@@ -435,6 +436,24 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
   const releaseInlineHost = useDock((s) => s.releaseInlineHost);
   // Sources is a left rail (desktop) / sheet (mobile) — not dock content.
   const [showSourcesRail, setShowSourcesRail] = useState(false);
+  // Rail width is a per-viewer convenience: drag the rail's right edge.
+  const [railWidth, setRailWidth] = useLocalStorage<number>('sources.railWidth', 240);
+  const startRailResize = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const handle = e.currentTarget;
+    handle.setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    const startWidth = railWidth;
+    const onMove = (ev: PointerEvent) => setRailWidth(Math.min(560, Math.max(200, startWidth + ev.clientX - startX)));
+    const onUp = () => {
+      handle.removeEventListener('pointermove', onMove);
+      handle.removeEventListener('pointerup', onUp);
+      handle.removeEventListener('pointercancel', onUp);
+    };
+    handle.addEventListener('pointermove', onMove);
+    handle.addEventListener('pointerup', onUp);
+    handle.addEventListener('pointercancel', onUp);
+  }, [railWidth, setRailWidth]);
 
   // ─── Source→bundle streams (the wiring overlay) ───
   // A source streams into exactly one `output_bundle_id`; many sources may feed
@@ -455,13 +474,21 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
     return pinnedSourceIds;
   }, [streamsAllOn, sources, pinnedSourceIds]);
 
+  // Rail order (grouped) so lane ranks match what the rail renders; `group` lets a
+  // collapsed group's streams leave from its header.
   const sourceStreams = useMemo<SourceStream[]>(
     () =>
-      sources
+      groupSources(sources)
+        .flatMap((section) => section.sources)
         .filter((s) => activeSourceIds.has(s.id) && s.output_bundle_id != null)
-        .map((s) => ({ sourceId: s.id, bundleId: s.output_bundle_id as number })),
+        .map((s) => ({ sourceId: s.id, bundleId: s.output_bundle_id as number, group: groupAnchorKey(s.group) })),
     [sources, activeSourceIds],
   );
+
+  // Gutter between rail and tree: ~8px per lane, at least 48, at most 160. An upper
+  // bound when collapsed groups merge streams — close enough, and it keeps the
+  // layout here without lifting collapse state out of the rail.
+  const streamGutter = sourceStreams.length === 0 ? 0 : Math.min(160, Math.max(48, sourceStreams.length * 8));
 
   const revealBundleIds = useMemo(
     () => Array.from(new Set(sourceStreams.map((l) => l.bundleId))),
@@ -504,29 +531,33 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
     reveal: (p) => revealBundle(Number(p?.bundle_id ?? p?.id)),
   });
 
-  const handleToggleSourceStream = useCallback((sourceId: number) => {
-    const adding = !pinnedSourceIds.has(sourceId);
+  // One toggle for every granularity — a source, a group, a bundle's feeders: the
+  // set is lit when all of it is pinned; toggling pins all or unpins all.
+  // Returns whether it lit up.
+  const toggleSourceStreams = useCallback((sourceIds: number[]) => {
+    if (sourceIds.length === 0) return false;
+    const lit = sourceIds.every((id) => pinnedSourceIds.has(id));
     setPinnedSourceIds((prev) => {
       const next = new Set(prev);
-      if (next.has(sourceId)) next.delete(sourceId);
-      else next.add(sourceId);
+      sourceIds.forEach((id) => (lit ? next.delete(id) : next.add(id)));
       return next;
     });
-    // Pulling a single source into view: once the tree has had a beat to unfold
-    // (ancestor chain + the bundle itself), sit the bundle a third down so its
-    // just-opened children have room below.
-    if (adding) {
-      const bundleId = sources.find((s) => s.id === sourceId)?.output_bundle_id;
+    // Pulling streams into view: once the tree has had a beat to unfold
+    // (ancestor chain + the bundle itself), sit the first target bundle a third
+    // down so its just-opened children have room below.
+    if (!lit) {
+      const bundleId = sources.find((s) => s.id === sourceIds[0])?.output_bundle_id;
       if (bundleId != null) scrollBundleIntoView(bundleId);
     }
+    return !lit;
   }, [pinnedSourceIds, sources]);
 
   const sourceStreamControls = useMemo<SourceStreamControls>(() => ({
     allOn: streamsAllOn,
     onToggleAll: () => setStreamsAllOn((v) => !v),
     activeSourceIds,
-    onTogglePinned: handleToggleSourceStream,
-  }), [streamsAllOn, activeSourceIds, handleToggleSourceStream]);
+    onToggle: toggleSourceStreams,
+  }), [streamsAllOn, activeSourceIds, toggleSourceStreams]);
 
   // Keep the source list warm so a bundle's menu knows whether anything streams
   // into it — even before the rail is ever opened.
@@ -549,22 +580,10 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
     return feeders.length > 0 && feeders.every((s) => pinnedSourceIds.has(s.id));
   }, [sourcesForBundle, pinnedSourceIds]);
 
+  // Lighting up needs the rail open — the streams anchor to its source rows.
   const handleToggleBundleStreams = useCallback((bundleId: number) => {
-    const feederIds = sourcesForBundle(bundleId).map((s) => s.id);
-    if (feederIds.length === 0) return;
-    const lit = feederIds.every((id) => pinnedSourceIds.has(id));
-    setPinnedSourceIds((prev) => {
-      const next = new Set(prev);
-      feederIds.forEach((id) => (lit ? next.delete(id) : next.add(id)));
-      return next;
-    });
-    // Lighting up needs the rail open (the streams anchor to its source rows) and
-    // the bundle scrolled into view so the connectors actually land on-screen.
-    if (!lit) {
-      setShowSourcesRail(true);
-      scrollBundleIntoView(bundleId);
-    }
-  }, [sourcesForBundle, pinnedSourceIds]);
+    if (toggleSourceStreams(sourcesForBundle(bundleId).map((s) => s.id))) setShowSourcesRail(true);
+  }, [sourcesForBundle, toggleSourceStreams]);
 
   // On desktop the dock lives inline as our third column, so the app-wide layout
   // dock stands down while we're mounted. Mobile keeps using the layout sheet.
@@ -1784,14 +1803,14 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
           ) : (
             /* Desktop — Sources rail (toggle) · AssetSelector · Feed/Dock */
             <div ref={sourceStreamsWrapRef} className="relative flex h-full min-h-0 w-full min-w-0">
-              {/* Sources rail — fixed width, no drag handle. When streams are
-                  being traced, open a gutter to its right so the curves have a
-                  channel to fan out into instead of piling up on the seam. */}
+              {/* Sources rail — drag its right edge to resize (remembered per
+                  viewer). When streams are being traced, open a gutter to its
+                  right, wide enough that each stream keeps a readable lane. */}
               {showSourcesRail && (
                 <div
+                  style={{ '--rail-w': `${railWidth}px`, '--gutter': `${streamGutter}px` } as React.CSSProperties}
                   className={cn(
-                    'h-full w-60 shrink-0 overflow-hidden transition-[margin] duration-300',
-                    sourceStreams.length > 0 && 'mr-12',
+                    'relative h-full w-[var(--rail-w)] mr-[var(--gutter)] shrink-0 overflow-hidden transition-[margin] duration-300',
                     // A 240px column plus a resizable two-pane split needs room
                     // the desktop branch does not always have: this renders from
                     // 768px up, and it is also what is left when the dock takes
@@ -1800,10 +1819,15 @@ export default function AssetManager({ onLoadIntoRunner }: AssetManagerProps) {
                     // same move the explorer's helper panel makes, and it is a
                     // toggle, so it is already meant to come and go.
                     '@max-4xl/page:absolute @max-4xl/page:inset-y-0 @max-4xl/page:left-0 @max-4xl/page:z-20',
-                    '@max-4xl/page:w-[min(15rem,85%)] @max-4xl/page:mr-0 @max-4xl/page:border-r @max-4xl/page:surface-overlay',
+                    '@max-4xl/page:w-[min(var(--rail-w),85%)] @max-4xl/page:mr-0 @max-4xl/page:border-r @max-4xl/page:surface-overlay',
                   )}
                 >
                   <SourceList mode="panel" init={undefined} fullscreen={false} close={() => setShowSourcesRail(false)} escalate={() => {}} streams={sourceStreamControls} />
+                  <div
+                    className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-col-resize touch-none transition-colors hover:bg-primary/20 active:bg-primary/30"
+                    title="Drag to resize"
+                    onPointerDown={startRailResize}
+                  />
                 </div>
               )}
 

@@ -133,12 +133,12 @@ export const ASSET_KIND_CONFIG: Record<AssetKind, AssetKindConfig> = {
   
   // TEXT & ARTICLES — warm stone tones (paper/newsprint feel)
   article: {
-    icon: FileText,
+    icon: Newspaper,
     label: 'Article',
     description: 'News article or blog post',
-    iconColor: 'text-sky-600 dark:text-sky-200',
+    iconColor: 'text-grey-600 dark:text-grey-200',
     bgColor: 'bg-none',
-    textColor: 'text-sky-600 dark:text-sky-200',
+    textColor: 'text-grey-600 dark:text-grey-200',
     borderColor: 'border-sky-200/50',
     isInternal: false,
     canHaveChildren: true,
