@@ -106,6 +106,7 @@ foundation:
   run:
     searxng: false
     ollama: false
+    kev: false
     nominatim: false
     garage: false
   use:
@@ -113,6 +114,7 @@ foundation:
     geocoding: nominatim_api        # keyless, no container
     scraping: newspaper4k
     web_search: ""                  # nothing runs one; a test that needs it says so
+    logic: ""                       # no decision backend in CI; the domain still registers
     storage: local_fs
   access:
     language:
@@ -126,6 +128,10 @@ foundation:
       openai: byok
       jina: byok
       voyage: byok
+    logic:
+      kev: all
+      typesafe: byok
+      llamacpp: all
     ocr:
       tesseract: all
       ollama: all

@@ -101,7 +101,7 @@ services:
     # interactive and LLM queues responsive during long ingests.
     command: ["celery", "-A", "app.core.celery_app.celery", "worker", "--loglevel=info",
               "-P", "prefork", "--concurrency=${CELERY_CONCURRENCY:-4}",
-              "-Q", "default,llm,embedding,external_api"]
+              "-Q", "default,llm,embedding,external_api,logic"]
     volumes:
       - ./HQ.yml:/app/HQ.yml:ro
       # Starter content, read on first boot. Path is deployment.starter.documents.
@@ -204,6 +204,36 @@ services:
       - OLLAMA_MAX_LOADED_MODELS=2
     restart: unless-stopped
 
+  # Decisions: a state and typed questions in, probabilities out. Upstream ships
+  # no image, so we build one — see docker/kev/Dockerfile for why it is CPU-only
+  # and pinned. It has no authentication of its own, which is why the published
+  # port is loopback here and KEV_HOST is rewritten in host mode.
+  kev:
+    build: ./docker/kev
+    profiles: ["kev"]
+    ports:
+      - "127.0.0.1:${HQ_KEV_PORT:-8009}:${HQ_KEV_PORT:-8009}"
+    volumes:
+      - kev_models:/models
+    environment:
+      - KEV_RUN=${HQ_KEV_RUN:-jaredpalmer/kev-4b}
+      - KEV_PORT=${HQ_KEV_PORT:-8009}
+      - KEV_HOST=0.0.0.0
+      - KEV_DTYPE=${HQ_KEV_DTYPE:-}
+      # 0 or empty means "torch decides", which is right on a box whose core
+      # count we do not know. OMP_NUM_THREADS is not set from here: 0 is not a
+      # legal value for it, and an empty one is read differently per runtime.
+      - KEV_THREADS=${HQ_KEV_THREADS:-}
+    healthcheck:
+      # The first boot downloads a ~9GB base model before the server answers;
+      # start_period is that wait, not a guess about how slow the model is.
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:${HQ_KEV_PORT:-8009}/v1/models >/dev/null"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 45m
+    restart: unless-stopped
+
   # No `ports:`. The image runs gunicorn on 0.0.0.0:8080 and ignores every attempt
   # to change that, so with nothing published it reaches no further than this
   # container's namespace. Host mode has no namespace — see the nominatim block
@@ -273,6 +303,9 @@ volumes:
   # Not namespaced by project: `down -v` from any HQ checkout takes the models.
   ollama_data:
     name: ollama_data
+  # Same bargain for Kev's base weights — ~9GB per checkpoint, downloaded once.
+  kev_models:
+    name: kev_models
   nominatim-data:
   nominatim-flatnode:
   caddy_data:

@@ -44,13 +44,14 @@ HOST_NET_FRAGMENT=".config/hq/compose.host-net.yml";  HOST_NET_MODE=644
 GARAGE_CONFIG=".config/hq/garage.toml";               GARAGE_CONFIG_MODE=644
 ENV_BACKUP_DIR=".config/hq/backups/env_files";        ENV_BACKUP_DIR_MODE=700
 PLACEHOLDERS="|changeThis|changethis|app_user|app_user_password|"
-OPTIONAL_SERVICES=(garage ollama searxng nominatim caddy)
+OPTIONAL_SERVICES=(garage ollama kev searxng nominatim caddy)
 
 # Foundation service providers the script knows about
 
 PROVIDERS_FOR="
 language   ollama llamacpp openai anthropic mistral
 embedding  ollama openai jina voyage
+logic      kev typesafe llamacpp
 storage    local_fs s3
 web_search searxng tavily
 geocoding  nominatim_local nominatim_api mapbox
@@ -61,6 +62,8 @@ scraping   newspaper4k
 PROVIDER_INFO="
 ollama|Ollama|open models, in a container on this machine
 llamacpp|llama.cpp|open models, llama-server already running on the host
+kev|Kev|decision models, in a container on this machine (~9GB first boot)
+typesafe|TypeSafe Jev|hosted decisions, needs an API key
 openai|OpenAI|hosted, needs an API key
 anthropic|Anthropic|hosted, needs an API key
 mistral|Mistral|hosted, needs an API key
@@ -80,6 +83,7 @@ newspaper4k|Newspaper4k|built into the backend, always available
 CAPABILITY_LIST=(
   "language|AI chat models|chat, annotation, agents"
   "embedding|Embeddings|semantic search, retrieval"
+  "logic|Logic|classification, decisions, routing & ranking"
   "storage|File storage|uploads, dataset blobs, exports"
   "web_search|Web search|live news, agent browsing"
   "geocoding|Geocoding|place names ↔ coordinates"
@@ -143,7 +147,10 @@ cap_set_default() {  # CAP PROVIDER
   case "$1" in
     language|embedding) : ;;
     storage)            yset deployment.storage.use "$2" ;;
-    *)                  yset "foundation.use.$1" "$2" ;;
+    # yadd, not yset: a config written before this capability existed has no key
+    # for it, and yset only rewrites keys it finds — it would report success and
+    # change nothing.
+    *)                  yadd foundation.use "$1" "$2" ;;
   esac
   return 0
 }
@@ -990,6 +997,10 @@ render_projection() {
   printf 'REDIS_PORT=%s\n'                    "$(yget deployment.services.redis.port)"
   printf 'HQ_BIND_HOST=%s\n'                  "$bind"
   printf 'HQ_SEARXNG_PORT=%s\n'               "$(provider_port searxng)"
+  printf 'HQ_KEV_PORT=%s\n'                   "$(provider_port kev)"
+  printf 'HQ_KEV_RUN=%s\n'                    "$(yget foundation.providers.kev.run)"
+  printf 'HQ_KEV_DTYPE=%s\n'                  "$(yget foundation.providers.kev.dtype)"
+  printf 'HQ_KEV_THREADS=%s\n'                "$(yget foundation.providers.kev.threads)"
   printf 'LOCAL_STORAGE_HOST_PATH=%s\n'       "$(yget deployment.storage.user_uploads.host_path)"
   printf 'LOCAL_STORAGE_BASE_PATH=%s\n'       "$(yget deployment.storage.user_uploads.base_path)"
   printf 'BACKEND_WORKERS=%s\n'               "$(derived_concurrency "$(yget deployment.services.backend.workers)" 1 2 8)"
@@ -1071,6 +1082,7 @@ apply_wizard_to_conf() {
   yset deployment.network.reach "$([[ "$REACH" == public ]] && echo public || echo local)"
   [[ -n "$DOMAIN_OPT"     ]] && yset deployment.network.domain     "$DOMAIN_OPT"
   [[ -n "$ACME_EMAIL_OPT" ]] && yset deployment.network.acme_email "$ACME_EMAIL_OPT"
+  [[ -n "$KEV_RUN_OPT"    ]] && yset foundation.providers.kev.run                "$KEV_RUN_OPT"
   [[ -n "${BACKEND_WORKERS:-}"    ]] && yset deployment.services.backend.workers "$BACKEND_WORKERS"
   [[ -n "${CELERY_CONCURRENCY:-}" ]] && yset deployment.services.celery.workers  "$CELERY_CONCURRENCY"
   [[ -n "$STORAGE" ]] && yset deployment.storage.use "$STORAGE"
@@ -1084,6 +1096,11 @@ apply_wizard_to_conf() {
   done < <(echo -e "$QUEUED_DEFAULTS")
 
   local p
+  # Seed first: a config written before a service existed has no key for it, and
+  # the loop below only rewrites keys that are already there.
+  for p in ${PROFILES//,/ }; do
+    [[ -n "$p" ]] && yadd foundation.run "$p" false
+  done
   for p in $(ykeys foundation.run); do
     [[ ",$PROFILES," == *",$p,"* ]] && yset "foundation.run.$p" true || yset "foundation.run.$p" false
   done
@@ -1137,7 +1154,7 @@ conf_set() {
 # Config builder: the four-step wizard
 
 PROFILES=""; QUEUED_GRANTS=""; QUEUED_DEFAULTS=""; ENVIRONMENT="local"; STORAGE="local_fs"; FMODE="dev"
-DOMAIN_OPT=""; ACME_EMAIL_OPT=""
+DOMAIN_OPT=""; ACME_EMAIL_OPT=""; KEV_RUN_OPT=""
 SU_EMAIL_OPT=""; SU_PASSWORD_OPT=""
 REACH="local"        # local | public | hardened — meaningful only when FMODE=prod
 NETWORK_MODE="host"   # host | bridge — host is the default; bridge is the opt-out
@@ -1147,6 +1164,36 @@ LANG_LOCAL=false; EMB_LOCAL=false  # for summary display
 add_profile() { [[ ",$PROFILES," == *",$1,"* ]] || PROFILES="${PROFILES:+$PROFILES,}$1"; }
 add_grant()   { QUEUED_GRANTS="${QUEUED_GRANTS}$1|$2|$3\n"; }    # CAP PROV LEVEL
 add_default() { QUEUED_DEFAULTS="${QUEUED_DEFAULTS}$1|$2\n"; }   # CAP PROV
+
+ask_kev() {
+  # One question and a checkpoint. The checkpoint is a real choice: it decides
+  # the download, the memory, and how fast a decision comes back on a CPU box.
+  ask_yn "Run Kev locally?" "$(profile_default kev)" || return 0
+  add_profile kev
+  add_grant   logic kev all
+  add_default logic kev
+  say "  ${DIM}1) kev-4b${NC}   balanced, start here      ${DIM}(~9GB first boot)${NC}"
+  say "  ${DIM}2) kev-9b${NC}   best accuracy, most RAM   ${DIM}(~18GB)${NC}"
+  say "  ${DIM}3) kev-0.8b${NC} smallest, noticeably weaker ${DIM}(~2GB)${NC}"
+  local pick; read -rp "  Checkpoint [1]: " pick
+  case "${pick:-1}" in
+    2) KEV_RUN_OPT="jaredpalmer/kev-9b" ;;
+    3) KEV_RUN_OPT="jaredpalmer/kev-0.8b" ;;
+    *) KEV_RUN_OPT="jaredpalmer/kev-4b" ;;
+  esac
+  # A config predating this service has no `kev:` block, and neither yset nor
+  # yadd can create a nested one. The defaults still work — 8009, kev-4b — but
+  # host mode resolves `kev` through that base_url, so say so rather than
+  # writing the choice somewhere it will not be read.
+  if [[ -z "$(yget foundation.providers.kev.base_url)" ]]; then
+    warn "$CONF_FILE has no foundation.providers.kev block — add it to pick a checkpoint:"
+    say  "    ${DIM}kev:${NC}"
+    say  "    ${DIM}  base_url: http://kev:8009${NC}"
+    say  "    ${DIM}  run: ${KEV_RUN_OPT}${NC}"
+    KEV_RUN_OPT=""
+  fi
+  return 0
+}
 
 apply_mode() {
   case "$1" in
@@ -1371,6 +1418,12 @@ choose_optionals_interactive() {
   fi
 
   echo
+  say "${BOLD}Logic${NC}  ${DIM}(classification, decisions, routing & ranking)${NC}"
+  say "  ${DIM}Local container:${NC}  Kev — small decision models, answers with probabilities"
+  say "  ${DIM}Hosted (API key):${NC} TypeSafe Jev"
+  ask_kev
+
+  echo
   say "${BOLD}Web search${NC}  ${DIM}(live news, agent browsing)${NC}"
   say "  ${DIM}Local container:${NC}  SearXNG — meta-searches DuckDuckGo, Brave, Bing…"
   say "  ${DIM}Hosted (API key):${NC} Tavily, Serper, Exa (future)"
@@ -1442,6 +1495,12 @@ choose_local_services_interactive() {
     add_grant embedding ollama all
     EMB_LOCAL=true
   fi
+
+  echo
+  say "${BOLD}Logic${NC}  ${DIM}(classification, decisions, routing & ranking)${NC}"
+  say "  ${DIM}Local:${NC}  Kev — small decision models, answers with probabilities"
+  say "  ${DIM}Hosted:${NC} TypeSafe Jev via an API key"
+  ask_kev
 
   echo
   say "${BOLD}Web search${NC}  ${DIM}(live news, agent browsing)${NC}"
@@ -1554,6 +1613,9 @@ needed_host_ports() {
   [[ ",$profs," == *",caddy,"* ]] && { echo 80; echo 443; }
 
   [[ ",$profs," == *",ollama,"* ]] && provider_port ollama
+  # Kev has no authentication of its own, so its port belongs in the audit in
+  # both network modes — bridge publishes it on loopback, host binds it there.
+  [[ ",$profs," == *",kev,"* ]] && provider_port kev
 
   if [[ "$net" == host ]]; then
     local bp pp rp
@@ -1714,15 +1776,19 @@ assert_no_stray_public_binds() {
 write_host_net_fragment() {
   local tmp; tmp="$(stage_file "$HOST_NET_FRAGMENT")"
 
-  local sx_port ol_port nm_port s3_host s3_port
+  local sx_port ol_port nm_port kv_port s3_host s3_port
   sx_port="$(provider_port searxng)"
   ol_port="$(provider_port ollama)"
   nm_port="$(provider_port nominatim_local)"
+  # A config predating the kev block has no base_url to read a port from; the
+  # compose default is the one number to fall back to, and the fragment must not
+  # emit an empty KEV_PORT.
+  kv_port="$(provider_port kev)"; kv_port="${kv_port:-8009}"
   s3_host="$(url_host "$(yget deployment.services.s3.endpoint)")"
   s3_port="$(url_port "$(yget deployment.services.s3.endpoint)")"
 
   local seen="" svc port collide=""
-  for svc in "searxng:$sx_port" "ollama:$ol_port" "nominatim:$nm_port" \
+  for svc in "searxng:$sx_port" "ollama:$ol_port" "nominatim:$nm_port" "kev:$kv_port" \
              "backend:$(yget deployment.services.backend.port)" \
              "frontend:$(yget deployment.services.frontend.port)" \
              "postgres:$(yget deployment.services.database.port)" \
@@ -1738,7 +1804,7 @@ one namespace here — give them distinct ports in $CONF_FILE."
   local hosts="" h
   for h in host.docker.internal db redis backend frontend caddy \
            "$(provider_host searxng)" "$(provider_host ollama)" \
-           "$(provider_host nominatim_local)" "$s3_host"; do
+           "$(provider_host nominatim_local)" "$(provider_host kev)" "$s3_host"; do
     [[ -z "$h" ]] && continue
     [[ " $hosts " == *" $h "* ]] && continue
     hosts="$hosts $h"
@@ -1822,6 +1888,15 @@ services:
     <<: *host_net
     environment:                                      # ollama: OLLAMA_HOST
       OLLAMA_HOST: \${HQ_BIND_HOST:-127.0.0.1}:${ol_port}
+
+  # kev.serve hardcodes a 127.0.0.1 bind upstream; docker/kev/entrypoint.py reads
+  # KEV_HOST instead. Bridge mode sets 0.0.0.0 inside its own namespace, so here
+  # is the one place the bind has to come back to HQ_BIND_HOST.
+  kev:
+    <<: *host_net
+    environment:
+      KEV_HOST: \${HQ_BIND_HOST:-127.0.0.1}
+      KEV_PORT: ${kv_port}
 
   searxng:
     <<: *host_net
@@ -3474,7 +3549,7 @@ settings_menu() {
       4) workers_prompt ;;
       5) domain_prompt ;;
       6) network_mode_menu ;;
-      7) ( PROFILES=""; QUEUED_GRANTS=""; QUEUED_DEFAULTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; \
+      7) ( PROFILES=""; QUEUED_GRANTS=""; QUEUED_DEFAULTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; KEV_RUN_OPT=""; \
            SU_EMAIL_OPT=""; SU_PASSWORD_OPT=""; REACH=local; NETWORK_MODE=host; \
            MODE_SET=false; REACH_SET=false; NET_SET=false; SERVICES_SET=false; STORAGE_SET=false; USER_SET=false; \
            LANG_LOCAL=false; EMB_LOCAL=false; do_init ) || warn "Wizard did not complete."; pause ;;
@@ -3749,7 +3824,7 @@ dashboard() {
       "?")        show_help_overlay ;;
       1) if [[ ! -f "$ENV_FILE" ]]; then
            leave_alt_screen
-           ( PROFILES=""; QUEUED_GRANTS=""; QUEUED_DEFAULTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; \
+           ( PROFILES=""; QUEUED_GRANTS=""; QUEUED_DEFAULTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; KEV_RUN_OPT=""; \
              SU_EMAIL_OPT=""; SU_PASSWORD_OPT=""; REACH=local; NETWORK_MODE=host; \
              MODE_SET=false; REACH_SET=false; NET_SET=false; SERVICES_SET=false; STORAGE_SET=false; USER_SET=false; \
              LANG_LOCAL=false; EMB_LOCAL=false; do_init ) || warn "Setup did not complete."
@@ -3975,7 +4050,7 @@ if [[ $# -eq 0 ]]; then
     say "${DIM}First-time setup. We'll ask which foundation services you want, a${NC}"
     say "${DIM}superuser email + password, then start HQ. Everything else is${NC}"
     say "${DIM}auto-generated — no API keys required for the local-only flavors.${NC}\n"
-    ( PROFILES=""; QUEUED_GRANTS=""; QUEUED_DEFAULTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; \
+    ( PROFILES=""; QUEUED_GRANTS=""; QUEUED_DEFAULTS=""; FMODE="dev"; DOMAIN_OPT=""; ACME_EMAIL_OPT=""; KEV_RUN_OPT=""; \
       SU_EMAIL_OPT=""; SU_PASSWORD_OPT=""; REACH=local; NETWORK_MODE=host; \
       MODE_SET=false; REACH_SET=false; NET_SET=false; SERVICES_SET=false; STORAGE_SET=false; USER_SET=false; \
       LANG_LOCAL=false; EMB_LOCAL=false; do_init ) \

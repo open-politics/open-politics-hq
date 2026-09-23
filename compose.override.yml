@@ -72,6 +72,8 @@ services:
     restart: "no"
   ollama:
     restart: "no"
+  kev:
+    restart: "no"
 
 volumes:
   frontend_node_modules: # convenience for development

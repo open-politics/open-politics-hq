@@ -119,6 +119,7 @@ foundation:
   run:                            # containers we start
     searxng: true
     ollama: false
+    kev: false                    # decision models; first boot downloads ~9GB of weights
     nominatim: false
     garage: false                 # object storage, when storage.use is s3
   use:                            # what answers when nobody picked, comma list = try in order
@@ -126,6 +127,7 @@ foundation:
     geocoding: nominatim_local, nominatim_api
     web_search: searxng
     scraping: newspaper4k
+    logic: ""                     # empty = this deployment makes no decisions. run.kev turns it on
   access:                         # all -> everyone. superuser -> admins. byok -> users bring their own key. none -> blocked
     language:                     # leaving a keyed provider out means none, so a forgotten line never spends your money
       ollama: all
@@ -138,6 +140,10 @@ foundation:
       openai: byok
       jina: byok
       voyage: byok
+    logic:
+      kev: all
+      typesafe: byok
+      llamacpp: all               # readout on a llama-server: untrained at it, but free
     ocr:
       tesseract: all
       ollama: all
@@ -156,6 +162,11 @@ foundation:
       ocr_model: llava
     llamacpp:
       base_url: http://host.docker.internal:4000
+    kev:
+      base_url: http://kev:8009   # host.docker.internal:8009 reaches a kev you run yourself
+      run: jaredpalmer/kev-4b     # checkpoint. kev-9b is stronger, kev-0.8b is small and weaker
+      dtype: ""                   # empty = fp32. bf16 only pays off on an AMX CPU
+      threads: 0                  # 0 = torch decides
     searxng:
       base_url: http://searxng:8888   # not 8080, nominatim's gunicorn is nailed to that
     nominatim_local:
@@ -174,6 +185,9 @@ foundation:
     mistral:
       base_url: https://api.mistral.ai/v1
       key_env: MISTRAL_API_KEY
+    typesafe:
+      base_url: https://api.typesafe.ai
+      key_env: TYPESAFE_API_KEY
     jina:
       base_url: https://api.jina.ai/v1/embeddings
       key_env: JINA_API_KEY
