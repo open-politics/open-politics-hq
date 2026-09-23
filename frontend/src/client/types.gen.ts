@@ -1642,6 +1642,25 @@ export type DistinctValuesResponse = {
 };
 
 /**
+ * Prose in, questions out. The evidence rides along so they fit it.
+ */
+export type DraftRequest = {
+    prose: string;
+    state?: (unknown | null);
+    context?: string;
+};
+
+/**
+ * The draft. Reusing ``QuestionIn`` means the model writes the exact shape
+ * ``/judge`` takes, so there is no second contract to keep in step.
+ */
+export type DraftResponse = {
+    questions: {
+        [key: string]: QuestionIn;
+    };
+};
+
+/**
  * Information about an embedding model.
  */
 export type EmbeddingModelInfo = {
@@ -6297,6 +6316,15 @@ export type JudgeData = {
 };
 
 export type JudgeResponse2 = (JudgeResponse);
+
+export type DraftData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: DraftRequest;
+    xPackageToken?: (string | null);
+};
+
+export type DraftResponse2 = (DraftResponse);
 
 export type ListDecisionsData = {
     infospaceId: number;
