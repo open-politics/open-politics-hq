@@ -204,6 +204,25 @@ def update_source(
     logger.info(f"Source {source_id} updated successfully")
     return source
 
+def assign_source_group(
+    session: Session,
+    infospace_id: int,
+    source_ids: List[int],
+    group: Optional[str],
+) -> List[Source]:
+    """Set ``group`` on the given sources (``None`` ungroups). Ids outside the
+    infospace are simply not matched."""
+    sources = session.exec(
+        select(Source).where(Source.infospace_id == infospace_id, Source.id.in_(source_ids))
+    ).all()
+    for source in sources:
+        source.group = group
+        session.add(source)
+    session.commit()
+    for source in sources:
+        session.refresh(source)
+    return list(sources)
+
 def delete_source(
     session: Session,
     source_id: int,

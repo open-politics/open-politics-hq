@@ -21,6 +21,7 @@ from app.api.modules.content.services.source_service import (
     execute_poll as svc_execute_poll,
     get_stream_stats as svc_get_stream_stats,
     trigger_source_processing as svc_trigger_source_processing,
+    assign_source_group as svc_assign_source_group,
 )
 from app.api.modules.identity_infospace_user.access import (
     Access, Capability, Requires, resolve_access,
@@ -33,6 +34,7 @@ from app.schemas import (
     SourceTransferRequest,
     SourceTransferResponse,
     SourceCreateRequest,
+    SourceGroupAssign,
     BundleCreate,
 )
 from sqlmodel import select, func
@@ -204,6 +206,19 @@ def get_source(
     except Exception as e:
         logger.exception(f"Route: Error getting source {source_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+
+@router.post("/group", response_model=list[SourceRead], operation_id="Sources-assign_group")
+def assign_group(
+    *,
+    access: Access = Requires(Capability.ORGANIZE, scope=None),
+    infospace_id: int,
+    body: SourceGroupAssign,
+    session: SessionDep,
+) -> Any:
+    """Put sources into a group, or ungroup them with ``group: null``. Renaming a
+    group is assigning its members a new name."""
+    sources = svc_assign_source_group(session, infospace_id, body.source_ids, body.group)
+    return [SourceRead.model_validate(s) for s in sources]
 
 @router.patch("/{source_id}", response_model=SourceRead)
 def update_source(

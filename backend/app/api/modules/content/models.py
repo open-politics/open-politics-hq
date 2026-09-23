@@ -89,6 +89,8 @@ class Source(SQLModel, table=True):
     source_metadata: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     error_message: Optional[str] = None
     tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
+    # Shared organising label for the sources rail. A group exists iff a source carries it.
+    group: Optional[str] = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc), sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)})
     infospace_id: int = Field(foreign_key="infospace.id")

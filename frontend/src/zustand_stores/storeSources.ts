@@ -13,6 +13,8 @@ interface SourceState {
   updateSource: (sourceId: number, sourceData: any) => Promise<SourceRead | null>;
   deleteSource: (sourceId: number) => Promise<void>;
   triggerSourceProcessing: (sourceId: number) => Promise<void>;
+  /** Put sources into a group (null ungroups). Also how a group is renamed or dissolved. */
+  assignGroup: (sourceIds: number[], group: string | null) => Promise<void>;
 }
 
 export const useSourceStore = create<SourceState>((set, get) => ({
@@ -147,6 +149,19 @@ export const useSourceStore = create<SourceState>((set, get) => ({
       console.error('Source processing error:', err);
       set({ error: errorMessage });
       toast.error(errorMessage);
+    }
+  },
+  // Optimistic: the rail regroups instantly; a failure refetches the truth.
+  assignGroup: async (sourceIds, group) => {
+    const activeInfospace = useInfospaceStore.getState().activeInfospace;
+    if (!activeInfospace || sourceIds.length === 0) return;
+    const ids = new Set(sourceIds);
+    set(state => ({ sources: state.sources.map(s => ids.has(s.id) ? { ...s, group } : s) }));
+    try {
+      await SourcesService.assignGroup({ infospaceId: activeInfospace.id, requestBody: { source_ids: sourceIds, group } });
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to regroup sources.');
+      await get().fetchSources();
     }
   }
 }));
