@@ -288,6 +288,24 @@ export type AnnotationUpdate = {
 }> | null);
 };
 
+export type AnswerOut = {
+    kind: string;
+    value: unknown;
+    probabilities: {
+        [key: string]: (number);
+    };
+    confidence: number;
+    pick: string;
+    margin: number;
+    mass?: (number | null);
+    legend?: ({
+    [key: string]: (string);
+} | null);
+    model?: string;
+    wire?: string;
+    temperature?: (number | null);
+};
+
 /**
  * Display-ready projection of an asset.
  */
@@ -1126,6 +1144,7 @@ export type CatalogProvider = {
     dialect: string;
     features?: Array<(string)>;
     pullable: boolean;
+    listable?: boolean;
     models?: Array<CatalogModel>;
 };
 
@@ -1466,6 +1485,24 @@ export type DatasetUpdate = {
     asset_ids?: (Array<(number)> | null);
 };
 
+export type DecisionIn = {
+    name: string;
+    description?: (string | null);
+    config?: {
+        [key: string]: unknown;
+    };
+};
+
+export type DecisionOut = {
+    id: number;
+    uuid: string;
+    name: string;
+    description?: (string | null);
+    config: {
+        [key: string]: unknown;
+    };
+};
+
 export type DeleteFragmentResponse = {
     success: boolean;
     message: string;
@@ -1643,11 +1680,11 @@ export type EnableWatchRequest = {
 };
 
 /**
- * Per-infospace enrichment configuration. Every enricher is opt-in.
+ * What one infospace says about the enrichers. Three states per field:
  *
- * Each field is either ``True`` (enable with system defaults), a
- * ``ProviderSelection`` (enable with a specific provider+model), or
- * ``None``/missing (disabled).
+ * True | ProviderSelection   on, the second one naming provider and model
+ * False                      off, overriding the deployment
+ * None / absent              not stated — the deployment's default stands
  *
  * Embedding is always ``ProviderSelection`` — you cannot embed without
  * choosing a provider and a model, because the vector dimension depends on it.
@@ -2462,6 +2499,22 @@ export type InvitationOut = {
     created_at: string;
 };
 
+export type JudgeRequest = {
+    state: unknown;
+    questions: {
+        [key: string]: QuestionIn;
+    };
+    provider_key?: (string | null);
+    model_name?: (string | null);
+};
+
+export type JudgeResponse = {
+    provider_key: string;
+    answers: {
+        [key: string]: AnswerOut;
+    };
+};
+
 /**
  * Request schema for creating a KnowledgeGraph.
  *
@@ -2559,8 +2612,7 @@ export type MergeEntitiesRequest = {
 /**
  * Value normalization applied at query time via SQL CASE WHEN.
  *
- * Stored per-run in ``views_config``.  Same shape as the graph module's
- * ``entity_merges`` in ``graph_config`` (convergence planned).
+ * Stored per-run in ``views_config``.
  */
 export type MergeMap = {
     field_path: string;
@@ -2932,9 +2984,9 @@ export type target = 'entities' | 'predicates' | 'both';
 /**
  * A user's per-domain provider preferences.
  *
- * Completeness checks live in ``validate_provider_defaults()`` — call it from
- * save-path endpoints only. The model itself stays permissive so existing DB
- * rows with partial selections still deserialize.
+ * Completeness checks live in ``validate_provider_defaults()``, called from
+ * save-path endpoints only — the model itself stays permissive so DB rows with
+ * partial selections still deserialize.
  */
 export type ProviderDefaults = {
     language?: (LanguageDefaults | null);
@@ -2942,6 +2994,7 @@ export type ProviderDefaults = {
     web_search?: (ProviderSelection | null);
     ocr?: (ProviderSelection | null);
     geocoding?: (ProviderSelection | null);
+    logic?: (ProviderSelection | null);
 };
 
 /**
@@ -2951,6 +3004,15 @@ export type ProviderSelection = {
     provider_key: string;
     model_name?: (string | null);
     dimension?: (number | null);
+};
+
+/**
+ * One question, in the System One shape the panel builds.
+ */
+export type QuestionIn = {
+    type: string;
+    instructions: string;
+    criteria?: (unknown | null);
 };
 
 export type RagSearchRequest = {
@@ -3318,6 +3380,15 @@ export type SourceCreateRequest = {
     max_poll_failures?: (number | null);
 };
 
+/**
+ * Put sources into a group (or ``None`` to ungroup). One verb covers move,
+ * multi-move, rename (ids = the group's members) and dissolve.
+ */
+export type SourceGroupAssign = {
+    source_ids: Array<(number)>;
+    group?: (string | null);
+};
+
 export type SourceRead = {
     name: string;
     kind: string;
@@ -3338,6 +3409,7 @@ export type SourceRead = {
 } | null);
     monitoring_tasks?: Array<TaskRead>;
     asset_count?: (number | null);
+    group?: (string | null);
     is_active: boolean;
     poll_interval_seconds: number;
     output_bundle_id?: (number | null);
@@ -6217,6 +6289,41 @@ export type SubscribeStreamData = {
 
 export type SubscribeStreamResponse = (unknown);
 
+export type JudgeData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: JudgeRequest;
+    xPackageToken?: (string | null);
+};
+
+export type JudgeResponse2 = (JudgeResponse);
+
+export type ListDecisionsData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type ListDecisionsResponse = (Array<DecisionOut>);
+
+export type SaveDecisionData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: DecisionIn;
+    xPackageToken?: (string | null);
+};
+
+export type SaveDecisionResponse = (DecisionOut);
+
+export type DeleteDecisionData = {
+    decisionId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type DeleteDecisionResponse = (void);
+
 export type LoginAccessTokenData = {
     formData: Body_login_login_access_token;
 };
@@ -6965,6 +7072,15 @@ export type DeleteSourceData = {
 };
 
 export type DeleteSourceResponse = (void);
+
+export type AssignGroupData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: SourceGroupAssign;
+    xPackageToken?: (string | null);
+};
+
+export type AssignGroupResponse = (Array<SourceRead>);
 
 export type TriggerSourceProcessingData = {
     infospaceId: number;
