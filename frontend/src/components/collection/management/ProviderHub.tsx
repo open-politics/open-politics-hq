@@ -27,6 +27,7 @@ import {
   Search,
   MapPin,
   Database,
+  Scale,
   ScanText,
   Key,
   CheckCircle,
@@ -52,6 +53,7 @@ import { useProvidersStore, DOMAIN_TO_CAPABILITY, ProviderCapability, ProviderMe
 import { toast } from 'sonner';
 import { UtilsService, UsersService, ProvidersService } from '@/client';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
+import DecisionPanel from './DecisionPanel';
 
 interface OllamaAvailableModel {
   name: string;
@@ -70,6 +72,7 @@ interface ProviderHubProps {
 const CAPABILITY_ICONS: Record<ProviderCapability, React.ReactNode> = {
   llm: <Brain className="w-4 h-4" />,
   embedding: <Database className="w-4 h-4" />,
+  logic: <Scale className="w-4 h-4" />,
   web_search: <Search className="w-4 h-4" />,
   geocoding: <MapPin className="w-4 h-4" />,
   ocr: <ScanText className="w-4 h-4" />,
@@ -79,6 +82,7 @@ const CAPABILITY_ICONS: Record<ProviderCapability, React.ReactNode> = {
 const CAPABILITY_NAMES: Record<ProviderCapability, string> = {
   llm: 'Language Models',
   embedding: 'Embeddings',
+  logic: 'Logic',
   web_search: 'Web Search',
   geocoding: 'Geocoding',
   ocr: 'OCR',
@@ -88,6 +92,9 @@ const CAPABILITY_NAMES: Record<ProviderCapability, string> = {
 const CAPABILITY_DESCRIPTIONS: Record<ProviderCapability, string> = {
   llm: 'AI models for chat, classification, and structured output',
   embedding: 'Convert text into vector embeddings for semantic search',
+  // Mirrors the backend's Domain.description, which GET /providers/capabilities
+  // now serves — this table is the offline copy, not a second opinion.
+  logic: 'Classification, Decisions, Routing & Ranking for atomic decision making',
   web_search: 'Search the web for real-time information',
   geocoding: 'Convert location names to coordinates and vice versa',
   ocr: 'Extract text from images and scanned documents',
@@ -921,6 +928,17 @@ export default function ProviderHub({ className = '' }: ProviderHubProps) {
             <div className="grid gap-1.5 w-full grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5">
               {providers[capability].map((provider) => renderProviderCard(provider, capability))}
             </div>
+
+            {/* Decisions are the one capability you can try on the spot: a state
+                and a question are enough, and the answer arrives in one call. */}
+            {capability === 'logic' && activeInfospace?.id && (
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  Try the selected provider on your own text.
+                </span>
+                <DecisionPanel infospaceId={activeInfospace.id} />
+              </div>
+            )}
           </TabsContent>
         ))}
       </Tabs>

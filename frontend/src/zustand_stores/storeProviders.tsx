@@ -4,7 +4,7 @@ import { UsersService } from '@/client';
 import type { ProviderDefaults, ProviderSelection as BackendProviderSelection } from '@/client';
 
 // Provider types match backend capabilities
-export type ProviderCapability = 'llm' | 'embedding' | 'web_search' | 'geocoding' | 'ocr' | 'annotation';
+export type ProviderCapability = 'llm' | 'embedding' | 'logic' | 'web_search' | 'geocoding' | 'ocr' | 'annotation';
 
 // Mirrors CatalogModel / CatalogProvider from the generated client. Kept as an
 // interface rather than importing the generated type so the store's own shape
@@ -96,6 +96,7 @@ export const useProvidersStore = create<ProvidersState>()(
       providers: {
         llm: [],
         embedding: [],
+        logic: [],
         web_search: [],
         geocoding: [],
         ocr: [],
@@ -112,6 +113,7 @@ export const useProvidersStore = create<ProvidersState>()(
       selections: {
         llm: {} as ProviderSelection,
         embedding: {} as ProviderSelection,
+        logic: {} as ProviderSelection,
         web_search: {} as ProviderSelection,
         geocoding: {} as ProviderSelection,
         ocr: {} as ProviderSelection,
@@ -161,6 +163,10 @@ export const useProvidersStore = create<ProvidersState>()(
             annotation: toSel(selections.annotation),
           },
           embedding: toSel(selections.embedding),
+          // Decisions: one selection, no context split. A logic endpoint serves
+          // the checkpoint it loaded, so model_name rides along as provenance
+          // only — the picker shows what is answering, it does not choose it.
+          logic: toSel(selections.logic),
           web_search: toSel(selections.web_search),
           ocr: toSel(selections.ocr),
           geocoding: toSel(selections.geocoding),
@@ -184,6 +190,9 @@ export const useProvidersStore = create<ProvidersState>()(
           }
           if (providerDefaults.embedding) {
             next.embedding = fromSel(providerDefaults.embedding) || next.embedding;
+          }
+          if (providerDefaults.logic) {
+            next.logic = fromSel(providerDefaults.logic) || next.logic;
           }
           if (providerDefaults.web_search) {
             next.web_search = fromSel(providerDefaults.web_search) || next.web_search;
