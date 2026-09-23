@@ -19,6 +19,7 @@ from app.api.modules.foundation_service_providers import (
     list_models,
     resolve,
     is_capability_available,
+    domain_for,
     ProviderError,
     CAPABILITIES,
     LLMModelSpec,
@@ -131,10 +132,16 @@ async def system_capabilities(
 
     Deployment-level info — no infospace context needed. Used by the frontend
     to show/hide UI elements based on what the operator has configured.
+
+    ``description`` comes off the ``Domain`` declaration, so the UI renders what
+    the domain says it is rather than keeping a parallel table of blurbs.
     """
     return {
         "capabilities": {
-            name: {"available": is_capability_available(name, settings)}
+            name: {
+                "available": is_capability_available(name, settings),
+                "description": getattr(domain_for(name), "description", ""),
+            }
             for name in CAPABILITIES
         }
     }

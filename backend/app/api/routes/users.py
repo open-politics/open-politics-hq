@@ -173,13 +173,15 @@ def _diff_default_capabilities(old: dict, new: dict) -> set[str]:
 
     ``language`` lives under ``LanguageDefaults`` with chat/annotation
     overrides; we treat any change in that subtree as a language change.
+
+    The capability list is derived from ``ProviderDefaults`` rather than written
+    out here, so a domain added later unblocks its tasks without anyone
+    remembering this function — the same reason ``SELECTABLE_ENRICHERS`` is
+    derived from ``EnrichmentConfig``.
     """
-    caps = {"language", "embedding", "web_search", "ocr", "geocoding"}
-    changed = set()
-    for cap in caps:
-        if old.get(cap) != new.get(cap):
-            changed.add(cap)
-    return changed
+    from app.api.modules.foundation_service_providers.user_config import ProviderDefaults
+
+    return {cap for cap in ProviderDefaults.model_fields if old.get(cap) != new.get(cap)}
 
 
 def _clear_blocks_for_user_caps(session, user_id: int, capabilities: set[str]) -> None:

@@ -477,6 +477,12 @@ class AppSettings(BaseSettings):
     TAVILY_BASE_URL: Optional[str] = Field(validation_alias=AliasChoices("TAVILY_BASE_URL", AliasPath("foundation", "providers", "tavily", "base_url")), default="https://api.tavily.com")
     MAPBOX_BASE_URL: Optional[str] = Field(validation_alias=AliasChoices("MAPBOX_BASE_URL", AliasPath("foundation", "providers", "mapbox", "base_url")), default="https://api.mapbox.com/geocoding/v5/mapbox.places")
     NOMINATIM_API_URL: Optional[str] = Field(validation_alias=AliasChoices("NOMINATIM_API_URL", AliasPath("foundation", "providers", "nominatim_api", "base_url")), default="https://nominatim.openstreetmap.org")
+    # Kev serves decisions on the System One API. Container by default; point it at
+    # host.docker.internal:8009 to use one you run yourself. It has no auth of its
+    # own, which is why setup.sh keeps its port in the loopback audit.
+    KEV_BASE_URL: Optional[str] = Field(validation_alias=AliasChoices("KEV_BASE_URL", AliasPath("foundation", "providers", "kev", "base_url")), default="http://kev:8009")
+    TYPESAFE_API_KEY: Optional[str] = Field(default=None)
+    TYPESAFE_BASE_URL: Optional[str] = Field(validation_alias=AliasChoices("TYPESAFE_BASE_URL", AliasPath("foundation", "providers", "typesafe", "base_url")), default="https://api.typesafe.ai")
 
     # Outbound: MCP servers a language endpoint may call itself, {label: url}.
     # `hq` is our own /tools and needs a URL reachable from the provider's side.
@@ -493,6 +499,10 @@ class AppSettings(BaseSettings):
     # OCR Provider
     OCR_PROVIDER_TYPE: str = Field(validation_alias=AliasChoices("OCR_PROVIDER_TYPE", AliasPath("foundation", "use", "ocr")), default="tesseract")
     OLLAMA_OCR_MODEL: str = Field(validation_alias=AliasChoices("OLLAMA_OCR_MODEL", AliasPath("foundation", "providers", "ollama", "ocr_model")), default="llava")
+
+    # Logic Provider. Empty by default: unlike ocr or scraping there is no built-in
+    # answer, so a deployment that never names one simply has no `logic` capability.
+    LOGIC_PROVIDER_TYPE: str = Field(validation_alias=AliasChoices("LOGIC_PROVIDER_TYPE", AliasPath("foundation", "use", "logic")), default="")
 
     # Redis Configuration
     REDIS_HOST: str = Field(validation_alias=AliasChoices("REDIS_HOST", AliasPath("deployment", "services", "redis", "host")), default="redis")
@@ -585,6 +595,7 @@ class AppSettings(BaseSettings):
             ("geocoding", self.GEOCODING_PROVIDER_TYPE),
             ("web_search", self.WEB_SEARCH_PROVIDER_TYPE),
             ("scraping", self.SCRAPING_PROVIDER_TYPE),
+            ("logic", self.LOGIC_PROVIDER_TYPE),
         ]
 
     @model_validator(mode="after")
