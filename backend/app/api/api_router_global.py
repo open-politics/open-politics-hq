@@ -98,6 +98,7 @@ def build_api_router() -> APIRouter:
         canons,
         entities,
         knowledge_graphs,
+        logic,
         relationships,
         filestorage,
         filters,
@@ -148,6 +149,9 @@ def build_api_router() -> APIRouter:
         R(datasets.router, ["datasets"]),
         R(stream.router, ["Live Streams"]),
         R(providers.router, ["Providers"]),
+        # Mounted always; its write routes declare COMPUTE and are pruned
+        # individually on a ceiling that lacks it.
+        R(logic.router, ["Logic"]),
         # --- Capability-gated (entire router) ---
         R(sources.router, ["Sources"], requires={"ingest"}),
         R(ingestion_jobs.router, ["Ingestion Jobs"], requires={"ingest"}),

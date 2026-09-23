@@ -61,6 +61,7 @@ from app.api.modules.flow.models import (
     TaskStatus,
 )
 from app.api.modules.search.models import SearchHistory
+from app.api.modules.logic.models import Decision
 from app.api.modules.conversational_intelligence.models import ChatConversation, ChatConversationMessage
 from app.api.modules.sharing.models import (
     ShareableLink,

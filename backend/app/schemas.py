@@ -235,6 +235,8 @@ class SourceRead(SourceBase):
     monitoring_tasks: List[TaskRead] = []
     asset_count: Optional[int] = None
     
+    group: Optional[str] = None
+
     # ═══ STREAMING FIELDS ═══
     is_active: bool
     poll_interval_seconds: int
@@ -268,6 +270,20 @@ class SourceRead(SourceBase):
             return "degraded"
         return "healthy"
 
+
+class SourceGroupAssign(SQLModel):
+    """Put sources into a group (or ``None`` to ungroup). One verb covers move,
+    multi-move, rename (ids = the group's members) and dissolve."""
+    source_ids: List[int]
+    group: Optional[str] = None
+
+    @field_validator("group", mode="before")
+    @classmethod
+    def _normalize_group(cls, v):
+        if v is None:
+            return None
+        v = str(v).strip()
+        return v or None
 
 class SourcesOut(SQLModel):
     data: List[SourceRead]
