@@ -21,6 +21,11 @@ All options support the same flexibility: run everything locally, use managed se
 - **Requirements:** 8GB RAM, 4 CPU cores, 300GB disk (Nominatim geocoding requires ~265GB; without it ~30GB)
 - **Setup time:** ~5 minutes (+ ~30 minutes for geocoding dataset import)
 
+### 🧱 Dockerfiles
+- **Location:** [dockerfiles/](./dockerfiles)
+- **What:** images HQ builds itself, for optional services with no usable upstream image
+- **Today:** `kev/` — a decision model server (CPU-only, pinned to an upstream commit), started by `foundation.run.kev` and built by the same `docker compose up --build` as everything else
+
 ### ☸️ Helm Chart (Standalone)
 - **Location:** [end-to-end-hetzner-k3s-terraform-helm/open-politics-hq-deployment/hq-cluster-chart](./end-to-end-hetzner-k3s-terraform-helm/open-politics-hq-deployment/hq-cluster-chart)
 - **Best for:** Existing Kubernetes clusters (any cloud provider)

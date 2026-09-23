@@ -1889,7 +1889,7 @@ services:
     environment:                                      # ollama: OLLAMA_HOST
       OLLAMA_HOST: \${HQ_BIND_HOST:-127.0.0.1}:${ol_port}
 
-  # kev.serve hardcodes a 127.0.0.1 bind upstream; docker/kev/entrypoint.py reads
+  # kev.serve hardcodes a 127.0.0.1 bind upstream; .deployments/dockerfiles/kev/entrypoint.py reads
   # KEV_HOST instead. Bridge mode sets 0.0.0.0 inside its own namespace, so here
   # is the one place the bind has to come back to HQ_BIND_HOST.
   kev:

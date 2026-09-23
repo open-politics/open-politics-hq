@@ -205,11 +205,11 @@ services:
     restart: unless-stopped
 
   # Decisions: a state and typed questions in, probabilities out. Upstream ships
-  # no image, so we build one — see docker/kev/Dockerfile for why it is CPU-only
+  # no image, so we build one — see .deployments/dockerfiles/kev for why it is CPU-only
   # and pinned. It has no authentication of its own, which is why the published
   # port is loopback here and KEV_HOST is rewritten in host mode.
   kev:
-    build: ./docker/kev
+    build: ./.deployments/dockerfiles/kev
     profiles: ["kev"]
     ports:
       - "127.0.0.1:${HQ_KEV_PORT:-8009}:${HQ_KEV_PORT:-8009}"
