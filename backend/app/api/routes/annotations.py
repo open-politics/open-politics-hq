@@ -304,11 +304,13 @@ def get_run_results(
     run_id: int,
     skip: int = 0,
     limit: int = 100,
+    asset_id: Optional[int] = None,
     session: SessionDep,
     annotation_service: AnnotationServiceDep,
 ) -> List[AnnotationRead]:
     """
-    Retrieve all annotations for a specific AnnotationRun.
+    Retrieve the annotations of an AnnotationRun, ordered by id. With
+    `asset_id`, only that asset's (its children's included).
     """
     access.require_in_scope("run_ids", run_id)
     try:
@@ -318,6 +320,7 @@ def get_run_results(
             infospace_id=access.infospace_id,
             skip=skip,
             limit=limit,
+            asset_id=asset_id,
         )
         return results
     except ValueError as ve:

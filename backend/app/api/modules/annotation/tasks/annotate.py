@@ -33,6 +33,7 @@ from app.api.modules.foundation_service_providers import GenerationOptions
 from app.core.config import settings
 from app.api.modules.annotation.contract_resolution import resolve_for_annotation_run
 from app.api.modules.annotation.schema_map import infer_shape
+from app.api.modules.annotation.ledger import run_scope_clause
 from app.api.modules.content.types import get_content_type_registry
 
 if TYPE_CHECKING:
@@ -2561,40 +2562,6 @@ WATERMARK_KEY = "_watermark"  # max asset id this run has attempted; the stream 
 LIVE_AGGREGATE_THROTTLE_SECONDS = 120  # min gap between aggregate recomputes for a live run
 
 
-def _run_scope_clause(session: Session, run: AnnotationRun):
-    """SQL predicate selecting the assets in a run's scope, or None if unscoped.
-
-    A run can watch one or more bundles: ``source_bundle_id`` (single, legacy),
-    ``configuration["source_bundle_ids"]`` (a list — the canonical multi-bundle
-    form), and ``target_bundle_id`` (one-off). Each resolves to its **subtree**
-    (folders are bundles; ``bundle_ids`` is direct membership). An explicit
-    ``target_asset_ids`` list scopes by id. The scope is the **union** of all of
-    these — so adding an explicit asset to a bundle-watching run actually widens
-    the scope rather than being silently shadowed by the bundle.
-    """
-    cfg = run.configuration or {}
-    clauses = []
-
-    roots: set[int] = set()
-    if run.source_bundle_id:
-        roots.add(run.source_bundle_id)
-    roots.update(cfg.get("source_bundle_ids") or [])
-    if cfg.get("target_bundle_id"):
-        roots.add(cfg["target_bundle_id"])
-    if roots:
-        from app.api.modules.content.tree import subtree_ids
-        bids = list(subtree_ids(session, roots))
-        clauses.append(text("bundle_ids && CAST(:scope_bids AS int[])").bindparams(scope_bids=bids))
-
-    asset_ids = cfg.get("target_asset_ids")
-    if asset_ids:
-        clauses.append(Asset.id.in_(list(asset_ids)))
-
-    if not clauses:
-        return None
-    return clauses[0] if len(clauses) == 1 else or_(*clauses)
-
-
 def _delta_query(session: Session, run: AnnotationRun, watermark: int, *, limit: Optional[int] = None):
     """Assets in scope, above the watermark, ordered by id so batches advance
     monotonically. Returns None if the run is unscoped.
@@ -2606,7 +2573,7 @@ def _delta_query(session: Session, run: AnnotationRun, watermark: int, *, limit:
     re-pend/extend idempotent without this query re-aggregating the run's whole
     annotation set on every batch (that was an O(N²) trap on large fresh runs).
     """
-    scope = _run_scope_clause(session, run)
+    scope = run_scope_clause(session, run)
     if scope is None:
         return None
     q = (

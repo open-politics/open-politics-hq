@@ -361,6 +361,7 @@ class AnnotationService:
         infospace_id: int,
         skip: int = 0,
         limit: int = 100,
+        asset_id: Optional[int] = None,
     ) -> List[Annotation]:
         """
         Get all annotations for a specific run.
@@ -374,6 +375,7 @@ class AnnotationService:
             infospace_id: ID of the infospace
             skip: Number of records to skip
             limit: Maximum number of records to return
+            asset_id: Only this asset's annotations, its children's included
 
         Returns:
             List of annotations
@@ -381,43 +383,20 @@ class AnnotationService:
         Raises:
             ValueError: If validation fails
         """
-        logger.info(f"Service: Getting annotations for run {run_id}")
-
-        # Optional: Validate run exists and belongs to infospace
         run = self.session.get(AnnotationRun, run_id)
         if not run or run.infospace_id != infospace_id:
             raise ValueError("Run not found in this infospace.")
 
-        # DEBUG: Check run's target schemas
-        logger.info(f"DEBUG: Run {run_id} has {len(run.target_schemas) if run.target_schemas else 0} target schemas")
-        if run.target_schemas:
-            for schema in run.target_schemas:
-                logger.info(f"DEBUG: Run {run_id} target schema: ID={schema.id}, Name='{schema.name}'")
-        
-        # DEBUG: Check total annotations in database for this run
-        total_annotations_query = select(func.count(Annotation.id)).where(Annotation.run_id == run_id)
-        total_count = self.session.exec(total_annotations_query).one()
-        logger.info(f"DEBUG: Total annotations in DB for run {run_id}: {total_count}")
-        
-        # DEBUG: Check annotations by schema ID for this run
-        schema_breakdown_query = select(
-            Annotation.schema_id, 
-            func.count(Annotation.id).label('count')
-        ).where(Annotation.run_id == run_id).group_by(Annotation.schema_id)
-        schema_breakdown = self.session.exec(schema_breakdown_query).all()
-        for schema_id, count in schema_breakdown:
-            logger.info(f"DEBUG: Run {run_id} has {count} annotations for schema_id {schema_id}")
-
-        query = (
-            select(Annotation)
-            .where(Annotation.run_id == run_id)
-            .offset(skip)
-            .limit(limit)
-        )
-        annotations = self.session.exec(query).all()
-
-        logger.info("DEBUG: Returning %d annotations for run %d", len(annotations), run_id)
-        return list(annotations)
+        query = select(Annotation).where(Annotation.run_id == run_id)
+        if asset_id is not None:
+            # An asset's annotations include its children's: CSV rows and PDF
+            # pages are annotated in their own right, under the asset they
+            # came from.
+            children = select(Asset.id).where(Asset.parent_asset_id == asset_id)
+            query = query.where((Annotation.asset_id == asset_id) | Annotation.asset_id.in_(children))
+        # Ordered, so skip/limit pages are stable.
+        query = query.order_by(Annotation.id).offset(skip).limit(limit)
+        return list(self.session.exec(query).all())
     
     def update_annotation(
         self,

@@ -19,6 +19,7 @@ import json
 import logging
 import time
 from dataclasses import dataclass, field
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -301,3 +302,45 @@ def get_hub() -> StreamHub:
     if _hub is None:
         _hub = StreamHub()
     return _hub
+
+
+# ── Following a stream from a long-lived response ────────────────────────────
+
+async def bursts(
+    key: str,
+    *,
+    is_disconnected: Callable[[], Awaitable[bool]],
+    max_seconds: float,
+    coalesce: float,
+) -> AsyncIterator[list[dict]]:
+    """Each burst of activity on *key*, as its messages.
+
+    For a response that re-reads something whenever a stream says it changed —
+    the overview and the network panel follow their run this way. Writers
+    commit in bursts (a run commits rows in batches), so this waits *coalesce*
+    seconds after the first message and hands over everything that arrived:
+    one re-read per burst, never one per message.
+
+    Ends when the client goes, the hub closes the queue, or *max_seconds* pass
+    — the caller then tells the client to reconnect, so no connection (and no
+    pooled resource behind it) outlives the cap.
+    """
+    hub = get_hub()
+    queue = await hub.subscribe(key, last_id="$")
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + max_seconds
+    try:
+        while (remaining := deadline - loop.time()) > 0:
+            try:
+                first = await asyncio.wait_for(queue.get(), timeout=remaining)
+            except TimeoutError:
+                return
+            if first is None or await is_disconnected():
+                return
+            await asyncio.sleep(coalesce)
+            burst = [first]
+            while not queue.empty():
+                burst.append(queue.get_nowait())
+            yield burst
+    finally:
+        await hub.unsubscribe(key, queue)

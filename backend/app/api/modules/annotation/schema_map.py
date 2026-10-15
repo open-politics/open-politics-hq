@@ -48,7 +48,6 @@ idempotency for free.
 from __future__ import annotations
 
 import json
-import re
 from functools import lru_cache
 from typing import Any, Literal
 
@@ -216,47 +215,72 @@ def infer_shape(node: Any) -> FieldShape:
     return "unknown"
 
 
-# ─── Time / place candidates ────────────────────────────────────────────────
+# ─── Time / place ───────────────────────────────────────────────────────────
 #
-# Schema-side mirrors of the frontend's ``fieldDetection.ts`` heuristics. That
-# module needs a sample value (it inspects the extracted string); here we only
-# have the declaration, so we key on the name pattern plus the declared format.
-# These are *candidates* offered to a role picker, never an automatic binding.
-
-_TIME_NAME_RE = re.compile(
-    r"(timestamp|datetime|date|_at$|^at$|time|when|start|end|since|until|period)",
-    re.IGNORECASE,
-)
-_PLACE_NAME_RE = re.compile(
-    r"(location|place|city|country|region|geo|coordinates?|address|venue|where)",
-    re.IGNORECASE,
-)
-#: Entity types that mark an entity field as a place anchor regardless of name.
-_PLACE_ENTITY_TYPES = frozenset({"location", "place", "city", "country", "region", "geo"})
+# **Read off the contract's structure, never its words.** These used to be name
+# patterns — `when`, `date`, `location`, `city` — plus a list of entity types
+# that meant "place". That made the model's generality stop at English: a field
+# called `ort` typed `Lugar` was neither, however obviously it was one. So:
+#
+#   time    a field DECLARED as a date (`format: date | date-time`). That is the
+#           author saying so; a string called `when` is a string.
+#   place   a field the contract DECLARES spatial — a section's own `place`
+#           binding, an entity inside a section whose frame is `geo`, or an
+#           entity whose `x-ref` vocabulary lives entirely in one. Everything
+#           else is a place only if its VALUES turn out to be somewhere, which
+#           is a question about data and lives in `annotation/bindings.py`.
 
 
-def _leaf_name(path: str) -> str:
-    """Last path segment, explosion marker stripped (``a.b[*].c`` → ``c``)."""
-    return path.rsplit(".", 1)[-1].removesuffix("[*]")
+def _is_time_path(node: FieldNode) -> bool:
+    return node.shape == "date"
 
 
-def _is_time_candidate(node: FieldNode) -> bool:
-    if node.shape == "date":
-        return True
-    if node.shape not in ("string", "number", "enum_string"):
-        return False
-    return bool(_TIME_NAME_RE.search(_leaf_name(node.path)))
+def _declared_place_paths(
+    nodes: list[FieldNode], decls: dict[str, dict[str, Any]],
+) -> tuple[str, ...]:
+    """Paths the contract itself says are places, in contract order.
 
+    A declared binding that names a field the section does not have — the
+    template says `when`, the contract says `when_timestamp` — is ignored rather
+    than trusted: an address that resolves to nothing is not a declaration.
+    """
+    by_path = {n.path: n for n in nodes}
+    geo_sections = {
+        strip_explosions(n.path)
+        for n in nodes
+        if n.path.endswith("[*]") and n.container is None
+        and (n.graph_frame == "geo" or (decls.get(n.path) or {}).get("frame") == "geo")
+    }
 
-def _is_place_candidate(node: FieldNode) -> bool:
-    if node.shape in ENTITY_SHAPES:
-        declared = (node.entity_type or "").strip().lower()
-        if declared in _PLACE_ENTITY_TYPES:
-            return True
-        return bool(_PLACE_NAME_RE.search(_leaf_name(node.path)))
-    if node.shape not in ("string", "enum_string", "array_string", "array_string_enum"):
-        return False
-    return bool(_PLACE_NAME_RE.search(_leaf_name(node.path)))
+    out: list[str] = []
+
+    def add(path: str) -> None:
+        if path in by_path and path not in out:
+            out.append(path)
+
+    for section_path, decl in decls.items():
+        binding = decl.get("place") if isinstance(decl, dict) else None
+        if not isinstance(binding, dict):
+            continue
+        for key in ("at", "start", "end"):
+            rel = binding.get(key)
+            if isinstance(rel, str) and rel:
+                add(f"{section_path}.{rel.removesuffix('.name')}")
+
+    for node in nodes:
+        if not node.is_entity:
+            continue
+        own = strip_explosions(node.path)
+        home = strip_explosions(node.container) if node.container else None
+        if own in geo_sections or (home and home in geo_sections):
+            add(node.path)
+            continue
+        targets = [f"{node.section}.{t}" for t in node.ref_targets]
+        if targets and all(t in geo_sections for t in targets):
+            add(node.path)
+
+    order = {n.path: i for i, n in enumerate(nodes)}
+    return tuple(sorted(out, key=lambda p: order[p]))
 
 
 # ─── Nodes ──────────────────────────────────────────────────────────────────
@@ -383,7 +407,10 @@ class SchemaMap(BaseModel):
     entity_paths: tuple[str, ...] = ()
     triplet_paths: tuple[str, ...] = ()
     time_paths: tuple[str, ...] = ()
+    """Every field declared as a date. Structure, not naming."""
     place_paths: tuple[str, ...] = ()
+    """Every field the contract *declares* spatial. Fields that merely turn out
+    to hold places are discovered from their values — ``annotation/bindings.py``."""
     section_decls: dict[str, dict[str, Any]] = Field(default_factory=dict)
     """Section array path (with ``[*]``) → its sanitized ``x-graph``.
 
@@ -763,8 +790,8 @@ def build_schema_map(output_contract: Any) -> SchemaMap:
         section_decls=decls,
         entity_paths=tuple(n.path for n in nodes if n.is_entity),
         triplet_paths=tuple(n.path for n in nodes if n.shape == "triplet"),
-        time_paths=tuple(n.path for n in nodes if _is_time_candidate(n)),
-        place_paths=tuple(n.path for n in nodes if _is_place_candidate(n)),
+        time_paths=tuple(n.path for n in nodes if _is_time_path(n)),
+        place_paths=_declared_place_paths(nodes, decls),
     )
 
 

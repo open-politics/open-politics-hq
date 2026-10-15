@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 PanelType = Literal[
-    "table", "chart", "pie", "graph", "map", "measurements", "scatter"
+    "table", "chart", "pie", "graph", "network", "map", "measurements", "scatter"
 ]
 
 
@@ -608,6 +608,28 @@ class GraphConfig(BaseModel):
         return v
 
 
+class NetworkConfig(BaseModel):
+    """Network panel — the run's whole graph, laid out and drawn on the GPU.
+
+    The same graph the knowledge-graph panel draws for the same ``q`` (both are
+    configured by ``graph/reading.py``), read through ``routes/network.py``
+    and shipped as columns, so it scales to the tens of thousands of nodes a
+    large run produces. Needs no configuration: a schema written in the
+    observation model graphs itself.
+    """
+
+    kind: Literal["network"] = "network"
+    q: str | None = None
+    """The graph query (GQL) — kept here, as the graph panel keeps its own."""
+    max_nodes: int | None = None
+    """Keep the most frequent nodes only. Unset draws the whole graph."""
+    hidden_types: list[str] = Field(default_factory=list)
+    """Node types greyed out from the legend."""
+    view: dict[str, Any] | None = None
+    """Display knobs — opaque here, owned by the frontend, declared so that
+    validation does not drop them (see ``GraphConfig.hud``)."""
+
+
 class MeasurementsConfig(BaseModel):
     """Measurements panel — stats/KPI render. Pure formula-bound; no
     role picks needed. ``display_mode`` toggles between a single
@@ -905,7 +927,7 @@ def derive_projections(smap: Any) -> list[Projection]:
     return out
 
 
-def derive_doc_anchors(smap: Any) -> dict[str, str | None]:
+def derive_doc_anchors(smap: Any, spatial: Any = ()) -> dict[str, str | None]:
     """The document rung, for a contract that declared no panel config.
 
     Same reasoning as :func:`derive_projections`, for the two bindings that are
@@ -913,13 +935,26 @@ def derive_doc_anchors(smap: Any) -> dict[str, str | None]:
     leaving empty: the weakest rung is what dates and places everything a row
     left blank, and on the first real run it was the only reason 12 of 14
     statements had a timestamp at all — the model had written "Wednesday".
+
+    Read off structure, not names (it used to be the literal ``document.at`` /
+    ``document.dated``): the first top-level field declared as a date, and the
+    first top-level *scalar* field that is spatial — declared by the contract
+    (``smap.place_paths``) or discovered from its values (``spatial``, see
+    ``annotation/bindings.py``). Scalar only, because the accessor reads one
+    value per annotation.
     """
     if smap is None:
         return {"doc_place": None, "doc_time": None}
-    have = {getattr(n, "path", "") for n in (getattr(smap, "fields", ()) or ())}
+    top = [n for n in (getattr(smap, "fields", ()) or ())
+           if getattr(n, "container", None) is None and "[*]" not in n.path]
+    places = set(getattr(smap, "place_paths", ()) or ()) | set(spatial or ())
+    when = next((n.path for n in top if n.shape == "date"), None)
+    where = next((n for n in top if n.path in places
+                  and n.shape in ("entity", "string", "enum_string")), None)
     return {
-        "doc_place": "document.at.name" if "document.at" in have else None,
-        "doc_time": "document.dated" if "document.dated" in have else None,
+        "doc_place": (f"{where.path}.name" if where.shape == "entity" else where.path)
+        if where else None,
+        "doc_time": when,
     }
 
 
@@ -1012,6 +1047,7 @@ PanelConfig = Annotated[
         MapConfig,
         TableConfig,
         GraphConfig,
+        NetworkConfig,
         MeasurementsConfig,
         ScatterConfig,
     ],

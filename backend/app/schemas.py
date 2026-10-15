@@ -601,6 +601,31 @@ class AnnotationRunsOut(SQLModel):
     data: List[AnnotationRunRead]
     count: int
 
+
+class RunLedgerSummary(SQLModel):
+    """Where a run's scope stands, counted in root assets (see `annotation.ledger`)."""
+    in_scope: Optional[int] = None  # None: the run has no scope of its own
+    queued: int
+    annotated: int
+    failed: int
+    annotations: int
+    per_schema: Dict[int, int]
+    last_annotated_at: Optional[datetime] = None
+
+
+class RunLedgerAsset(SQLModel):
+    id: int
+    title: str
+    kind: AssetKind
+    status: Literal["queued", "success", "failed"]
+    # When it entered where it is: arrived (queued), or was read (annotated).
+    at: Optional[datetime] = None
+
+
+class RunLedgerAssets(SQLModel):
+    items: List[RunLedgerAsset]
+    total: int
+
 # ───────────────────────────────────── Annotation Result ──── #
 
 class AnnotationBase(SQLModel):

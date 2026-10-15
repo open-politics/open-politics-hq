@@ -234,6 +234,10 @@ class Panel(BaseModel):
     scopes_in: list[Scope] = Field(default_factory=list)
     merge_maps: list[MergeMap] = Field(default_factory=list)
     grid_position: GridPosition
+    # Share (0–1) of a dashboard-strip column's height; unset is the whole
+    # column. Panels flow into columns by order (``grid_position`` y, then x),
+    # width (``grid_position.w``) and this — see frontend lib/annotations/strip.
+    height: float | None = None
     collapsed: bool = False
 
     @property

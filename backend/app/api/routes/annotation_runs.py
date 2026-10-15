@@ -26,6 +26,8 @@ from app.schemas import (
     AnnotationRunCreate,
     AnnotationRunUpdate,
     AnnotationRunsOut,
+    RunLedgerSummary,
+    RunLedgerAssets,
     Message,
     PackageRead,
     CreatePackageFromRunRequest,
@@ -37,6 +39,7 @@ from app.api.dependency_injection import (
     get_package_service
 )
 from app.api.modules.annotation.services import AnnotationService
+from app.api.modules.annotation import ledger
 from app.api.modules.sharing.services import PackageService
 from app.api.modules.identity_infospace_user.access import (
     Access, Capability, Requires,
@@ -274,6 +277,42 @@ def get_run(
     except Exception as e:
         logger.exception(f"Route: Error getting run {run_id}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Internal server error")
+
+def _readable_run(session, access: Access, run_id: int) -> AnnotationRun:
+    run = session.get(AnnotationRun, run_id)
+    if not run or run.infospace_id != access.infospace_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    access.require_in_scope("run_ids", run_id)
+    return run
+
+
+@router.get("/{run_id}/summary", response_model=RunLedgerSummary)
+def get_run_summary(
+    *,
+    access: Access = Requires(scope=None),
+    run_id: int,
+    session: SessionDep,
+) -> Any:
+    """Where the run's scope stands: in scope, queued, annotated and failed
+    assets (counted at the root), and annotations per schema. Aggregates only,
+    so it is cheap enough to ask on every bit of progress."""
+    return ledger.summary(session, _readable_run(session, access, run_id))
+
+
+@router.get("/{run_id}/assets", response_model=RunLedgerAssets)
+def list_run_assets(
+    *,
+    access: Access = Requires(scope=None),
+    run_id: int,
+    state: ledger.LedgerState,
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=500),
+    session: SessionDep,
+) -> Any:
+    """One page of the run's queue (in scope, not yet read; in processing
+    order) or of its annotated assets (latest first), with the state's total."""
+    return ledger.assets(session, _readable_run(session, access, run_id), state, skip=skip, limit=limit)
+
 
 @router.patch("/{run_id}", response_model=AnnotationRunRead)
 def update_run(
@@ -2411,6 +2450,11 @@ def get_geocoded_entities(
     *,
     run_id: int,
     field_path: str = Query(..., description="Dot-path into annotation.value where location strings live"),
+    geometry: bool = Query(
+        False,
+        description="Include each place's boundary polygon. Off unless the map "
+                    "draws areas: a country's polygon alone can be megabytes.",
+    ),
     access: Access = Requires(scope=None),
     session: SessionDep,
 ) -> list[GeocodedEntityOut]:
@@ -2424,7 +2468,7 @@ def get_geocoded_entities(
     (cached entries complete near-instantly).
     """
     from app.api.modules.annotation.tasks.geocode import _extract_location_strings
-    from app.api.modules.graph.models import CanonEntry
+    from app.api.modules.graph.models import CANON_ENTRY_COORDS, CanonEntry
 
     access.require_in_scope("run_ids", run_id)
 
@@ -2459,26 +2503,41 @@ def get_geocoded_entities(
     from app.api.modules.graph.resolution import norm_type
 
     lowered = [s.lower() for s in strings]
-    entities = session.exec(
-        select(CanonEntry).where(
+    # Columns, never the entity. A CanonEntry row carries six embedding
+    # vectors and a ``properties`` document holding the boundary polygon —
+    # 146 KB on average, 4 MB for a country. Loading 600 of them whole, twice
+    # in parallel, took the API server past 7 GB and the kernel killed it.
+    # ``coords`` is the generated column (migration ``c1_place_lookup``); the
+    # polygon is read only when the caller draws areas.
+    props = CanonEntry.__table__.c.properties
+    columns = [
+        CanonEntry.id, CanonEntry.canonical, CANON_ENTRY_COORDS,
+        func.json_extract_path(props, "display_name").label("display_name"),
+        func.json_extract_path(props, "bbox").label("bbox"),
+    ]
+    if geometry:
+        columns.append(func.json_extract_path(props, "geometry").label("geometry"))
+    rows = session.exec(
+        select(*columns).where(
             CanonEntry.infospace_id == access.infospace_id,
             func.lower(func.trim(CanonEntry.type)) == norm_type("location"),
             func.lower(CanonEntry.canonical).in_(lowered),
+            CANON_ENTRY_COORDS.is_not(None),
         )
     ).all()
 
     out: list[GeocodedEntityOut] = []
-    for ent in entities:
-        coords = (ent.properties or {}).get("coords")
-        if not coords or not isinstance(coords, list) or len(coords) != 2:
+    for row in rows:
+        coords = row.coords
+        if not isinstance(coords, list) or len(coords) != 2:
             continue
         out.append(GeocodedEntityOut(
-            entity_id=ent.id,
-            name=ent.canonical,
+            entity_id=row.id,
+            name=row.canonical,
             coords=list(coords),
-            display_name=(ent.properties or {}).get("display_name"),
-            bbox=(ent.properties or {}).get("bbox"),
-            geometry=(ent.properties or {}).get("geometry"),
+            display_name=row.display_name if isinstance(row.display_name, str) else None,
+            bbox=row.bbox if isinstance(row.bbox, list) else None,
+            geometry=row.geometry if geometry and isinstance(row.geometry, dict) else None,
         ))
     return out
 
