@@ -1651,8 +1651,7 @@ export type DraftRequest = {
 };
 
 /**
- * The draft. Reusing ``QuestionIn`` means the model writes the exact shape
- * ``/judge`` takes, so there is no second contract to keep in step.
+ * The draft, in the exact shape ``/judge`` takes — one contract out.
  */
 export type DraftResponse = {
     questions: {
@@ -2685,6 +2684,41 @@ export type ModelRequest = {
     model_name: string;
 };
 
+export type NetworkAssetsPage = {
+    items: Array<OverviewAsset>;
+    total: number;
+    offset: number;
+};
+
+/**
+ * A selection, by the annotations behind it — one node's ``ann`` slice,
+ * or the union of several.
+ */
+export type NetworkAssetsRequest = {
+    annotations: Array<(number)>;
+    offset?: number;
+    limit?: number;
+};
+
+export type NetworkRequest = {
+    /**
+     * The graph query (GQL), as the graph panel writes it.
+     */
+    q?: (string | null);
+    /**
+     * Panel-local value aliases.
+     */
+    merge_maps?: Array<MergeMap>;
+    /**
+     * Keep the most frequent nodes only. Omitted = the whole graph.
+     */
+    max_nodes?: (number | null);
+    /**
+     * Keep the stream open while the run can change.
+     */
+    follow?: boolean;
+};
+
 export type NewPassword = {
     token: string;
     new_password: string;
@@ -2730,6 +2764,98 @@ export type OrderBy = {
 };
 
 export type direction = 'asc' | 'desc';
+
+export type OverviewAsset = {
+    id: number;
+    title?: (string | null);
+    kind?: (string | null);
+    created_at?: (string | null);
+    /**
+     * The asset's time as the reading dates it.
+     */
+    t?: (string | null);
+    /**
+     * Rows placing it there, or mentions of the entity.
+     */
+    n: number;
+};
+
+export type OverviewAssetsPage = {
+    items: Array<OverviewAsset>;
+    total: number;
+    offset: number;
+    /**
+     * Every spelling the identity was matched on.
+     */
+    spellings: Array<(string)>;
+};
+
+/**
+ * One count, opened. The reading it came from travels with it, so the
+ * list is cut from exactly the rows that count was made of.
+ */
+export type OverviewAssetsRequest = {
+    bindings?: {
+        [key: string]: OverviewBindings;
+    };
+    merge_maps?: Array<MergeMap>;
+    within?: (string | null);
+    /**
+     * A place identity from `buckets.places.id`.
+     */
+    place?: (string | null);
+    /**
+     * An entity identity from `entities.items[].id`.
+     */
+    entity?: (string | null);
+    /**
+     * Section keys the reading counts, dated by row; omitted = every stream, dated by asset — as Assets mode counts.
+     */
+    sections?: (Array<(string)> | null);
+    window?: (OverviewWindow | null);
+    offset?: number;
+    limit?: number;
+};
+
+/**
+ * A reader's choice for one section. A key that is present overrides the
+ * inference — ``null`` meaning "this section has no time/place" — and a key
+ * that is absent leaves it to the plan.
+ */
+export type OverviewBindings = {
+    time?: (string | null);
+    place?: (string | null);
+};
+
+export type OverviewRequest = {
+    /**
+     * Per-section overrides, keyed `<schema_id>:<section path>` or `<schema_id>:@document`.
+     */
+    bindings?: {
+        [key: string]: OverviewBindings;
+    };
+    /**
+     * Panel-local value aliases.
+     */
+    merge_maps?: Array<MergeMap>;
+    /**
+     * An entity identity (`entry:<id>` or `name:<key>`, as the entities stage ships them): read only the assets that name it.
+     */
+    within?: (string | null);
+    /**
+     * Keep the stream open and push replacements while the run can still change.
+     */
+    follow?: boolean;
+};
+
+/**
+ * The time strip's brush: inclusive cell starts at the reading's grain.
+ */
+export type OverviewWindow = {
+    start: string;
+    end: string;
+    grain: string;
+};
 
 export type PackageCreate = {
     name: string;
@@ -3145,6 +3271,36 @@ export type RssSourceCreateRequest = {
     source_name?: (string | null);
     target_bundle_id?: (number | null);
     target_bundle_name?: (string | null);
+};
+
+export type RunLedgerAsset = {
+    id: number;
+    title: string;
+    kind: AssetKind;
+    status: 'queued' | 'success' | 'failed';
+    at?: (string | null);
+};
+
+export type status2 = 'queued' | 'success' | 'failed';
+
+export type RunLedgerAssets = {
+    items: Array<RunLedgerAsset>;
+    total: number;
+};
+
+/**
+ * Where a run's scope stands, counted in root assets (see `annotation.ledger`).
+ */
+export type RunLedgerSummary = {
+    in_scope?: (number | null);
+    queued: number;
+    annotated: number;
+    failed: number;
+    annotations: number;
+    per_schema: {
+        [key: string]: (number);
+    };
+    last_annotated_at?: (string | null);
 };
 
 export type RunStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'completed_with_errors';
@@ -4030,6 +4186,7 @@ export type CreateBatchAnnotations1Data = {
 export type CreateBatchAnnotations1Response = (Message);
 
 export type GetRunResultsData = {
+    assetId?: (number | null);
     infospaceId: number;
     limit?: number;
     packageToken?: (string | null);
@@ -4041,6 +4198,7 @@ export type GetRunResultsData = {
 export type GetRunResultsResponse = (Array<AnnotationRead>);
 
 export type GetRunResults1Data = {
+    assetId?: (number | null);
     infospaceId: number;
     limit?: number;
     packageToken?: (string | null);
@@ -6378,6 +6536,46 @@ export type RecoverPasswordHtmlContentData = {
 
 export type RecoverPasswordHtmlContentResponse = (string);
 
+export type NetworkStreamData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: NetworkRequest;
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type NetworkStreamResponse = (unknown);
+
+export type NetworkAssetsData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: NetworkAssetsRequest;
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type NetworkAssetsResponse = (NetworkAssetsPage);
+
+export type OverviewStreamData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: OverviewRequest;
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type OverviewStreamResponse = (unknown);
+
+export type OverviewAssetsData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: OverviewAssetsRequest;
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type OverviewAssetsResponse = (OverviewAssetsPage);
+
 export type CreatePackageData = {
     infospaceId: number;
     packageToken?: (string | null);
@@ -6712,6 +6910,27 @@ export type DeleteRunData = {
 
 export type DeleteRunResponse = (void);
 
+export type GetRunSummaryData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type GetRunSummaryResponse = (RunLedgerSummary);
+
+export type ListRunAssetsData = {
+    infospaceId: number;
+    limit?: number;
+    packageToken?: (string | null);
+    runId: number;
+    skip?: number;
+    state: 'queued' | 'annotated';
+    xPackageToken?: (string | null);
+};
+
+export type ListRunAssetsResponse = (RunLedgerAssets);
+
 export type ExtendRunData = {
     infospaceId: number;
     packageToken?: (string | null);
@@ -6845,6 +7064,10 @@ export type GetGeocodedEntitiesData = {
      * Dot-path into annotation.value where location strings live
      */
     fieldPath: string;
+    /**
+     * Include each place's boundary polygon. Off unless the map draws areas: a country's polygon alone can be megabytes.
+     */
+    geometry?: boolean;
     infospaceId: number;
     packageToken?: (string | null);
     runId: number;
