@@ -18,6 +18,7 @@ chunk iterator (bounded by the same caps).
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import re
@@ -52,6 +53,34 @@ from app.core.filters import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _Row:
+    """One projection row, whose unselected columns read as ``None``.
+
+    A projection selects only what it binds, so the readers ask for columns
+    that may not exist — ``getattr(row, "t0", None)``. A SQLAlchemy ``Row``
+    answers a missing name by building, formatting and raising an exception
+    before the default applies: a fifth of a large graph's whole build went
+    there. Copying the mapping once per row makes the miss a dict lookup.
+    """
+
+    __slots__ = ("_values",)
+
+    def __init__(self, values: Any) -> None:
+        self._values = dict(values)
+
+    def __getattr__(self, name: str) -> Any:
+        return self._values.get(name)
+
+
+def _annotation_columns() -> str:
+    """Every ``annotation`` column but ``value``, read off the model so the
+    windowed projection's CTE (see ``AnnotationGraphSource._project``) can
+    never drift from the table it stands in for."""
+    from app.api.modules.annotation.models import Annotation
+
+    return ", ".join(c.name for c in Annotation.__table__.columns if c.name != "value")
 
 
 # ─── Row shape ──────────────────────────────────────────────────────────────
@@ -371,27 +400,41 @@ class AnnotationGraphSource:
             logger.warning("projection %r has no node roles; skipped", proj.path)
             return
 
-        # Tuple cursor (annotation_id, ordinality). Required because the LATERAL
-        # fans one annotation into many rows: cursoring on ``a.id`` alone drops
-        # the tail of any annotation whose array overflows the LIMIT.
+        # **Windowed by annotation, not by exploded row.** Each window first
+        # takes the next ``chunk_size`` annotations off the index — plain
+        # columns, no JSON — and only then fans *those* out through the
+        # LATERAL, whole. It used to page the exploded rows themselves with a
+        # tuple cursor (annotation id, ordinality) and a LIMIT, which no index
+        # can serve: every window unpacked, decompressed and sorted every
+        # annotation behind the cursor to keep 500 rows of them. Quadratic in
+        # the run — 210 s for run 433's 4,677 annotations, ~80% of it inside
+        # Postgres. Whole annotations per window also means no array is ever
+        # split across two windows, so the cursor is the id alone.
         last_id: int | None = None
-        last_ord: int | None = None
 
         while True:
             clauses, params = self.query._base_where(include_cursor=False)
+            page_where = list(clauses)
+            page_params = dict(params)
+            if last_id is not None:
+                page_where.append("a.id < :stream_cursor_id")
+                page_params["stream_cursor_id"] = last_id
+            page = [r[0] for r in session.exec(text(f"""
+                SELECT a.id FROM annotation a
+                WHERE {' AND '.join(page_where)}
+                ORDER BY a.id DESC
+                LIMIT :stream_lim
+            """).bindparams(**page_params, stream_lim=chunk_size)).all()]
+            if not page:
+                return
+
             # Filters written against this projection's array evaluate on the
             # lateral element; anything else falls through to EXISTS.
             self.query._apply_conditions(
                 clauses, params, element_alias="elem", active_explosion=arr_path,
             )
-
-            if last_id is not None:
-                clauses.append(
-                    "(a.id < :stream_cursor_id "
-                    "OR (a.id = :stream_cursor_id AND elem_idx.ord > :stream_cursor_ord))"
-                )
-                params["stream_cursor_id"] = last_id
-                params["stream_cursor_ord"] = last_ord
+            clauses.append("a.id = ANY(:stream_page)")
+            params["stream_page"] = page
 
             # Three storage conventions coexist in the wild — flat dotted key,
             # nested path, and document-unwrapped root. ``jsonb_value_accessor``
@@ -564,32 +607,40 @@ class AnnotationGraphSource:
 
             where = " AND ".join(clauses) + f" AND ({role_present})"
 
+            # `a` is the window's annotations, each value decompressed ONCE. A
+            # TOASTed jsonb is decompressed again at every reference, and the
+            # accessors above reference `a.value` per element row — the array
+            # expression twice, each document-rung COALESCE up to three times —
+            # so the bare table cost ~36 decompressions per annotation per
+            # projection. The materialised CTE keeps the table's name and
+            # columns, so no accessor, filter or GQL clause needs to know.
             sql = text(f"""
+                WITH a AS MATERIALIZED (
+                    SELECT {_annotation_columns()},
+                           CASE WHEN jsonb_typeof(value) = 'object'
+                                THEN value || '{{}}'::jsonb ELSE value END AS value
+                    FROM annotation WHERE id = ANY(:stream_page)
+                )
                 SELECT {', '.join(selects)}
-                FROM annotation a
+                FROM a
                 LEFT JOIN asset ast ON ast.id = a.asset_id
                 CROSS JOIN LATERAL jsonb_array_elements(
                     {safe_array_elements(arr_expr)}
                 ) WITH ORDINALITY AS elem_idx(elem, ord)
                 WHERE {where}
                 ORDER BY a.id DESC, elem_idx.ord ASC
-                LIMIT :stream_lim
-            """).bindparams(**params, stream_lim=chunk_size)
-
-            rows = session.exec(sql).all()
-            if not rows:
-                return
+            """).bindparams(**params)
 
             batch: list[GraphAtom] = []
-            for row in rows:
+            for raw in session.exec(sql).all():
+                row = _Row(raw._mapping)
                 self._record_doc_anchor(row)
                 batch.extend(self._atoms_for_row(row, proj, roles))
             if batch:
                 yield batch
 
-            last_id = rows[-1].annotation_id
-            last_ord = rows[-1].ord
-            if len(rows) < chunk_size:
+            last_id = page[-1]
+            if len(page) < chunk_size:
                 return
 
     def _section_names(self) -> frozenset[str]:
@@ -2780,26 +2831,6 @@ def _attach_doc_anchors(
                 node.t0 = stamps[0]
 
 
-def _coord_pair(raw: Any) -> tuple[float, float] | None:
-    """``(lat, lon)`` from either coords shape, or None.
-
-    The geocode action persists the provider's GeoJSON-order
-    ``[lon, lat]`` list (``annotation/tasks/geocode.py``), which is also how
-    ``content/enrichers.py`` reads it. A dict form is accepted too so a
-    hand-curated entry can be explicit rather than positional.
-    """
-    if isinstance(raw, dict):
-        lat, lon = raw.get("lat"), raw.get("lon")
-    elif isinstance(raw, (list, tuple)) and len(raw) >= 2:
-        lon, lat = raw[0], raw[1]          # GeoJSON order
-    else:
-        return None
-    try:
-        return float(lat), float(lon)
-    except (TypeError, ValueError):
-        return None
-
-
 def _attach_coords(
     session: Session,
     infospace_id: int,
@@ -2807,17 +2838,11 @@ def _attach_coords(
 ) -> None:
     """Fill ``lat``/``lon`` for every node we can place. In place.
 
-    **A canon is an enhancement here, never a requirement.** Two independent
-    name → coordinate sources, tried in order:
-
-    1. **Asset facets** — the ``geocoding`` @enricher writes ``location`` plus
-       ``location_lat`` / ``location_lon`` onto assets, and it does *not* write
-       provider results into any canon. So an infospace that has simply ingested
-       and enriched content already has a canon-free geocoding cache. (The
-       column is ``metadata``; ``facets`` is the ORM attribute name — see
-       OVERVIEW's "Asset Metadata" table.)
-    2. **Canon entries** — ``CanonEntry.properties.coords``, written by the
-       geocode *action*. Curated, so it wins on conflict.
+    **A canon is an enhancement here, never a requirement.** Coordinates come
+    from :func:`graph.places.resolve_places` — located canon entries matched by
+    canonical name *or alias* (curated, so they win), then the geocoding
+    enricher's canon-free facet cache. One resolver, shared with the overview,
+    so the map and the graph cannot place the same name differently.
 
     Matching is on the lowered place/name string, which is what makes the
     anchor work for non-location entities: an *event* whose ``place`` binding
@@ -2846,9 +2871,7 @@ def _attach_coords(
         return
     keys = list(wanted)
 
-    def _apply(key: str, pair: tuple[float, float] | None, *, overwrite: bool) -> None:
-        if pair is None:
-            return
+    def _apply(key: str, pair: tuple[float, float]) -> None:
         for node in wanted.get(key, ()):
             # **A place is at itself.** The node's own scalar coordinate may only
             # come from its own name, never from something in its `places[]`.
@@ -2861,60 +2884,28 @@ def _attach_coords(
             # there", and it was silently relocating a place that knows exactly
             # where it is.
             own = (node.name or "").strip().lower() == key
-            if own and (overwrite or node.lat is None):
+            if own:
                 node.lat, node.lon = pair
             # Each place entry resolves on its own name — a company's Valletta
             # seat and its Zurich head office are two coordinates on one node,
             # and collapsing them to a single lat/lon is what hides the
             # divergence between where a thing is registered and where it acts.
             for i, entry in enumerate(node.places):
-                if entry.place.strip().lower() != key:
-                    continue
-                if overwrite or entry.lat is None:
+                if entry.place.strip().lower() == key:
                     node.places[i] = entry.model_copy(
                         update={"lat": pair[0], "lon": pair[1]},
                     )
 
-    # (1) Canon-free: the enricher's per-asset geocoding cache.
-    try:
-        rows = session.execute(
-            text("""
-                SELECT LOWER(TRIM(a.metadata->>'location')) AS key,
-                       a.metadata->>'location_lat' AS lat,
-                       a.metadata->>'location_lon' AS lon
-                FROM asset a
-                WHERE a.infospace_id = :iid
-                  AND a.metadata->>'location_lat' IS NOT NULL
-                  AND LOWER(TRIM(a.metadata->>'location')) = ANY(:keys)
-            """),
-            {"iid": infospace_id, "keys": keys},
-        ).fetchall()
-        for key, lat, lon in rows:
-            _apply(key, _coord_pair({"lat": lat, "lon": lon}), overwrite=False)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("graph coords: asset-facet lookup failed: %s", e)
+    from app.api.modules.graph.places import resolve_places
 
-    # (2) Canon entries — curated, so they overwrite the enricher's guess.
-    # ``CanonEntry.properties`` is a ``JSON`` column, not ``JSONB``, so cast
-    # before drilling in — and via ``CAST(... AS jsonb)``, never ``::jsonb``,
-    # because SQLAlchemy's ``text()`` reads ``:jsonb`` as a bind parameter.
-    # Same trap ``core/filters.py`` documents for ``::text[]``.
     try:
-        rows = session.execute(
-            text("""
-                SELECT LOWER(TRIM(e.canonical)) AS key,
-                       (CAST(e.properties AS jsonb))->'coords' AS coords
-                FROM canon_entry e
-                WHERE e.infospace_id = :iid
-                  AND LOWER(TRIM(e.canonical)) = ANY(:keys)
-                  AND (CAST(e.properties AS jsonb))->'coords' IS NOT NULL
-            """),
-            {"iid": infospace_id, "keys": keys},
-        ).fetchall()
-        for key, coords in rows:
-            _apply(key, _coord_pair(coords), overwrite=True)
+        resolved = resolve_places(session, infospace_id, keys)
     except Exception as e:  # noqa: BLE001
-        logger.warning("graph coords: canon lookup failed: %s", e)
+        logger.warning("graph coords: place resolution failed: %s", e)
+        resolved = {}
+    for key, place in resolved.items():
+        if place.located:
+            _apply(key, (place.lat, place.lon))
 
     # Mirror a coordinate onto every node that is somewhere without BEING
     # somewhere — an occurrence at Trieste, an actor with a registered seat.
@@ -3257,8 +3248,12 @@ def _section_of(path: str) -> str:
     return (path or "").rsplit(".", 1)[-1].removesuffix("[*]").strip().lower()
 
 
+@functools.lru_cache(maxsize=1 << 17)
 def _node_id(name: str, entity_type: str) -> str:
     """Deterministic node ID from name + type. Matches AnnotationQuery.graph()'s
-    legacy hashing so ephemeral and persistent sources yield the same ids."""
+    legacy hashing so ephemeral and persistent sources yield the same ids.
+
+    Cached: a node is touched once per atom that names it, and hashing it
+    afresh each time was the build's largest single line."""
     raw = f"{name.lower().strip()}::{entity_type.lower().strip()}"
     return hashlib.sha256(raw.encode()).hexdigest()[:12]

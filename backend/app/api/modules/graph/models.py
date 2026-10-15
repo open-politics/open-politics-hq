@@ -31,8 +31,9 @@ from typing import Any, Dict, List, Optional
 
 from sqlmodel import SQLModel, Field, Relationship
 from sqlalchemy import (
-    Column, Index, JSON, CheckConstraint, UniqueConstraint, Text, text,
+    Column, Computed, Index, JSON, CheckConstraint, UniqueConstraint, Text, text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
 
 from app.api.modules.identity_infospace_user.models import User, Infospace
@@ -189,6 +190,22 @@ class CanonEntry(SQLModel, table=True):
         # No HNSW index for 2048 — pgvector caps HNSW at 2000 dims.
     )
 
+
+
+# ``properties.coords``, maintained by Postgres. Read this, never
+# ``properties``, when only the point is wanted — ``properties`` also holds the
+# boundary polygon (up to megabytes), and touching it decompresses all of it.
+#
+# On the table, deliberately NOT a model field: SQLModel sets every field on
+# construction, so a mapped ``coords`` went into every INSERT as an explicit
+# NULL — which Postgres refuses for a generated column, and every
+# ``CanonEntry(...)`` failed. Unmapped, writers keep writing ``properties`` and
+# nothing else; readers select ``CANON_ENTRY_COORDS``.
+CANON_ENTRY_COORDS = Column(
+    "coords", JSONB,
+    Computed("CAST(json_extract_path(properties, 'coords') AS jsonb)", persisted=True),
+)
+CanonEntry.__table__.append_column(CANON_ENTRY_COORDS)
 
 class EntityEditLog(SQLModel, table=True):
     """Audit log for manual edits to canon entries."""

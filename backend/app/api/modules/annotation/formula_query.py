@@ -180,127 +180,19 @@ class FormulaQuery:
             fields=list(fields) if fields else [],
         )
 
-    def _graph_source(
-        self,
-        *,
-        projections: list[Any] | None,
-        triplet_field: str | None,
-        dedup: str,
-        q: str | None,
-        edge_weight_field: str | None = None,
-        edge_weight_mode: str = "count",
-        forward_properties: list[Any] | None = None,
-        node_group_by: str | None = None,
-        edge_group_by: str | None = None,
-        null_policy: str = "skip",
-        doc_place: str | None = None,
-        doc_time: str | None = None,
-    ) -> tuple[Any, Any]:
-        """Build ``(source, parsed_gql)`` — the one place a graph is configured.
+    def _graph_source(self, **kwargs: Any) -> tuple[Any, Any]:
+        """``(source, parsed_gql)`` — see :func:`graph.reading.configure`.
 
-        Both ``graph_view`` (JSON) and ``graph_stream_view`` (SSE) go through
-        here, so the two endpoints cannot disagree about what the graph *is*.
-        They used to: the SSE path called ``AnnotationQuery.graph_stream``
-        directly and silently dropped ``projections`` and ``q`` entirely.
-
-        ``triplet_field`` falls back to ``formula.group[0].path`` — the legacy
-        single-array contract — and is only required when no projections are
-        declared.
+        The one thing a Formula still contributes to a graph is the legacy
+        single-array contract: ``triplet_field`` falls back to
+        ``formula.group[0].path``.
         """
-        from app.api.modules.graph import gql as gql_mod
-        from app.api.modules.graph.channels import parse_channels
-        from app.api.modules.graph.stream import AnnotationGraphSource
+        from app.api.modules.graph.reading import configure
 
-        tf = triplet_field
+        tf = kwargs.pop("triplet_field", None)
         if tf is None and self.formula.group:
             tf = self.formula.group[0].path
-        if not projections and not tf:
-            # A schema written in the observation model graphs itself: with no
-            # projections declared, ``resolve_projections`` derives the whole
-            # set from the schema map. This guard predates that and refused the
-            # case it was built for — the same shape of bug as every other
-            # "rule that was right before a branch existed" in this module, and
-            # it only stayed hidden because the panel always sends a legacy
-            # ``triplet_field`` alongside.
-            #
-            # Raising is still right when nothing is derivable, because then the
-            # caller really has asked for a graph of nothing.
-            from app.api.modules.annotation.panel_config import derive_projections
-            try:
-                smap = AnnotationGraphSource(query=self.aq)._schema_map()
-            except Exception:  # noqa: BLE001 — a probe must not sink the view
-                smap = None
-            if not derive_projections(smap):
-                raise ValueError(
-                    "graph view requires projections, triplet_field, or "
-                    "formula.group[0].path — and this run's schema declares no "
-                    "graphable section to derive them from"
-                )
-
-        # **One string, two halves.** `parse_channels` claims the UPPERCASE
-        # bindings and hands back everything it did not, so `gql` never sees a
-        # clause it has no vocabulary for.
-        #
-        # Without this split, `VECTOR:interests` reached `gql`, failed its
-        # lowercase-prefix pattern, and fell through to FREE TEXT — a substring
-        # match on node names that returns a plausible handful of nodes and no
-        # error. Every binding in the language behaved that way.
-        chans = parse_channels(q or "")
-
-        # One parse, both tiers. Row scope rides into the read query; the
-        # graph-shape and traversal tiers run on the assembled result, because
-        # degree and unioned intervals only exist after aggregation.
-        parsed = gql_mod.parse(chans.rest)
-
-        # An unconfigured panel gets the document rung derived too — see
-        # ``panel_config.derive_doc_anchors``. An explicit setting always wins.
-        if doc_place is None and doc_time is None and not projections:
-            from app.api.modules.annotation.panel_config import derive_doc_anchors
-            try:
-                smap = None
-                src_probe = AnnotationGraphSource(query=self.aq)
-                smap = src_probe._schema_map()
-            except Exception:  # noqa: BLE001 — a graph must render without one
-                smap = None
-            derived = derive_doc_anchors(smap)
-            doc_place, doc_time = derived["doc_place"], derived["doc_time"]
-
-        source = AnnotationGraphSource(
-            query=self.aq,
-            projections=list(projections or []),
-            triplet_field=tf,
-            dedup=dedup,
-            edge_weight_field=edge_weight_field,
-            edge_weight_mode=edge_weight_mode,
-            forward_properties=list(forward_properties or []),
-            node_group_by=node_group_by,
-            edge_group_by=edge_group_by,
-            null_policy=null_policy,
-            doc_place=doc_place,
-            doc_time=doc_time,
-            gql=parsed if not parsed.is_empty else None,
-        )
-        source.channels = chans
-
-        # `SECTION:places` → `field:document.places[*]`.
-        #
-        # Resolved here rather than in the parser because it needs the run's
-        # projections, and those are only known once the source has resolved
-        # them — the whole point of the alias is that the analyst names the
-        # section and the engine finds the path. Folded into the SAME
-        # `GraphQuery`, so it is tier 1 and a skipped projection is a scan that
-        # never happens.
-        try:
-            from app.api.modules.graph.channels import resolve_sections
-            source._resolve()
-            fields = resolve_sections(chans, list(source.projections or []))
-            if fields:
-                parsed.fields.extend(f for f in fields if f not in parsed.fields)
-                source.gql = parsed
-        except Exception:  # noqa: BLE001 — an alias must not break a view
-            logger.warning("SECTION: could not resolve to a projection", exc_info=True)
-
-        return source, parsed
+        return configure(self.aq, triplet_field=tf, **kwargs)
 
     def graph_view(
         self,
@@ -333,10 +225,7 @@ class FormulaQuery:
         dotted paths like ``document.triplets[*]`` and the ``[*]`` suffix
         are normalized; the deprecated method couldn't handle either.
         """
-        import asyncio
-
-        from app.api.modules.graph import gql as gql_mod
-        from app.api.modules.graph.stream import collect_graph
+        from app.api.modules.graph.reading import collect
 
         source, parsed = self._graph_source(
             projections=projections,
@@ -352,19 +241,8 @@ class FormulaQuery:
             doc_place=doc_place,
             doc_time=doc_time,
         )
-        result = asyncio.run(
-            collect_graph(
-                self.aq._session,
-                self.aq._infospace_id,
-                source,
-                top_n_nodes=top_n_nodes,
-                top_n_edges=top_n_edges,
-            )
-        )
-        if parsed.has_post:
-            nodes, edges = gql_mod.apply_to_graph(parsed, result.nodes, result.edges)
-            result = GraphResultData(nodes=nodes, edges=edges)
-        return result
+        return collect(self.aq, source, parsed,
+                       top_n_nodes=top_n_nodes, top_n_edges=top_n_edges)
 
     async def graph_stream_view(
         self,
