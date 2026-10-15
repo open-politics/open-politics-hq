@@ -18,15 +18,13 @@
 
 import type { Formula } from '@/client/types.gen';
 
-/** The seven panel render types HQ supports. Mirrors the backend's
- *  ``PanelType`` literal in ``panel_config.py``; not exported on any
- *  OpenAPI response so we keep it local. */
-export type PanelType =
-  | 'table' | 'chart' | 'pie' | 'graph' | 'map'
-  | 'measurements' | 'scatter';
+import type { PanelType } from './types';
+export type { PanelType };
 
 export function eligiblePanels(formula: Formula): Set<PanelType> {
-  const panels = new Set<PanelType>(['table']);
+  // The overview and the network read the run itself, not a Formula — always
+  // available.
+  const panels = new Set<PanelType>(['overview', 'network', 'table']);
   const dims = formula.group ?? [];
   const measures = formula.measures ?? [];
   const kinds = dims.map(d => d.kind);

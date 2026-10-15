@@ -3,16 +3,18 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
-import { Table as TableIcon, TrendingUp, PieChart, MapPin, Network } from 'lucide-react';
+import { Table as TableIcon, TrendingUp, PieChart, MapPin, Network, Globe2, Orbit } from 'lucide-react';
 
-// Panel types offered by the Ctrl+P quick picker. Mirrors the header's add-panel
-// menu; kept here so the picker is self-contained and keyboard-driven.
+// The panel types a dashboard offers — the Ctrl+P quick picker and the header's
+// add-panel menu both read this list.
 export const PANEL_TYPES = [
+  { type: 'overview', name: 'Overview', description: 'Where, when and who — the run at a glance', icon: Globe2, color: 'bg-slate-700 dark:bg-slate-600' },
   { type: 'table', name: 'Data Table', description: 'Tabular view with filtering and sorting', icon: TableIcon, color: 'bg-blue-500 dark:bg-blue-600' },
   { type: 'chart', name: 'Time Series / Bar Chart', description: 'Trends over time or count comparisons', icon: TrendingUp, color: 'bg-green-500 dark:bg-green-600' },
   { type: 'pie', name: 'Pie Chart', description: 'Distribution and proportion visualization', icon: PieChart, color: 'bg-amber-500 dark:bg-amber-600' },
   { type: 'map', name: 'Geographic Map', description: 'Spatial visualization of geocoded data', icon: MapPin, color: 'bg-red-500 dark:bg-red-600' },
   { type: 'graph', name: 'Knowledge Graph', description: 'Network visualization of relationships', icon: Network, color: 'bg-purple-500 dark:bg-purple-600' },
+  { type: 'network', name: 'Network', description: 'The whole graph, laid out on the GPU — built for large runs', icon: Orbit, color: 'bg-violet-700 dark:bg-violet-600' },
 ] as const;
 
 export type PanelTypeDef = (typeof PANEL_TYPES)[number];

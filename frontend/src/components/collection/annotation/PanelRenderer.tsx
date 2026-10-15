@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { X, ChevronsUp, Edit, Check, XCircle, RotateCcw, Maximize2, Minimize2, Copy, Edit2, Settings, LayoutPanelTop } from 'lucide-react';
+import { X, ChevronsUp, Edit, Check, XCircle, RotateCcw, Maximize2, Minimize2, Copy, Edit2, Settings, LayoutPanelTop, ArrowLeft, ArrowRight } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { Button } from '@/components/ui/button';
 import { ButtonGroup } from '@/components/ui/button-group';
@@ -14,6 +14,18 @@ import AnnotationResultsPieChart from './AnnotationResultsPieChart';
 import AnnotationResultsTable from './AnnotationResultsTable';
 import AnnotationResultsMap, { MapPoint } from './AnnotationResultsMap';
 import AnnotationResultsGraph from './AnnotationResultsGraph';
+import dynamic from 'next/dynamic';
+
+// MapLibre + deck.gl ship only with a dashboard that shows an overview, and
+// cosmos.gl only with one that shows a network.
+const OverviewPanel = dynamic(
+  () => import('./overview/OverviewPanel').then((m) => m.OverviewPanel),
+  { ssr: false, loading: () => null },
+);
+const NetworkPanel = dynamic(
+  () => import('./network/NetworkPanel').then((m) => m.NetworkPanel),
+  { ssr: false, loading: () => null },
+);
 import { AnnotationTimeAxisControls } from './AnnotationTimeAxisControls';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Textarea } from '@/components/ui/textarea';
@@ -40,13 +52,21 @@ import { useDragScope, DraggableScopeChip } from './panels/DragScopeProvider';
 import { PanelHeaderSlotProvider, PanelHeaderSlotRenderer } from './panels/PanelHeaderSlot';
 import { PanelConfigPopover } from './panels/PanelConfigPopover';
 import { isPanelConfigured } from '@/lib/annotations/panelCompile';
-import { resolveGridGeometry, quickSize, quickSizeLabel, heightUnits, type QuickSize } from '@/lib/annotations/grid';
+import { HEIGHTS, heightOf, stripColumns, stripOrder, type StripPlacement } from '@/lib/annotations/strip';
+import { useShallow } from 'zustand/react/shallow';
+import { resolveGridGeometry, quickWidth, quickSizeLabel, defaultPanelSize, type QuickSize } from '@/lib/annotations/grid';
 import { PanelHeader } from '@/components/layout/PanelHeader';
+
+type DropZone = 'left' | 'right' | 'center';
+const DROP_PLACEMENT: Record<DropZone, StripPlacement> = {
+  left: 'before',
+  right: 'after',
+  center: 'swap',
+};
 
 // Grid constants. The column count + row height are resolved per-dashboard from
 // ``layout`` (see lib/annotations/grid.ts); these are only floors.
 const MIN_WIDTH = 1;
-const MIN_HEIGHT = 1;
 
 // Stable empty-array references for legacy shims. Panels now self-fetch via
 // useAnnotationView, so these paths never carry data.
@@ -107,7 +127,22 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
   const [pieFacetValues, setPieFacetValues] = useState<string[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [dragStartPosition, setDragStartPosition] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
-  const [dragOverZone, setDragOverZone] = useState<'left' | 'right' | 'top' | 'bottom' | 'center' | null>(null);
+  const [dragOverZone, setDragOverZone] = useState<DropZone | null>(null);
+  const movePanel = useAnnotationRunStore((s) => s.movePanel);
+  const shiftPanel = useAnnotationRunStore((s) => s.shiftPanel);
+  const setPanelHeight = useAnnotationRunStore((s) => s.setPanelHeight);
+  // Where this panel stands in the run's strip: its place in the order, and
+  // the column it has flowed into.
+  const place = useAnnotationRunStore(useShallow((s) => {
+    const panels = s.dashboardConfig?.panels ?? [];
+    const columns = stripColumns(panels);
+    return {
+      index: stripOrder(panels).findIndex((p) => p.id === panel.id),
+      count: panels.length,
+      column: columns.findIndex((members) => members.some((p) => p.id === panel.id)),
+      columns: columns.length,
+    };
+  }));
 
   // --- Scope gesture state ---
   // The local `pendingScopeGesture` powers the legacy ScopeTargetPicker
@@ -258,25 +293,20 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
     setDragOverZone(null);
   };
 
+  // Which part of the panel a drag is over: either side puts the dragged
+  // panel before or after this one in the strip, the middle trades places.
+  const dropZoneAt = (e: React.DragEvent): DropZone => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const relativeX = (e.clientX - rect.left) / rect.width;
+    if (relativeX < 1 / 3) return 'left';
+    if (relativeX > 2 / 3) return 'right';
+    return 'center';
+  };
+
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    
-    // Calculate drag over zone for visual feedback
-    const rect = e.currentTarget.getBoundingClientRect();
-    const dropX = e.clientX - rect.left;
-    const dropY = e.clientY - rect.top;
-    const relativeX = dropX / rect.width;
-    const relativeY = dropY / rect.height;
-    
-    let zone: 'left' | 'right' | 'top' | 'bottom' | 'center' = 'center';
-    
-    if (relativeX > 0.6) zone = 'right';
-    else if (relativeX < 0.4) zone = 'left';
-    else if (relativeY > 0.6) zone = 'bottom';
-    else if (relativeY < 0.4) zone = 'top';
-    
-    setDragOverZone(zone);
+    setDragOverZone(dropZoneAt(e));
   };
 
   const handleDragLeave = () => {
@@ -285,90 +315,11 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    const dragDataStr = e.dataTransfer.getData('text/plain');
-    
+    setDragOverZone(null);
     try {
-      const dragData = JSON.parse(dragDataStr);
-      const draggedPanelId = dragData.panelId;
-      const draggedPanelGridPos = dragData.grid_position;
-      
-      if (draggedPanelId && draggedPanelId !== panel.id && draggedPanelGridPos) {
-        const targetPos = { x: gridPos.x, y: gridPos.y };
-        
-        // Get the bounds of the drop target
-        const rect = e.currentTarget.getBoundingClientRect();
-        const dropX = e.clientX - rect.left;
-        const dropY = e.clientY - rect.top;
-        const relativeX = dropX / rect.width;
-        const relativeY = dropY / rect.height;
-        
-        // Determine if we should place side-by-side or swap
-        const targetPanel = panel;
-        const targetWidth = targetPanel.grid_position.w;
-        const targetHeight = targetPanel.grid_position.h;
-        
-        let newPosition = { x: targetPos.x, y: targetPos.y };
-        let shouldSwap = false;
-        
-        // If dropping on the right half, try to place to the right
-        if (relativeX > 0.6 && targetPos.x + targetWidth < 12) {
-          const spaceToRight = 12 - (targetPos.x + targetWidth);
-          if (spaceToRight >= Math.min(draggedPanelGridPos.w, 3)) { // Use dragged panel's width or minimum
-            newPosition = {
-              x: targetPos.x + targetWidth,
-              y: targetPos.y
-            };
-          } else {
-            shouldSwap = true;
-          }
-        }
-        // If dropping on the left half, try to place to the left  
-        else if (relativeX < 0.4 && targetPos.x >= Math.min(draggedPanelGridPos.w, 3)) {
-          newPosition = {
-            x: Math.max(0, targetPos.x - draggedPanelGridPos.w),
-            y: targetPos.y
-          };
-        }
-        // If dropping on the bottom half, try to place below
-        else if (relativeY > 0.6) {
-          newPosition = {
-            x: targetPos.x,
-            y: targetPos.y + targetHeight
-          };
-        }
-        // If dropping on the top half, try to place above
-        else if (relativeY < 0.4) {
-          newPosition = {
-            x: targetPos.x,
-            y: Math.max(0, targetPos.y - draggedPanelGridPos.h)
-          };
-        }
-        // Otherwise, swap positions (default behavior)
-        else {
-          shouldSwap = true;
-        }
-        
-        if (shouldSwap) {
-          newPosition = targetPos;
-          // Move the target panel to where the dragged panel was
-          onUpdatePanel(panel.id, {
-            grid_position: {
-              ...gridPos,
-              x: draggedPanelGridPos.x,
-              y: draggedPanelGridPos.y,
-            }
-          });
-        }
-        
-        // Update the dragged panel's position (keep its original size)
-        onUpdatePanel(draggedPanelId, {
-          grid_position: {
-            x: newPosition.x,
-            y: newPosition.y,
-            w: draggedPanelGridPos.w, // Keep original width
-            h: draggedPanelGridPos.h, // Keep original height
-          }
-        });
+      const { panelId: draggedId } = JSON.parse(e.dataTransfer.getData('text/plain'));
+      if (draggedId && draggedId !== panel.id) {
+        movePanel(draggedId, panel.id, DROP_PLACEMENT[dropZoneAt(e)]);
       }
     } catch (error) {
       console.warn('Failed to parse drag data:', error);
@@ -440,33 +391,14 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
     }
   };
 
-  const handleHeightChange = (newHeight: number) => {
-    try {
-      const clampedHeight = Math.max(MIN_HEIGHT, newHeight);
-      onUpdatePanel(panel.id, {
-        grid_position: {
-          ...gridPos,
-          h: clampedHeight 
-        } 
-      });
-    } catch (error) {
-      console.warn('Error updating panel height:', error);
-    }
-  };
-
   const handleQuickSize = (size: QuickSize) => {
-    const newSize = quickSize(size, gridGeo);
-    onUpdatePanel(panel.id, {
-      grid_position: { ...gridPos, ...newSize }
-    });
-    toast.success(`Panel resized to ${size}`);
+    handleWidthChange(quickWidth(size, gridGeo));
   };
 
+  // Back to the panel type's default width, and the whole column's height.
   const handleResetLayout = () => {
-    onUpdatePanel(panel.id, {
-      grid_position: { x: 0, y: 0, w: GRID_COLUMNS, h: heightUnits(600, gridGeo.rowHeight) }
-    });
-    toast.success('Panel layout reset');
+    handleWidthChange(defaultPanelSize(panel.type, gridGeo).w);
+    setPanelHeight(panel.id, 1);
   };
   
   const handlePanelSettingsUpdate = useCallback((newSettings: Partial<PanelViewConfig['settings']>) => {
@@ -522,6 +454,28 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
     }
 
     switch(panel.type) {
+      case 'overview':
+        return (
+          <OverviewPanel
+            panel={panel}
+            infospaceId={infospaceId}
+            runId={runId}
+            schemas={allSchemas}
+            onUpdatePanel={handlePanelUpdate}
+          />
+        );
+
+      case 'network':
+        return (
+          <NetworkPanel
+            panel={panel}
+            infospaceId={infospaceId}
+            runId={runId}
+            schemas={allSchemas}
+            onUpdatePanel={handlePanelUpdate}
+          />
+        );
+
       case 'table':
         return (
           <div className="h-full flex flex-col overflow-y-auto">
@@ -687,17 +641,7 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
           {dragOverZone === 'right' && (
             <div className="absolute right-0 top-0 w-1 h-full bg-primary/60 rounded-r-lg z-30 animate-pulse" />
           )}
-          
-          {/* Top Drop Zone */}
-          {dragOverZone === 'top' && (
-            <div className="absolute top-0 left-0 w-full h-1 bg-primary/60 rounded-t-lg z-30 animate-pulse" />
-          )}
-          
-          {/* Bottom Drop Zone */}
-          {dragOverZone === 'bottom' && (
-            <div className="absolute bottom-0 left-0 w-full h-1 bg-primary/60 rounded-b-lg z-30 animate-pulse" />
-          )}
-          
+
           {/* Center Drop Zone (swap) */}
           {dragOverZone === 'center' && (
             <div className="absolute inset-0 border-2 border-dashed border-primary/60 rounded-lg z-30 bg-primary/10 flex items-center justify-center">
@@ -722,57 +666,37 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
         />
       )}
 
-      {/* Resize target — bottom-right invisible corner. Same pattern as
-          the drag target: cursor change carries the affordance. */}
+      {/* Resize target — the right edge, full height. Panels are columns of
+          the run's strip and always take its full height, so the only size a
+          panel has is its width: one grid column is one share of the strip's
+          width, the same unit the strip lays panels out in. The cursor change
+          carries the affordance, as with the drag target. */}
       {!isCollapsed && !focusMode && (
         <div
-          className="absolute bottom-0 right-0 w-4 h-4 cursor-se-resize z-10 @max-3xl/page:hidden"
+          className="absolute inset-y-0 right-0 z-10 w-1.5 cursor-ew-resize @max-3xl/page:hidden"
           aria-label="Resize panel"
-        onMouseDown={(e) => {
-          e.preventDefault();
-          e.stopPropagation(); // Prevent drag start when resizing
-          const startX = e.clientX;
-          const startY = e.clientY;
-          const startWidth = gridPos.w;
-          const startHeight = gridPos.h;
-          
-          // Get the grid container to calculate actual grid cell size
-          const gridContainer = e.currentTarget.closest('[style*="grid"]') as HTMLElement;
-          let gridCellWidth = 100; // fallback
-          let gridCellHeight = gridGeo.rowHeight; // fallback
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation(); // Prevent drag start when resizing
+            const startX = e.clientX;
+            const startWidth = gridPos.w;
+            const strip = e.currentTarget.closest('[data-panel-strip]') as HTMLElement | null;
+            const columnWidth = (strip?.clientWidth ?? window.innerWidth) / GRID_COLUMNS;
 
-          if (gridContainer) {
-            const containerRect = gridContainer.getBoundingClientRect();
-            gridCellWidth = containerRect.width / GRID_COLUMNS;
-            gridCellHeight = gridGeo.rowHeight; // Resolved row height from the CSS var
-          }
-          
-          const handleMouseMove = (e: MouseEvent) => {
-            const deltaX = e.clientX - startX;
-            const deltaY = e.clientY - startY;
-            
-            // Calculate new size based on actual grid cell dimensions
-            const widthChange = Math.round(deltaX / gridCellWidth);
-            const heightChange = Math.round(deltaY / gridCellHeight);
-            
-            const newWidth = Math.max(MIN_WIDTH, Math.min(GRID_COLUMNS, startWidth + widthChange));
-            const newHeight = Math.max(MIN_HEIGHT, startHeight + heightChange);
-            
-            // Only update if the size actually changed to prevent unnecessary updates
-            if (newWidth !== gridPos.w || newHeight !== gridPos.h) {
-              handleWidthChange(newWidth);
-              handleHeightChange(newHeight);
-            }
-          };
-          
-          const handleMouseUp = () => {
-            document.removeEventListener('mousemove', handleMouseMove);
-            document.removeEventListener('mouseup', handleMouseUp);
-          };
-          
-          document.addEventListener('mousemove', handleMouseMove);
-          document.addEventListener('mouseup', handleMouseUp);
-        }}
+            const handleMouseMove = (e: MouseEvent) => {
+              const widthChange = Math.round((e.clientX - startX) / columnWidth);
+              const newWidth = Math.max(MIN_WIDTH, Math.min(GRID_COLUMNS, startWidth + widthChange));
+              if (newWidth !== gridPos.w) handleWidthChange(newWidth);
+            };
+
+            const handleMouseUp = () => {
+              document.removeEventListener('mousemove', handleMouseMove);
+              document.removeEventListener('mouseup', handleMouseUp);
+            };
+
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', handleMouseUp);
+          }}
         />
       )}
 
@@ -857,29 +781,45 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <h4 className="font-medium text-xs">Panel Layout</h4>
-                    <span className="text-[10px] text-muted-foreground">
-                      {gridPos.w} × {gridPos.h}
+                    <span className="text-[10px] tabular-nums text-muted-foreground">
+                      {place.index + 1} of {place.count} · column {place.column + 1}
                     </span>
                   </div>
 
-                  {/* Quick Size Buttons */}
+                  {/* Position — one place earlier or later in the strip. */}
                   <div>
-                    <Label className="text-[10px] text-muted-foreground mb-1.5 block">Quick Sizes</Label>
+                    <Label className="text-[10px] text-muted-foreground mb-1.5 block">Position</Label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={place.index <= 0} onClick={() => shiftPanel(panel.id, -1)}>
+                        <ArrowLeft className="h-3 w-3 mr-1.5" />
+                        Move left
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={place.index < 0 || place.index >= place.count - 1} onClick={() => shiftPanel(panel.id, 1)}>
+                        Move right
+                        <ArrowRight className="h-3 w-3 ml-1.5" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Quick widths */}
+                  <div>
+                    <Label className="text-[10px] text-muted-foreground mb-1.5 block">Quick Widths</Label>
                     <div className="grid grid-cols-2 gap-1.5">
                       {(['small', 'medium', 'large', 'full'] as QuickSize[]).map((s) => (
                         <Button key={s} size="sm" variant="ghost" className="h-7 text-xs" onClick={() => handleQuickSize(s)}>
-                          {quickSizeLabel(s, gridGeo)}
+                          {quickSizeLabel(s)}
                         </Button>
                       ))}
                     </div>
                   </div>
 
-                  {/* Manual Size Controls */}
+                  {/* Width is a share of the page, height a share of a column.
+                      Panels of one width flow into a column while they fit. */}
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <Label htmlFor="panel-width" className="text-[10px] text-muted-foreground">Width</Label>
                       <Select value={gridPos.w.toString()} onValueChange={(v) => handleWidthChange(parseInt(v))}>
-                        <SelectTrigger className="h-7 text-xs">
+                        <SelectTrigger id="panel-width" className="h-7 text-xs">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
@@ -893,17 +833,17 @@ export const PanelRenderer: React.FC<PanelRendererProps> = ({
                     </div>
                     <div>
                       <Label htmlFor="panel-height" className="text-[10px] text-muted-foreground">Height</Label>
-                      <Select value={gridPos.h.toString()} onValueChange={(v) => handleHeightChange(parseInt(v))}>
-                        <SelectTrigger className="h-7 text-xs">
+                      <Select
+                        value={String(heightOf(panel))}
+                        onValueChange={(v) => setPanelHeight(panel.id, Number(v))}
+                      >
+                        <SelectTrigger id="panel-height" className="h-7 text-xs">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {Array.from(
-                            { length: Math.max(8, Math.ceil(1500 / gridGeo.rowHeight)) },
-                            (_, i) => i + MIN_HEIGHT,
-                          ).map(h => (
-                            <SelectItem key={h} value={h.toString()}>
-                              {h} units
+                          {HEIGHTS.map(({ value, label }) => (
+                            <SelectItem key={label} value={String(value)}>
+                              {value === 1 ? 'Full column' : `${label} of column`}
                             </SelectItem>
                           ))}
                         </SelectContent>

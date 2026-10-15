@@ -964,7 +964,7 @@ export type PanelAggregation = any;
 // =============================================================================
 
 export type PanelType =
-  | 'table' | 'chart' | 'pie' | 'graph' | 'map'
+  | 'overview' | 'table' | 'chart' | 'pie' | 'graph' | 'network' | 'map'
   | 'measurements' | 'scatter';
 
 // ── Per-type visual config (the "Role & Viz Map" emitted by RolePicker) ──
@@ -1143,7 +1143,39 @@ export interface ScatterVizConfig {
   legend?: boolean;
 }
 
+/** The run's front door — a map of where, when and who, read from buckets
+ *  (`annotation/overview.py`). Carries no data spec: what it reads is the
+ *  run, and how each section is placed and dated is inferred, or picked here. */
+export interface OverviewVizConfig {
+  kind: 'overview';
+  mode: 'assets' | 'rows' | 'sections';
+  /** Section keys counted in `sections` mode. */
+  sections: string[];
+  /** Per-section overrides of where/when rows are read from — see
+   *  `lib/overview/types.BindingPick`. Empty means "infer everything". */
+  bindings: Record<string, { time?: string | null; place?: string | null }>;
+}
+
+/** The run's whole graph on the GPU (`annotation/network/NetworkPanel`). Reads
+ *  the run itself through the network stream — no data spec; the same graph
+ *  the knowledge-graph panel draws for the same `q`. */
+export interface NetworkVizConfig {
+  kind: 'network';
+  /** The graph query (GQL). */
+  q?: string | null;
+  /** Keep the most frequent nodes only; unset draws the whole graph. */
+  max_nodes?: number | null;
+  /** Node types left out of the picture, from the legend. */
+  hidden_types?: string[];
+  view?: {
+    /** Show occurrences — the acts and rows that connect entities. */
+    occurrences?: boolean;
+  } | null;
+}
+
 export type PanelVizConfig =
+  | OverviewVizConfig
+  | NetworkVizConfig
   | PieVizConfig
   | ChartVizConfig
   | MapVizConfig
@@ -1182,6 +1214,9 @@ export interface Panel {
   scopes_in: Scope[];
   merge_maps: MergeMap[];
   grid_position: { x: number; y: number; w: number; h: number };
+  /** Share (0–1) of a dashboard-strip column's height; unset is the whole
+   *  column. See `lib/annotations/strip.ts`. */
+  height?: number | null;
   collapsed?: boolean;
 
   // ── Legacy fields kept as ``any`` during the P3 sweep so existing

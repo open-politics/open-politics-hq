@@ -541,6 +541,8 @@ const AnnotationResultsMap: React.FC<AnnotationResultsMapProps> = ({
     runId,
     fieldPath: locationField ?? null,
     enabled: !!infospaceId && !!runId && !!locationField,
+    // Polygons only when areas are drawn; markers need a point and a bbox.
+    geometry: showAreas || mapMode === 'areaGeometryMeasures',
   });
   refetchSeedRef.current = refetchSeed;
 

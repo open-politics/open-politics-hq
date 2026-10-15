@@ -1053,6 +1053,17 @@ export const adaptAnnotationToAnnotationRead = (result: FormattedAnnotation): Cl
     } as ClientAnnotationRead;
 };
 
+/**
+ * The backend's result status (`success` | `failed`) in the frontend's terms
+ * (`success` | `failure`). Every reader compares against `failure`, so the
+ * translation happens once, here at the edge — without it no failed result
+ * was ever counted as one.
+ */
+const resultStatus = (status: unknown): AnnotationResultStatus =>
+  status === 'failed' || status === 'failure' ? 'failure'
+  : status === 'in_progress' ? 'in_progress'
+  : 'success';
+
 export function adaptAnnotationReadToAnnotationResult(resultRead: ClientAnnotationRead): AnnotationResult {
   return {
     id: resultRead.id,
@@ -1061,7 +1072,7 @@ export function adaptAnnotationReadToAnnotationResult(resultRead: ClientAnnotati
     run_id: resultRead.run_id,
     value: resultRead.value,
     timestamp: resultRead.created_at || new Date().toISOString(),
-    status: resultRead.status as AnnotationResultStatus,
+    status: resultStatus(resultRead.status),
     error_message: (resultRead as any).error_message ?? null,
     asset: undefined,
     schema: undefined,
@@ -1079,7 +1090,7 @@ export function adaptEnhancedAnnotationToFormattedAnnotation(enhancedRead: Clien
     timestamp: enhancedRead.created_at || new Date().toISOString(),
     displayValue: enhancedRead.display_value ?? null,
     isOptimistic: false,
-    status: (enhancedRead.status as AnnotationResultStatus) ?? 'success',
+    status: resultStatus(enhancedRead.status),
     error_message: (enhancedRead as any).error_message ?? null,
     asset: undefined,
     schema: undefined,

@@ -20,6 +20,8 @@ import type {
   Panel,
   PanelType,
   PanelVizConfig,
+  NetworkVizConfig,
+  OverviewVizConfig,
   PieVizConfig,
   ChartVizConfig,
   MapVizConfig,
@@ -55,6 +57,10 @@ export function emptyFormula(opts: { id?: string; name?: string } = {}): Formula
 /** A per-type default panel_config — kind set, every role slot empty. */
 export function defaultVizConfig(type: PanelType): PanelVizConfig {
   switch (type) {
+    case 'overview':
+      return { kind: 'overview', mode: 'assets', sections: [], bindings: {} } as OverviewVizConfig;
+    case 'network':
+      return { kind: 'network', q: null, max_nodes: null, hidden_types: [], view: { occurrences: true } } as NetworkVizConfig;
     case 'pie':
       return {
         kind: 'pie',
@@ -133,8 +139,8 @@ export function defaultVizConfig(type: PanelType): PanelVizConfig {
 /** Default grid size per panel type. Map/graph need more screen real
  *  estate; pie/observation are compact. */
 function defaultGrid(type: PanelType): { x: number; y: number; w: number; h: number } {
-  const w = { pie: 4, chart: 6, map: 6, table: 8, graph: 6, measurements: 3, scatter: 5 }[type];
-  const h = { pie: 4, chart: 5, map: 6, table: 5, graph: 6, measurements: 2, scatter: 5 }[type];
+  const w = { overview: 12, network: 12, pie: 4, chart: 6, map: 6, table: 8, graph: 6, measurements: 3, scatter: 5 }[type];
+  const h = { overview: 7, network: 7, pie: 4, chart: 5, map: 6, table: 5, graph: 6, measurements: 2, scatter: 5 }[type];
   return { x: 0, y: 0, w, h };
 }
 

@@ -141,6 +141,12 @@ export function compileForPanel(
   if (!cfg) return base;
 
   switch (cfg.kind) {
+    // The overview and the network read the run through their own streams,
+    // not a Formula.
+    case 'overview':
+    case 'network':
+      return base;
+
     case 'pie': {
       const c = cfg as PieVizConfig;
       const group = [asDim(c.slice_by, schema), asDim(c.facet, schema)].filter(
@@ -243,6 +249,9 @@ export function isPanelConfigured(panel: Panel): boolean {
     case 'map':         return !!(cfg as MapVizConfig).position;
     // Tables show all fields by default — no role needed to be "configured".
     case 'table':       return true;
+    // The overview and the network read the run itself and infer the rest.
+    case 'overview':
+    case 'network':     return true;
     // A graph needs no configuration, and asking for some is now the bug.
     //
     // This used to require `projections` or the legacy `source`. Both are
