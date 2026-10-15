@@ -15,10 +15,14 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Repo root, resolved from this file rather than the caller's cwd, so the
+# script builds the same images whether it's run from the root or scripts/.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
 # List of services with their Dockerfile paths and context paths
 declare -A services=(
-  ["backend"]="../backend/Dockerfile ../backend"
-  ["frontend"]="../frontend/Dockerfile ../frontend"
+  ["backend"]="$ROOT/backend/Dockerfile $ROOT/backend"
+  ["frontend"]="$ROOT/frontend/Dockerfile $ROOT/frontend"
   # ["celery_worker"]="./backend/Dockerfile ./backend"
 )
 
