@@ -37,7 +37,7 @@ def test_fold_is_a_comparison_key():
 
 def test_the_same_name_under_two_types_is_a_type_question():
     pairs = candidate_pairs([Entity("Al Jazeera", "Organization", 9), Entity("Al Jazeera", "Person", 3)])
-    assert [(c.reason, c.priority) for c in pairs] == [("type", 3.0)]
+    assert [(c.reason, c.priority) for c in pairs] == [("type", 12.0)]
 
 
 def test_spelling_acronym_and_containment():
@@ -61,14 +61,16 @@ def test_a_word_many_names_share_pairs_nothing():
     assert not any(c.reason == "contains" for c in candidate_pairs([Entity("United", "Organization", 5), *names]))
 
 
-def test_pairs_are_order_free_and_most_mentioned_first():
+def test_pairs_are_order_free_and_most_prominent_first():
     a, b = Entity("US", "State", 1), Entity("United States", "State", 1)
     assert pair_key(a, b) == pair_key(b, a)
     pairs = candidate_pairs([
         Entity("UK", "State", 2), Entity("United Kingdom", "State", 50),
         Entity("US", "State", 30), Entity("United States", "State", 40),
+        # A hub under a second type: asked first, however few the stray mentions.
+        Entity("Germany", "Location", 1500), Entity("Germany", "Person", 3),
     ])
-    assert [c.a.name for c in pairs][:1] == ["US"]
+    assert [c.a.name for c in pairs] == ["Germany", "US", "UK"]
 
 
 # ─── The log ─────────────────────────────────────────────────────────────────
@@ -284,3 +286,31 @@ def test_the_first_pairs_are_filed_first(db):
     told = []
     added = dec.seed(db, run, types.SimpleNamespace(nodes=nodes, edges=[]), first=1, on_first=told.append)
     assert added == 2 and told == [1]
+
+
+def test_a_waiting_pair_moves_with_its_labels_mentions(db):
+    uid = _user(db, "resolver-rank")
+    iid = _infospace(db, uid, "resolver-rank")
+    run = db.get(AnnotationRun, _run(db, iid, uid, "r"))
+    graph = lambda f: types.SimpleNamespace(  # noqa: E731
+        nodes=[_node("US", "State", f, [1]), _node("United States", "State", 4, [2])], edges=[])
+    dec.seed(db, run, graph(2))
+    row = db.exec(select(EntityDecision).where(EntityDecision.run_id == run.id)).one()
+    assert row.priority == 6.0
+    assert dec.seed(db, run, graph(900)) == 0                       # not filed twice …
+    db.refresh(row)
+    assert row.priority == 904.0 and "mentioned 900 times" in row.state   # … but re-ranked
+
+
+def test_a_hand_merge_reuses_the_pairs_row_and_files_new_ones(world):
+    w = world
+    rows = dec.merge_by_hand(
+        w.db, w.run, Entity("United States", "Location"),
+        [Entity("US", "State"), Entity("USA", "Location")], w.uid, type="Location",
+    )
+    w.db.flush()
+    assert [r.id == w.row.id for r in rows] == [True, False]        # the filed pair, then a new one
+    assert [(r.status, r.decided_by, r.type) for r in rows] == [("merged", w.uid, "Location")] * 2
+    assert rows[0].keep == "b" and rows[1].keep == "a" and rows[1].reason == "manual"
+    dec.rollback(w.db, rows[1], w.uid)
+    assert rows[1].status == "rolled_back"

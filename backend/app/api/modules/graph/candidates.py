@@ -17,8 +17,12 @@ no vocabulary, no language, no list of known aliases:
 ``contains`` stays within a type and needs a rare shared word: "Trump" and
 "Trump administration" are different things, and a word half the names carry
 ("United", "National") would pair everything with everything. The model is
-the judge; this only decides what it is shown. Pairs come back most-mentioned
-first — the ones that change the network most.
+the judge; this only decides what it is shown.
+
+Pairs come back most prominent first: by the mentions the decision touches,
+both labels' together. "Germany" as a Location 1,500 times and as a Person 40
+times is asked about before two names mentioned 30 times each — the hub is
+what a reader sees, and what a wrong type on it misleads most.
 """
 from __future__ import annotations
 
@@ -123,7 +127,7 @@ def candidate_pairs(entities: Iterable[Entity], *, limit: int = 5000) -> list[Ca
         a, b = ents[i], ents[j]
         if _ident(a) == _ident(b):
             return
-        c = Candidate(a, b, reason, float(min(a.frequency, b.frequency)))
+        c = Candidate(a, b, reason, float(a.frequency + b.frequency))
         key = c.key
         if key not in out:
             out[key] = c

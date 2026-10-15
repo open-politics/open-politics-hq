@@ -5,6 +5,7 @@
     ask(row, types)         the three questions about one pair
     decide(row, answers)    answers → merged · separate · unsure, applied
     rollback(row) · change(row, verdict)     a person's word, over the model's
+    merge_by_hand(keep, others)              a person's merge of labels they picked
 
 Decisions are rows (`EntityDecision`) and the rows are the truth: the network
 reads every decision in effect and folds the pair into one node, the history is
@@ -36,7 +37,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import Session, select
 
 from app.api.modules.foundation_service_providers.logic import Answer, Choice, Noul
-from app.api.modules.graph.candidates import Candidate, Entity, candidate_pairs
+from app.api.modules.graph.candidates import Candidate, Entity, candidate_pairs, pair_key
 from app.api.modules.graph.models import CanonEntry, EntityDecision
 from app.api.modules.graph.resolution import find_by_alias, norm_type
 
@@ -100,10 +101,12 @@ def seed(
 ) -> int:
     """Find candidate pairs in *graph* (the run's ``GraphResultData``) and add
     the new ones as pending decisions, each with the state the model will see.
-    Pairs already decided — or pending — are left alone. Returns how many were
-    added.
+    A pair is filed once; one already decided is never asked again. Returns
+    how many were added.
 
-    The most-mentioned ``first`` are committed on their own and ``on_first`` is
+    Pending pairs are re-ranked by their labels' current mentions.
+
+    The most prominent ``first`` are committed on their own and ``on_first`` is
     told, so judging starts on them while the long tail is still being written —
     the reader sees decisions in seconds, not after every pair is filed."""
     nodes = [n for n in graph.nodes if getattr(n, "kind", "entity") == "entity"]
@@ -129,6 +132,26 @@ def seed(
     }
     documents = len({a for n in graph.nodes for a in n.source_annotation_ids})
 
+    def state_of(c: Candidate) -> str:
+        na, nb = by_key.get(f"{c.a.name}|{c.a.type}"), by_key.get(f"{c.b.name}|{c.b.type}")
+        shared = len(set(na.source_annotation_ids) & set(nb.source_annotation_ids)) if na and nb else 0
+        return _state(c, company, shared, documents)
+
+    # A live run's labels keep gathering mentions: a pair still waiting moves
+    # up (or down) the queue with them, and is shown its current counts.
+    pending = {
+        r.pair_key: r for r in session.exec(
+            select(EntityDecision)
+            .where(EntityDecision.run_id == run.id, EntityDecision.status == "pending")
+        ).all()
+    }
+    for c in cands:
+        row = pending.get(c.key)
+        if row is not None and row.priority != c.priority:
+            row.priority = c.priority
+            row.state = state_of(c)
+            session.add(row)
+
     existing = set(session.exec(
         select(EntityDecision.pair_key).where(EntityDecision.run_id == run.id)
     ).all())
@@ -136,13 +159,10 @@ def seed(
     for c in cands:
         if c.key in existing:
             continue
-        na, nb = by_key.get(f"{c.a.name}|{c.a.type}"), by_key.get(f"{c.b.name}|{c.b.type}")
-        shared = len(set(na.source_annotation_ids) & set(nb.source_annotation_ids)) if na and nb else 0
         session.add(EntityDecision(
             infospace_id=run.infospace_id, run_id=run.id,
             a_name=c.a.name, a_type=c.a.type, b_name=c.b.name, b_type=c.b.type,
-            pair_key=c.key, reason=c.reason, priority=c.priority,
-            state=_state(c, company, shared, documents),
+            pair_key=c.key, reason=c.reason, priority=c.priority, state=state_of(c),
         ))
         existing.add(c.key)
         added += 1
@@ -272,6 +292,50 @@ def change(
         row.canon_effect = _canon_merge(session, canon_id, row)
     session.add(row)
     return row
+
+
+def merge_by_hand(
+    session: Session,
+    run: Any,
+    keep: Entity,
+    others: Iterable[Entity],
+    user_id: int,
+    *,
+    type: str | None = None,
+    scope: Literal["run", "canon"] = "run",
+    canon_id: int | None = None,
+) -> list[EntityDecision]:
+    """A person picks labels and says "one thing, called *keep*". Each other
+    label becomes a merged pair with *keep* — the pair's own row where the
+    resolver already filed it (its trail keeps what the model said), a new one
+    where it never did — so history, rollback and the network read hand merges
+    exactly like the model's."""
+    out: list[EntityDecision] = []
+    for other in others:
+        key = pair_key(keep, other)
+        if key == pair_key(keep, keep):
+            continue
+        row = session.exec(
+            select(EntityDecision).where(EntityDecision.run_id == run.id, EntityDecision.pair_key == key)
+        ).first()
+        if row is None:
+            row = EntityDecision(
+                infospace_id=run.infospace_id, run_id=run.id,
+                a_name=keep.name, a_type=keep.type, b_name=other.name, b_type=other.type,
+                pair_key=key, reason="manual", priority=float(keep.frequency + other.frequency),
+                state="Merged by hand.",
+            )
+            session.add(row)
+            session.flush()
+        side: Literal["a", "b"] = (
+            "a" if (row.a_name.strip().lower(), row.a_type.strip().lower())
+            == (keep.name.strip().lower(), keep.type.strip().lower()) else "b"
+        )
+        out.append(change(
+            session, row, user_id, verdict="merged", keep=side, type=type or keep.type,
+            scope=scope, canon_id=canon_id,
+        ))
+    return out
 
 
 # ─── The canon, reversibly ───────────────────────────────────────────────────

@@ -6,6 +6,7 @@
     GET    …/runs/{run_id}/resolution/effect             what the network folds
     POST   …/runs/{run_id}/resolution/decisions/{id}/rollback
     PUT    …/runs/{run_id}/resolution/decisions/{id}     decide it by hand
+    POST   …/runs/{run_id}/resolution/merge              merge labels a person picked
 
 The model's side lives in ``graph/tasks/decide.py``; what a decision *is* and
 how it takes effect, in ``graph/decisions.py``. A person's change goes out on
@@ -23,6 +24,7 @@ from sqlmodel import Session, select
 
 from app.api.modules.annotation.models import AnnotationRun
 from app.api.modules.graph import decisions as dec
+from app.api.modules.graph.candidates import Entity
 from app.api.modules.graph.models import EntityDecision
 from app.api.modules.identity_infospace_user.access import Access, Capability, Requires
 from app.core.db import engine
@@ -80,6 +82,12 @@ class EntityDecisionPage(BaseModel):
     offset: int
 
 
+class ManualMerge(BaseModel):
+    keep: Side = Field(description="The label the merged entity carries.")
+    others: list[Side] = Field(min_length=1, max_length=200)
+    type: str | None = Field(default=None, description="Its type; omitted = keep's.")
+
+
 class ManualDecision(BaseModel):
     verdict: Literal["merged", "separate"]
     keep: Literal["a", "b"] | None = None
@@ -126,6 +134,10 @@ def patch_resolver(
         patch = body.model_dump(exclude_none=True)
         if patch.get("scope") == "canon" and dec.canon_for(run, session) is None:
             raise HTTPException(status_code=422, detail="This run has no canon to write decisions into.")
+        if body.running and not dec.settings_of(run).running:
+            # Switched on: read the graph afresh, so the queue is ranked by the
+            # labels' mentions as they are now, not when it was last read.
+            patch["seeded_watermark"] = None
         dec.save_settings(session, run, **patch)
         session.commit()
         session.refresh(run)
@@ -209,4 +221,27 @@ def change_entity_decision(
         session.commit()
         out = dec.to_wire(row)
     _announce(access, run_id, "decided", out)
+    return out
+
+
+@router.post("/{run_id}/resolution/merge", response_model=list[EntityDecisionOut])
+def merge_labels(
+    *, run_id: int, body: ManualMerge, access: Access = Requires(Capability.ORGANIZE, scope=None),
+) -> Any:
+    """Labels a person picked, merged into one — each a decision like the
+    model's, in the history and rolled back the same way."""
+    with Session(engine) as session:
+        run = _run(session, access, run_id)
+        settings = dec.settings_of(run)
+        canon_id = dec.canon_for(run, session) if settings.scope == "canon" else None
+        rows = dec.merge_by_hand(
+            session, run,
+            Entity(body.keep.name, body.keep.type),
+            [Entity(o.name, o.type) for o in body.others],
+            access.user_id, type=body.type, scope=settings.scope, canon_id=canon_id,
+        )
+        session.commit()
+        out = [dec.to_wire(r) for r in rows]
+    for item in out:
+        _announce(access, run_id, "decided", item)
     return out
