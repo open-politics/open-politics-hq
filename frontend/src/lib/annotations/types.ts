@@ -1167,10 +1167,32 @@ export interface NetworkVizConfig {
   max_nodes?: number | null;
   /** Node types left out of the picture, from the legend. */
   hidden_types?: string[];
-  view?: {
-    /** Show occurrences — the acts and rows that connect entities. */
-    occurrences?: boolean;
-  } | null;
+  view?: NetworkView | null;
+}
+
+/** How a network panel is looked at — persisted with the panel. */
+export interface NetworkView {
+  /** What organises the plane. Unset = groups. */
+  core?: 'groups' | 'time' | 'geo';
+  time?: {
+    /** `stated`: the row's time, else the document's date. `published`: when
+     *  the documents behind a node came out. */
+    source: 'stated' | 'published';
+    grain: 'auto' | 'day' | 'week' | 'month' | 'quarter' | 'year';
+  };
+  geo?: {
+    /** A place-ladder preset (`forcegraph/anchors.RUNG_PRESETS`). */
+    preset: string;
+    /** Keep unplaced nodes linked to a placed one. */
+    neighbours: boolean;
+  };
+  /** Show occurrences — the acts and rows that connect entities. */
+  occurrences?: boolean;
+  /** Show nodes that link to nothing. */
+  isolated?: boolean;
+  /** Geo: quiet the network over the map — unplaced nodes, links and greyed
+   *  nodes fade, the map firms up. Unset = on. */
+  quiet?: boolean;
 }
 
 export type PanelVizConfig =

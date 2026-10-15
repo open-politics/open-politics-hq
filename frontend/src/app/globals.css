@@ -1034,3 +1034,31 @@ html:has([data-app-shell]) body {
 }
 .plane-labels .plane-label[data-emphasis="2"] { font-weight: 500; }
 .plane-labels .plane-label[data-emphasis="1"] { font-weight: 600; font-size: 12.5px; }
+
+/* ── Plane links ───────────────────────────────────────────────────────────
+   A line between two nodes the graph does not link (`graph/plane/PlaneLink`):
+   the pair the resolver is weighing. Pending marches; joined is solid; apart is
+   a faint dotted trace of what was asked. */
+.plane-link { stroke: var(--hud-fg); stroke-width: 1.5; stroke-linecap: round; fill: none; }
+.plane-link-pending { stroke-dasharray: 4 5; opacity: 0.7; animation: plane-link-march 0.9s linear infinite; }
+.plane-link-joined { opacity: 0.95; stroke-width: 2; }
+.plane-link-apart { stroke-dasharray: 1 5; opacity: 0.45; }
+@keyframes plane-link-march { to { stroke-dashoffset: -18; } }
+@media (prefers-reduced-motion: reduce) { .plane-link-pending { animation: none; } }
+
+/* ── Resolver stage ────────────────────────────────────────────────────────
+   The line between the two rows of the pair on stage (`network/Resolver`).
+   Judging marches; a merge draws itself solid; unsure is an amber trace. */
+.resolver-line { stroke: var(--hud-line-strong); stroke-width: 1.5; stroke-linecap: round; transition: opacity 300ms; }
+.resolver-line-judging { stroke: var(--hud-dim); stroke-dasharray: 3 4; animation: plane-link-march 0.9s linear infinite; }
+.resolver-line-merged { stroke: var(--hud-fg); stroke-width: 2; stroke-dasharray: 22; stroke-dashoffset: 22; animation: resolver-draw 450ms ease-out forwards; }
+.resolver-line-unsure { stroke: rgb(217 119 6); stroke-dasharray: 1 4; }
+@keyframes resolver-draw { to { stroke-dashoffset: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .resolver-line-judging, .resolver-line-merged { animation: none; stroke-dashoffset: 0; }
+}
+
+/* The resolver ticker has no surface: its text carries the plane labels' halo,
+   so it reads over the graph the way the node names do. */
+.resolver-ticker, .resolver-ticker button { text-shadow: 0 0 3px var(--graph-label-halo), 0 0 1px var(--graph-label-halo), 0 0 6px var(--graph-label-halo); }
+.resolver-ticker svg { filter: drop-shadow(0 0 2px var(--graph-label-halo)); }

@@ -23,7 +23,7 @@ import { AssetDetailCard } from './AssetDetailCard';
 export const DRILL_W = 400;
 
 export function DrillColumn({
-  subject, context, pages, openAsset, onOpenAsset, onClose,
+  subject, context, pages, openAsset, onOpenAsset, onClose, actions,
   infospaceId, runId, schemas, className,
 }: {
   subject: DrillSubject;
@@ -32,6 +32,7 @@ export function DrillColumn({
   openAsset: number | null;
   onOpenAsset: (id: number | null) => void;
   onClose: () => void;
+  actions?: React.ReactNode;
   infospaceId: number;
   runId: number;
   schemas: AnnotationSchemaRead[];
@@ -56,6 +57,7 @@ export function DrillColumn({
         openId={openAsset}
         onOpen={(id) => onOpenAsset(openAsset === id ? null : id)}
         onClose={onClose}
+        actions={actions}
       />
       {openAsset != null && (
         <AssetDetailCard

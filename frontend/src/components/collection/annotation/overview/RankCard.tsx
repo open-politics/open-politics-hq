@@ -1,7 +1,8 @@
 'use client';
 
 /**
- * A ranked list on glass — the overview's Entities and Places cards.
+ * A ranked list on glass — the overview's Entities and Places cards, and the
+ * network panel's groups, entities and places.
  *
  * One shape for both because they are one thing: names, ranked by how many
  * assets (or rows) speak of them, with the share drawn as a hairline bar so a
@@ -22,6 +23,8 @@ export interface RankItem {
   canon?: boolean;
   /** Dimmed: present, but not drawable (a place nobody located). */
   muted?: boolean;
+  /** The colour it is drawn in, when the canvas colours by it (a group). */
+  swatch?: string;
 }
 
 export function RankCard({
@@ -82,6 +85,9 @@ export function RankCard({
                       className="absolute bottom-0 left-1.5 h-px bg-hud-line-strong transition-[width] duration-300"
                       style={{ width: `calc((100% - 0.75rem) * ${item.count / max})` }}
                     />
+                    {item.swatch && (
+                      <span aria-hidden className="size-2 shrink-0 rounded-full" style={{ background: item.swatch }} />
+                    )}
                     <span className={cn(
                       'min-w-0 flex-1 truncate text-[11.5px] leading-5',
                       item.muted ? 'text-hud-dimmer' : active ? 'text-hud-fg' : 'text-hud-fg/85',

@@ -44,7 +44,7 @@ function when(iso: string | null | undefined): string {
 
 export function AssetListCard({
   subject, context, items, total, loading, stale, error, hasMore, onMore, openId, onOpen, onClose,
-  className,
+  actions, className,
 }: {
   subject: DrillSubject;
   /** What else narrows the list — "within Donald Trump", a brushed period. */
@@ -59,6 +59,8 @@ export function AssetListCard({
   openId: number | null;
   onOpen: (id: number) => void;
   onClose: () => void;
+  /** Header controls before the close button — expand a group, and so on. */
+  actions?: React.ReactNode;
   className?: string;
 }) {
   const { icon: Icon, name, caption, unit } = subject;
@@ -96,6 +98,7 @@ export function AssetListCard({
             {[caption, ...context].join(' · ')}
           </p>
         </div>
+        {actions}
         <HudButton size="sm" icon={X} onClick={onClose} title="Close" aria-label="Close the list"
                    className="-mr-1.5 border-transparent" />
       </header>

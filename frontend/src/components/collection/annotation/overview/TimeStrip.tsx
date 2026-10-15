@@ -21,7 +21,7 @@ const FORMAT: Record<string, string> = {
 const H = 40;
 
 export function TimeStrip({
-  bins, grain, undated, outside, window: win, onWindow, unit, className,
+  bins, grain, undated, outside, window: win, onWindow, unit, actions, className,
 }: {
   bins: TimeBin[];
   grain: string;
@@ -30,6 +30,8 @@ export function TimeStrip({
   window: TimeWindow;
   onWindow: (w: TimeWindow) => void;
   unit: string;
+  /** Controls beside the readout — the network's play button. */
+  actions?: React.ReactNode;
   className?: string;
 }) {
   const { ref: measure, width } = useContainerWidth<HTMLDivElement>();
@@ -69,10 +71,13 @@ export function TimeStrip({
         <span className={cn(HUD_LABEL, 'text-hud-dim')}>
           {shown ? `${fmt(shown[0])} – ${fmt(shown[1])}` : 'When'}
         </span>
-        <span className={cn(HUD_NUM, 'text-hud-dimmer')}>
-          {total.toLocaleString()} {unit} · by {grain}
-          {undated > 0 && ` · ${undated.toLocaleString()} undated`}
-          {outside > 0 && ` · ${outside.toLocaleString()} outside`}
+        <span className={cn(HUD_NUM, 'flex items-center gap-2 text-hud-dimmer')}>
+          <span>
+            {total.toLocaleString()} {unit} · by {grain}
+            {undated > 0 && ` · ${undated.toLocaleString()} undated`}
+            {outside > 0 && ` · ${outside.toLocaleString()} outside`}
+          </span>
+          {actions}
         </span>
       </div>
       <div ref={measure} className="relative">
