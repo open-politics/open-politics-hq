@@ -129,6 +129,30 @@ export function resolvePlace(
   rungs: RungWeights,
   cursor?: string | null,
 ): ResolvedPlace | null {
+  const best = pickPlace(node.places ?? [], rungs, cursor);
+  if (best) return best;
+
+  // Nothing in `places[]` qualified. Fall back to the scalar pair, which is
+  // what a graph built before the ladder existed carries.
+  if (node.lat != null && node.lon != null) {
+    const weight = rungs.row ?? 1;
+    return weight > 0
+      ? { place: { place: node.place ?? '', lat: node.lat, lon: node.lon, source: 'row' }, weight }
+      : null;
+  }
+  return null;
+}
+
+/**
+ * The ladder itself, over any list of claims — a `GraphNode`'s `places`, or a
+ * network node's (`plane/network.placesOf`). One implementation, so the canvas
+ * graph and the GPU plane can never anchor the same node differently.
+ */
+export function pickPlace<P extends NodePlace>(
+  places: Iterable<P>,
+  rungs: RungWeights,
+  cursor?: string | null,
+): { place: P; weight: number } | null {
   const covers = (p: NodePlace) => {
     if (!cursor) return true;
     if (p.from && cursor < p.from) return false;
@@ -138,8 +162,8 @@ export function resolvePlace(
     return true;
   };
 
-  let best: ResolvedPlace | null = null;
-  for (const p of node.places ?? []) {
+  let best: { place: P; weight: number } | null = null;
+  for (const p of places) {
     if (p.lat == null || p.lon == null) continue;
     if (p.end === 'to') continue;          // the far end of a leg, not a seat
     if (!covers(p)) continue;
@@ -157,17 +181,7 @@ export function resolvePlace(
       best = { place: p, weight };
     }
   }
-  if (best) return best;
-
-  // Nothing in `places[]` qualified. Fall back to the scalar pair, which is
-  // what a graph built before the ladder existed carries.
-  if (node.lat != null && node.lon != null) {
-    const weight = rungs.row ?? 1;
-    return weight > 0
-      ? { place: { place: node.place ?? '', lat: node.lat, lon: node.lon, source: 'row' }, weight }
-      : null;
-  }
-  return null;
+  return best;
 }
 
 /**

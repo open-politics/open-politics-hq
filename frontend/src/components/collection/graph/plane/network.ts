@@ -11,6 +11,7 @@
  *   link j     source[j] → target[j] · linkKind[j] · predicate[j] · weight[j]
  *   adjacency  CSR: the links touching node i, and the node at their far end
  *   provenance CSR: the annotations that produced node i, and their assets
+ *   places     CSR: node i's geocoded place claims — coordinate, rung, interval
  *
  * Pure and framework-free, so it is tested on its own and any renderer —
  * cosmos today, deck.gl beside it — reads the same thing.
@@ -24,11 +25,17 @@ export interface NetworkWire {
     kind: number[];
     frequency: number[];
     size: (number | null)[];
-    lat: (number | null)[];
-    lon: (number | null)[];
     t0: (string | null)[];
     t1: (string | null)[];
     ann: { offsets: number[]; ids: number[] };
+    places: {
+      offsets: number[];
+      coord: number[];
+      rung: number[];
+      from: (string | null)[];
+      to: (string | null)[];
+      end: number[];
+    };
   };
   edges: {
     source: number[];
@@ -37,13 +44,24 @@ export interface NetworkWire {
     predicate: number[];
     weight: number[];
   };
-  vocab: { type: string[]; edge_kind: string[]; predicate: string[]; node_kind: string[] };
-  assets: { annotation: number[]; asset: number[] };
+  vocab: {
+    type: string[];
+    edge_kind: string[];
+    predicate: string[];
+    node_kind: string[];
+    rung: string[];
+    /** `[lat, lon, name]` — the coordinates place claims index into. */
+    coord: [number, number, string][];
+  };
+  /** Each annotation's asset, and that asset's own timestamp (epoch s). */
+  assets: { annotation: number[]; asset: number[]; time: (number | null)[] };
   dropped_edges: number;
   meta: { ms: number; capped: boolean };
 }
 
 export type NodeKind = 'entity' | 'occurrence';
+export type PlaceRung = 'row' | 'attribute' | 'doc' | 'asset' | 'canon';
+const ENDS = [null, 'from', 'to'] as const;
 
 export interface Network {
   /** Node count. */
@@ -61,9 +79,9 @@ export interface Network {
   readonly frequency: Float32Array;
   /** The engine's size channel, NaN where it decided none. */
   readonly sizeHint: Float32Array;
-  /** Coordinates, NaN where the node never geocoded. */
-  readonly lat: Float32Array;
-  readonly lon: Float32Array;
+  /** How many nodes each node stands for: 1, or a collapsed group's size
+   *  (`collapse.ts`). */
+  readonly members: Uint32Array;
   readonly t0: (string | null)[];
   readonly t1: (string | null)[];
 
@@ -86,6 +104,20 @@ export interface Network {
   readonly annIds: Int32Array;
   /** annotation id → asset id. */
   readonly assetOf: ReadonlyMap<number, number>;
+  /** asset id → its own timestamp (ms), where it has one. */
+  readonly assetTime: ReadonlyMap<number, number>;
+
+  /** CSR places: claims of node i are `placeOffsets[i] .. placeOffsets[i+1]`;
+   *  each indexes `coords` (`[lat, lon]` pairs) and `coordNames`. */
+  readonly placeOffsets: Uint32Array;
+  readonly placeCoord: Uint32Array;
+  readonly placeRung: Uint8Array;
+  readonly placeFrom: (string | null)[];
+  readonly placeTo: (string | null)[];
+  readonly placeEnd: Uint8Array;
+  readonly rungs: PlaceRung[];
+  readonly coords: Float32Array;
+  readonly coordNames: string[];
 
   readonly droppedEdges: number;
   readonly capped: boolean;
@@ -94,18 +126,19 @@ export interface Network {
 
 const nan = (v: number | null | undefined) => (v == null ? NaN : v);
 
-export function decodeNetwork(w: NetworkWire): Network {
-  const n = w.nodes.id.length;
-  const m = w.edges.source.length;
+/** Everything a Network is given; the rest — size, id index, adjacency — is
+ *  derived by `assemble`. */
+export type NetworkParts = Omit<Network, 'size' | 'links' | 'index' | 'adjOffsets' | 'adjLinks' | 'adjNodes'>;
 
+/** Parts → Network: the id index and the CSR adjacency, each link listed
+ *  under both of its ends. Shared by the decoder and by derived views. */
+export function assemble(parts: NetworkParts): Network {
+  const n = parts.id.length;
+  const m = parts.source.length;
+  const { source, target } = parts;
   const index = new Map<string, number>();
-  w.nodes.id.forEach((id, i) => index.set(id, i));
+  parts.id.forEach((id, i) => index.set(id, i));
 
-  const source = Uint32Array.from(w.edges.source);
-  const target = Uint32Array.from(w.edges.target);
-
-  // Adjacency: count degrees, prefix-sum, fill. Each link appears under both
-  // of its ends.
   const adjOffsets = new Uint32Array(n + 1);
   for (let j = 0; j < m; j++) {
     adjOffsets[source[j] + 1]++;
@@ -120,43 +153,59 @@ export function decodeNetwork(w: NetworkWire): Network {
     adjLinks[fill[s]] = j; adjNodes[fill[s]++] = t;
     adjLinks[fill[t]] = j; adjNodes[fill[t]++] = s;
   }
+  return { ...parts, size: n, links: m, index, adjOffsets, adjLinks, adjNodes };
+}
+
+export function decodeNetwork(w: NetworkWire): Network {
+  const n = w.nodes.id.length;
 
   const assetOf = new Map<number, number>();
-  w.assets.annotation.forEach((a, k) => assetOf.set(a, w.assets.asset[k]));
+  const assetTime = new Map<number, number>();
+  w.assets.annotation.forEach((a, k) => {
+    const asset = w.assets.asset[k];
+    assetOf.set(a, asset);
+    const t = w.assets.time[k];
+    if (t != null) assetTime.set(asset, t * 1000);
+  });
+  const coords = new Float32Array(w.vocab.coord.length * 2);
+  w.vocab.coord.forEach(([lat, lon], c) => { coords[2 * c] = lat; coords[2 * c + 1] = lon; });
 
-  return {
-    size: n,
-    links: m,
+  return assemble({
     id: w.nodes.id,
     name: w.nodes.name,
-    index,
     type: Uint16Array.from(w.nodes.type),
     types: w.vocab.type,
     kind: Uint8Array.from(w.nodes.kind),
     kinds: w.vocab.node_kind as NodeKind[],
     frequency: Float32Array.from(w.nodes.frequency),
     sizeHint: Float32Array.from(w.nodes.size, nan),
-    lat: Float32Array.from(w.nodes.lat, nan),
-    lon: Float32Array.from(w.nodes.lon, nan),
+    members: new Uint32Array(n).fill(1),
     t0: w.nodes.t0,
     t1: w.nodes.t1,
-    source,
-    target,
+    source: Uint32Array.from(w.edges.source),
+    target: Uint32Array.from(w.edges.target),
     linkKind: Uint8Array.from(w.edges.kind),
     linkKinds: w.vocab.edge_kind,
     predicate: Uint16Array.from(w.edges.predicate),
     predicates: w.vocab.predicate,
     weight: Float32Array.from(w.edges.weight),
-    adjOffsets,
-    adjLinks,
-    adjNodes,
     annOffsets: Uint32Array.from(w.nodes.ann.offsets),
     annIds: Int32Array.from(w.nodes.ann.ids),
     assetOf,
+    assetTime,
+    placeOffsets: Uint32Array.from(w.nodes.places.offsets),
+    placeCoord: Uint32Array.from(w.nodes.places.coord),
+    placeRung: Uint8Array.from(w.nodes.places.rung),
+    placeFrom: w.nodes.places.from,
+    placeTo: w.nodes.places.to,
+    placeEnd: Uint8Array.from(w.nodes.places.end),
+    rungs: w.vocab.rung as PlaceRung[],
+    coords,
+    coordNames: w.vocab.coord.map((c) => c[2]),
     droppedEdges: w.dropped_edges,
     capped: w.meta.capped,
     buildMs: w.meta.ms,
-  };
+  });
 }
 
 // ─── Reading a network ───────────────────────────────────────────────────────
@@ -189,6 +238,37 @@ export function annotationsOf(net: Network, nodes: Iterable<number>): number[] {
     for (let k = net.annOffsets[i]; k < net.annOffsets[i + 1]; k++) out.add(net.annIds[k]);
   }
   return [...out];
+}
+
+/** Node i's place claims, in the shape the place ladder reads
+ *  (`forcegraph/anchors.pickPlace`). `coord` is the index into `net.coords`,
+ *  so claims about the same spot can be grouped without comparing floats. */
+export function placesOf(net: Network, i: number) {
+  const out: Array<{
+    place: string; lat: number; lon: number; coord: number;
+    source: PlaceRung; from: string | null; to: string | null; end: 'from' | 'to' | null;
+  }> = [];
+  for (let k = net.placeOffsets[i]; k < net.placeOffsets[i + 1]; k++) {
+    const c = net.placeCoord[k];
+    out.push({
+      place: net.coordNames[c], lat: net.coords[2 * c], lon: net.coords[2 * c + 1], coord: c,
+      source: net.rungs[net.placeRung[k]], from: net.placeFrom[k], to: net.placeTo[k],
+      end: ENDS[net.placeEnd[k]] ?? null,
+    });
+  }
+  return out;
+}
+
+/** The earliest own timestamp among the assets behind node i, in ms — when
+ *  the node was first *published*, as opposed to when it was said to happen. */
+export function publishedAt(net: Network, i: number): number {
+  let best = NaN;
+  for (let k = net.annOffsets[i]; k < net.annOffsets[i + 1]; k++) {
+    const asset = net.assetOf.get(net.annIds[k]);
+    const t = asset == null ? undefined : net.assetTime.get(asset);
+    if (t != null && !(t >= best)) best = t;
+  }
+  return best;
 }
 
 /** How many distinct assets each node's annotations come from. */

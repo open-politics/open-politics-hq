@@ -49,6 +49,27 @@ export function pointColors(net: Network, palette: Palette): Float32Array {
   return out;
 }
 
+/** Twelve hues for groups, in rank order — distinct from each other, and
+ *  muted enough that the entity palette's type colours still read as types
+ *  when a view switches back. */
+export const GROUP_HUES = [
+  '#4e79a7', '#f28e2b', '#59a14f', '#e15759', '#76b7b2', '#edc948',
+  '#b07aa1', '#ff9da7', '#9c755f', '#86bcb6', '#d37295', '#a0cbe8',
+];
+
+/** Colour by group: each node in its top-level group's hue, by rank; nodes in
+ *  no group in the tissue tone. Ranks past the palette cycle — beyond twelve,
+ *  colour stops telling groups apart and the labels do the work. */
+export function groupColors(net: Network, rankOf: (i: number) => number, palette: Palette): Float32Array {
+  const out = new Float32Array(net.size * 4);
+  const hues = GROUP_HUES.map((h) => hexToRgba(h));
+  for (let i = 0; i < net.size; i++) {
+    const r = rankOf(i);
+    out.set(r >= 0 ? hues[r % hues.length] : palette.occurrence, i * 4);
+  }
+  return out;
+}
+
 /** Radius in screen pixels at zoom 1. Logarithmic in frequency — a node
  *  mentioned a thousand times is not a thousand times as important to *see* —
  *  and occurrences stay small whatever their count: they are tissue, and the
@@ -57,6 +78,11 @@ export function pointColors(net: Network, palette: Palette): Float32Array {
 export function pointSizes(net: Network): Float32Array {
   const out = new Float32Array(net.size);
   for (let i = 0; i < net.size; i++) {
+    if (net.members[i] > 1) {
+      // A collapsed group: sized by how many it holds, not how often.
+      out[i] = Math.min(8 + 4 * Math.log2(net.members[i]), 48);
+      continue;
+    }
     const f = Math.log2(1 + net.frequency[i]);
     const base = net.kind[i] === OCCURRENCE ? Math.min(1.5 + 0.6 * f, 5) : Math.min(3 + 1.6 * f, 22);
     const hint = net.sizeHint[i];
@@ -121,13 +147,15 @@ function unit(s: string, salt: number): number {
  *
  *  A node the screen has seen before starts where it was (`previous`, keyed by
  *  id): a live run replacing its graph, or a reopened panel, keeps its shape
- *  and only the new nodes settle in. A new node starts beside its first
- *  already-placed neighbour; a node with none, on a disc whose area grows with
- *  the graph, at a position derived from its id. */
+ *  and only the new nodes settle in. A node standing in for others starts
+ *  where they were (`inherit` — see `collapse.inheritFrom`). Anything else
+ *  starts beside its first already-placed neighbour; a node with none, on a
+ *  disc whose area grows with the graph, at a position derived from its id. */
 export function seedPositions(
   net: Network,
   spaceSize: number,
   previous?: ReadonlyMap<string, [number, number]>,
+  inherit?: (i: number) => string[][],
 ): Float32Array {
   const out = new Float32Array(net.size * 2).fill(NaN);
   const c = spaceSize / 2;
@@ -138,6 +166,27 @@ export function seedPositions(
     for (let i = 0; i < net.size; i++) {
       const p = previous.get(net.id[i]);
       if (p) { out[2 * i] = p[0]; out[2 * i + 1] = p[1]; placed[i] = 1; }
+    }
+  }
+  // A node that stands in for others — a group just collapsed, members of a
+  // group just opened — starts where they were.
+  if (previous && inherit) {
+    for (let i = 0; i < net.size; i++) {
+      if (placed[i]) continue;
+      for (const tier of inherit(i)) {
+        let x = 0, y = 0, k = 0;
+        for (const id of tier) {
+          const p = previous.get(id);
+          if (p) { x += p[0]; y += p[1]; k++; }
+        }
+        if (!k) continue;
+        const a = 2 * Math.PI * unit(net.id[i], 4);
+        const d = k === 1 ? 4 + 10 * unit(net.id[i], 5) : 0;
+        out[2 * i] = x / k + d * Math.cos(a);
+        out[2 * i + 1] = y / k + d * Math.sin(a);
+        placed[i] = 1;
+        break;
+      }
     }
   }
   for (let i = 0; i < net.size; i++) {

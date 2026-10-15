@@ -57,6 +57,7 @@ export function PlaneLabels({
     return () => {
       off();
       if (trailing.current) clearTimeout(trailing.current);
+      plane.track('labels', []);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plane]);
@@ -73,7 +74,7 @@ export function PlaneLabels({
       .sort((a, b) => net.frequency[b] - net.frequency[a])
       .slice(0, max);
     named.current = [...pinned, ...sample];
-    graph.trackPointPositionsByIndices(named.current);
+    plane.track('labels', named.current);
     sampledAt.current = performance.now();
   }
 

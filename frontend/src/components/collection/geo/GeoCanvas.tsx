@@ -34,6 +34,10 @@ export interface GeoCanvasHandle {
   flyTo: (lon: number, lat: number, zoom?: number) => void;
   fit: (bounds: Bounds) => void;
   zoomBy: (delta: number) => void;
+  /** Set the camera at once — for a passive map following another camera. */
+  jumpTo: (lon: number, lat: number, zoom: number) => void;
+  /** Where the camera actually is — after the map applied its own limits. */
+  camera: () => { lon: number; lat: number; zoom: number } | null;
 }
 
 export interface GeoCanvasProps {
@@ -43,6 +47,15 @@ export interface GeoCanvasProps {
   fitKey?: string | null;
   /** Room the HUD occupies, so framing keeps data out from under it. */
   padding?: { top: number; right: number; bottom: number; left: number };
+  /** A passive map: no input of its own, one world, and zoom down to the
+   *  whole world in 128 px — the backdrop of a camera that lives elsewhere
+   *  (`graph/plane/PlaneMap`). Read on mount. */
+  passive?: boolean;
+  /** Called once the map has loaded and can take `jumpTo`. */
+  onReady?: () => void;
+  /** `high` draws land and borders firmer — for a map that must read through
+   *  something drawn over it. */
+  contrast?: 'normal' | 'high';
   className?: string;
   children?: React.ReactNode;
 }
@@ -50,11 +63,12 @@ export interface GeoCanvasProps {
 const STYLE_URL = process.env.NEXT_PUBLIC_BASEMAP_STYLE_URL || null;
 const MAX_FIT_ZOOM = 6;
 
-function themeColors() {
+function themeColors(contrast: 'normal' | 'high' = 'normal') {
+  const high = contrast === 'high';
   return {
     water: rgbaCss(resolveVarToRgba('--background', [250, 250, 250, 255])),
-    land: rgbaCss(resolveVarToRgba('--hud-sunken', [0, 0, 0, 10])),
-    border: rgbaCss(resolveVarToRgba('--hud-line', [0, 0, 0, 28])),
+    land: rgbaCss(resolveVarToRgba(high ? '--hud-line' : '--hud-sunken', high ? [0, 0, 0, 28] : [0, 0, 0, 10])),
+    border: rgbaCss(resolveVarToRgba(high ? '--hud-line-strong' : '--hud-line', high ? [0, 0, 0, 60] : [0, 0, 0, 28])),
   };
 }
 
@@ -76,7 +90,7 @@ async function offlineStyle(): Promise<any> {
 }
 
 export const GeoCanvas = forwardRef<GeoCanvasHandle, GeoCanvasProps>(function GeoCanvas(
-  { layers, fitBounds, fitKey, padding, className, children },
+  { layers, fitBounds, fitKey, padding, passive = false, onReady, contrast = 'normal', className, children },
   ref,
 ) {
   const host = useRef<HTMLDivElement>(null);
@@ -87,8 +101,8 @@ export const GeoCanvas = forwardRef<GeoCanvasHandle, GeoCanvasProps>(function Ge
   const [failure, setFailure] = useState<string | null>(null);
   const themeVersion = useThemeVersion();
 
-  const latest = useRef({ layers, padding });
-  latest.current = { layers, padding };
+  const latest = useRef({ layers, padding, onReady });
+  latest.current = { layers, padding, onReady };
 
   // ── Mount ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -110,22 +124,27 @@ export const GeoCanvas = forwardRef<GeoCanvasHandle, GeoCanvasProps>(function Ge
         style,
         center: [12, 28],
         zoom: 1.15,
-        minZoom: 0.6,
-        maxZoom: 14,
+        minZoom: passive ? -2 : 0.6,
+        maxZoom: passive ? 18 : 14,
         attributionControl: false,
+        interactive: !passive,
         dragRotate: false,
         pitchWithRotate: false,
         touchPitch: false,
-        renderWorldCopies: true,
+        renderWorldCopies: !passive,
       });
-      m.touchZoomRotate.disableRotation();
+      if (!passive) m.touchZoomRotate.disableRotation();
       const o = new MapboxOverlay({ interleaved: true, layers: latest.current.layers });
       m.addControl(o);
       map.current = m;
       overlay.current = o;
       observer = new ResizeObserver(() => m.resize());
       observer.observe(host.current);
-      m.once('load', () => !disposed && setReady(true));
+      m.once('load', () => {
+        if (disposed) return;
+        setReady(true);
+        latest.current.onReady?.();
+      });
       m.on('error', (e: any) => console.error('[GeoCanvas] map error', e?.error ?? e));
     })().catch((err) => {
       // A map that cannot start says so — on the canvas and in the console —
@@ -152,11 +171,11 @@ export const GeoCanvas = forwardRef<GeoCanvasHandle, GeoCanvasProps>(function Ge
   useEffect(() => {
     const m = map.current;
     if (!ready || !m || STYLE_URL) return;
-    const c = themeColors();
+    const c = themeColors(contrast);
     m.setPaintProperty('hq-water', 'background-color', c.water);
     m.setPaintProperty('hq-land', 'fill-color', c.land);
     m.setPaintProperty('hq-borders', 'line-color', c.border);
-  }, [themeVersion, ready]);
+  }, [themeVersion, ready, contrast]);
 
   // ── Framing — once per key ─────────────────────────────────────────────
   useEffect(() => {
@@ -183,6 +202,13 @@ export const GeoCanvas = forwardRef<GeoCanvasHandle, GeoCanvasProps>(function Ge
       padding: latest.current.padding ?? 40, maxZoom: MAX_FIT_ZOOM, duration: 650,
     }),
     zoomBy: (delta) => map.current?.easeTo({ zoom: map.current.getZoom() + delta, duration: 250 }),
+    jumpTo: (lon, lat, zoom) => map.current?.jumpTo({ center: [lon, lat], zoom }),
+    camera: () => {
+      const m = map.current;
+      if (!m) return null;
+      const c = m.getCenter();
+      return { lon: c.lng, lat: c.lat, zoom: m.getZoom() };
+    },
   }), []);
 
   return (

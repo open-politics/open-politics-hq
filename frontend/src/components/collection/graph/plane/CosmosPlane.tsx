@@ -26,6 +26,7 @@ import { Graph, type GraphConfig } from '@cosmos.gl/graph';
 import { cn } from '@/lib/utils';
 import type { Network } from './network';
 import { positionsById, seedPositions } from './channels';
+import type { Arrangement } from './arrange';
 
 // ─── The contract layers read ───────────────────────────────────────────────
 
@@ -38,6 +39,10 @@ export interface PlaneView {
   spaceToScreen(p: [number, number]): [number, number];
   /** Called once per frame in which anything on the plane moved. */
   subscribe(listener: () => void): () => void;
+  /** Ask for nodes' live positions, as `owner`. cosmos tracks one set; the
+   *  plane tracks the union of every owner's, so layers never drop each
+   *  other's. An empty list releases the owner's. */
+  track(owner: string, indices: readonly number[]): void;
 }
 
 const PlaneContext = createContext<PlaneView | null>(null);
@@ -83,9 +88,20 @@ export interface CosmosPlaneProps {
   buffers: PlaneBuffers;
   /** 1 = present. Absent nodes leave the layout and fade out in place. */
   visible?: Uint8Array | null;
+  /** What organises the plane — groups, time, place (`arrange.ts`). */
+  arrangement?: Arrangement | null;
+  /** Where a node new to the plane may start: tiers of ids whose last
+   *  positions it takes (`collapse.inheritFrom`). */
+  inherit?: (i: number) => string[][];
+  /** Drawn under the graph, inside the plane's context — a map that follows
+   *  the camera (`PlaneMap`). */
+  backdrop?: React.ReactNode;
   /** Everything not listed greys out. Null clears. */
   highlight?: { points: number[]; links: number[] } | null;
   focused?: number | null;
+  /** Ringed without greying anything else — what is being looked at in
+   *  passing, like the pair the resolver is weighing. */
+  outlined?: number[] | null;
   /** Theme-dependent knobs (rings, greyout). Merged over the plane's defaults. */
   config?: GraphConfig;
   onPointClick?: (index: number) => void;
@@ -130,9 +146,20 @@ const BASE: GraphConfig = {
   transitionDuration: 400,
 };
 
+/** The forces an arrangement may change, at the plane's own values — what a
+ *  view that sets none of them runs with. */
+const FREE_FORCES: GraphConfig = {
+  simulationGravity: BASE.simulationGravity,
+  simulationCenter: 0,
+  simulationCluster: 0.1,
+  simulationRepulsion: BASE.simulationRepulsion,
+  simulationLinkSpring: BASE.simulationLinkSpring,
+  simulationLinkDistance: BASE.simulationLinkDistance,
+};
+
 export const CosmosPlane = forwardRef<PlaneHandle, CosmosPlaneProps>(function CosmosPlane(
   {
-    network, layout, buffers, visible, highlight, focused, config,
+    network, layout, buffers, visible, arrangement, inherit, backdrop, highlight, focused, outlined, config,
     onPointClick, onBackgroundClick, onHover, onLayout, onRunning, className, children,
   },
   ref,
@@ -199,7 +226,13 @@ export const CosmosPlane = forwardRef<PlaneHandle, CosmosPlaneProps>(function Co
       onZoom: moved,
       onDrag: moved,
       onTransition: moved,
-      onTransitionEnd: moved,
+      onTransitionEnd: () => {
+        // A position transition pauses the layout; pick it up where the
+        // arrangement wanted it.
+        if (afterTransition.current != null) graph.start(afterTransition.current);
+        afterTransition.current = null;
+        moved();
+      },
     });
     graphRef.current = graph;
     return () => {
@@ -220,6 +253,47 @@ export const CosmosPlane = forwardRef<PlaneHandle, CosmosPlaneProps>(function Co
   // effect already did (and do not re-heat a layout it has just started).
   const appliedBuffers = useRef<PlaneBuffers | null>(null);
   const appliedVisible = useRef<Uint8Array | null | undefined>(undefined);
+  const appliedArrangement = useRef<Arrangement | null | undefined>(undefined);
+  const appliedKey = useRef<string | null>(null);
+  const afterTransition = useRef<number | null>(null);
+
+  /** Hand the plane an arrangement. Its forces always; its targets only when
+   *  the view itself changed — then nodes travel there, the camera frames
+   *  where they are going, and the layout resumes when they arrive. */
+  const arrange = (graph: Graph, arr: Arrangement | null | undefined, heat: number, from?: Float32Array) => {
+    appliedArrangement.current = arr;
+    const n = networkRef.current.size;
+    graph.setPointClusters(arr && arr.clusters.length === n ? arr.clusters : []);
+    graph.setClusterPositions(arr?.clusterPositions ?? []);
+    graph.setPointClusterStrength(arr && arr.strength.length === n ? arr.strength : new Float32Array(0));
+    graph.setConfigPartial({ ...FREE_FORCES, ...arr?.forces });
+    const key = arr?.key ?? null;
+    if (key !== appliedKey.current && arr?.targets && stash.current) {
+      appliedKey.current = key;
+      // Where nodes are now: the seed just handed over when the network is
+      // new (the GPU may not hold it yet), else the live layout.
+      const now = from ?? currentLayout(graph);
+      const live = now.length === 2 * n ? Array.from(now) : Array.from(stash.current);
+      const frame: number[] = [];
+      for (let i = 0; i < n; i++) {
+        const x = arr.targets[2 * i], y = arr.targets[2 * i + 1];
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        live[2 * i] = x; live[2 * i + 1] = y;
+        if (!visibleNow.current || visibleNow.current[i]) frame.push(x, y);
+      }
+      stash.current = Float32Array.from(live);
+      graph.setPointPositions(applyVisibility(stash.current, visibleNow.current), true);
+      afterTransition.current = arr.heat;
+      graph.render(undefined, 900);
+      if (frame.length) graph.fitViewByPointPositions(frame, 900, 0.08);
+      return;
+    }
+    appliedKey.current = key;
+    graph.render();
+    graph.start(heat);
+  };
+  const visibleNow = useRef<Uint8Array | null>(null);
+  visibleNow.current = visible ?? null;
   useEffect(() => {
     const graph = graphRef.current;
     if (!graph) return;
@@ -231,7 +305,16 @@ export const CosmosPlane = forwardRef<PlaneHandle, CosmosPlaneProps>(function Co
       ? positionsById(outgoing, currentLayout(graph))
       : layout;
     networkRef.current = network;
-    const seed = seedPositions(network, SPACE_SIZE, previous);
+    const seed = seedPositions(network, SPACE_SIZE, previous, previous ? inherit : undefined);
+    // A node new to the plane under an unchanged view starts at its target —
+    // a live run's new arrival lands on its place or its day, not at random.
+    if (arrangement?.targets && arrangement.key === appliedKey.current) {
+      for (let i = 0; i < network.size; i++) {
+        if (previous?.has(network.id[i])) continue;
+        const x = arrangement.targets[2 * i], y = arrangement.targets[2 * i + 1];
+        if (Number.isFinite(x) && Number.isFinite(y)) { seed[2 * i] = x; seed[2 * i + 1] = y; }
+      }
+    }
     // The more of the layout is already known, the cooler it starts.
     let known = 0;
     if (previous) for (const id of network.id) if (previous.has(id)) known++;
@@ -249,9 +332,12 @@ export const CosmosPlane = forwardRef<PlaneHandle, CosmosPlaneProps>(function Co
     appliedBuffers.current = buffers;
     appliedVisible.current = visible;
     graph.render(undefined, 0);
-    graph.start(heat);
+    const changesView = (arrangement?.key ?? null) !== appliedKey.current;
+    arrange(graph, arrangement, heat, stash.current);
     let fit: ReturnType<typeof setTimeout> | undefined;
-    if (heat >= 0.5) fit = setTimeout(() => graph.fitView(700, 0.12), 900);
+    if (heat >= 0.5 && !(changesView && arrangement?.targets)) {
+      fit = setTimeout(() => graph.fitView(700, 0.12), 900);
+    }
     moved();
     return () => {
       if (fit) clearTimeout(fit);
@@ -287,20 +373,30 @@ export const CosmosPlane = forwardRef<PlaneHandle, CosmosPlaneProps>(function Co
     graph.start(0.15);
   }, [visible]);
 
+  // ── Arrangement: a different view of the same network ─────────────────────
+  useEffect(() => {
+    const graph = graphRef.current;
+    if (!graph || !stash.current || appliedArrangement.current === arrangement) return;
+    arrange(graph, arrangement, arrangement?.heat ?? 0.3);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [arrangement]);
+
   // ── Highlight, focus, theme ───────────────────────────────────────────────
   useEffect(() => {
     graphRef.current?.setConfigPartial({
       highlightedPointIndices: highlight?.points,
       highlightedLinkIndices: highlight?.links,
       focusedPointIndex: focused ?? undefined,
+      outlinedPointIndices: outlined?.length ? outlined : undefined,
     });
-  }, [highlight, focused]);
+  }, [highlight, focused, outlined]);
 
   useEffect(() => {
     if (config) graphRef.current?.setConfigPartial(config);
   }, [config]);
 
   // ── What layers and the panel read ────────────────────────────────────────
+  const trackers = useRef(new Map<string, readonly number[]>());
   const view = useMemo<PlaneView>(() => ({
     get graph() { return graphRef.current; },
     network,
@@ -308,6 +404,13 @@ export const CosmosPlane = forwardRef<PlaneHandle, CosmosPlaneProps>(function Co
     subscribe: (fn) => {
       listeners.current.add(fn);
       return () => { listeners.current.delete(fn); };
+    },
+    track: (owner, indices) => {
+      if (indices.length) trackers.current.set(owner, indices);
+      else trackers.current.delete(owner);
+      const all = new Set<number>();
+      trackers.current.forEach((xs) => xs.forEach((i) => all.add(i)));
+      graphRef.current?.trackPointPositionsByIndices([...all]);
     },
   }), [network]);
 
@@ -333,8 +436,9 @@ export const CosmosPlane = forwardRef<PlaneHandle, CosmosPlaneProps>(function Co
     <div className={cn('relative overflow-hidden', className)}>
       {/* cosmos sizes its canvas to this box; an absolute fill keeps it from
           inheriting a collapsed height from a flex parent. */}
-      <div ref={host} className="absolute inset-0" />
       <PlaneContext.Provider value={view}>
+        {backdrop && <div className="pointer-events-none absolute inset-0">{backdrop}</div>}
+        <div ref={host} className="absolute inset-0" />
         <div className="pointer-events-none absolute inset-0">{children}</div>
       </PlaneContext.Provider>
     </div>
