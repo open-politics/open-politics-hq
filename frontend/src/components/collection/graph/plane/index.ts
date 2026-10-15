@@ -11,6 +11,10 @@
  *   PlaneLabels     a layer on `usePlane()` — names over the graph
  *   PlaneMap        a backdrop on `usePlane()` — the map, following the camera
  *   PlaneLink       a layer on `usePlane()` — a line between two nodes
+ *   TimeDeck        a layer on `usePlane()` — time as depth, the present in front
+ *   gain.ts         turning types, entities and groups up or down
+ *   anchoring.ts    the reader's anchors: words that gather what they name
+ *   PlaneAnchors    the anchors, on any surface — plane, map or deck
  */
 export * from './network';
 export * from './channels';
@@ -23,3 +27,7 @@ export * from './arrange';
 export { PlaneMap } from './PlaneMap';
 export * from './merge';
 export { PlaneLink, type LinkTone } from './PlaneLink';
+export { TimeDeck, deckSlices, sliceAlpha, DECK_DEFAULTS, type TimeDeckProps, type DeckApi } from './TimeDeck';
+export * from './gain';
+export * from './anchoring';
+export { PlaneAnchors, type Surface } from './PlaneAnchors';

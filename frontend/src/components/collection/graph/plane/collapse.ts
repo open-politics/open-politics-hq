@@ -110,7 +110,16 @@ export function collapse(
   base: Network,
   c: Communities,
   expanded: ReadonlySet<string>,
-  { minGroup = 3, tagCount = 3, heads: given }: { minGroup?: number; tagCount?: number; heads?: Map<string, string> } = {},
+  {
+    minGroup = 3, tagCount = 3, heads: given, loose,
+  }: {
+    minGroup?: number;
+    tagCount?: number;
+    heads?: Map<string, string>;
+    /** Base nodes drawn as themselves whatever their groups — what an anchor
+     *  pulls must be there to be pulled (`anchoring.ts`). */
+    loose?: ReadonlySet<number>;
+  } = {},
 ): View {
   const n = base.size;
   const unitOf = new Uint32Array(n);
@@ -118,7 +127,7 @@ export function collapse(
   const members: number[][] = [];
   const byKey = new Map<string, number>();
   for (let i = 0; i < n; i++) {
-    const key = unitKey(c, i, expanded, minGroup);
+    const key = loose?.has(i) ? null : unitKey(c, i, expanded, minGroup);
     let u = key == null ? undefined : byKey.get(key);
     if (u === undefined) {
       u = members.length;

@@ -104,7 +104,14 @@ export interface CosmosPlaneProps {
   outlined?: number[] | null;
   /** Theme-dependent knobs (rings, greyout). Merged over the plane's defaults. */
   config?: GraphConfig;
-  onPointClick?: (index: number) => void;
+  /** Pull everything apart — more repulsion, longer links, less gravity —
+   *  so a crowded hub opens up and its names can be read. 1 = as arranged. */
+  spread?: number;
+  /** False: the layout runs and layers read it, but the plane draws nothing
+   *  and takes no input — another renderer shows the network (`TimeDeck`). */
+  drawn?: boolean;
+  /** The event says how — a shift-click adds to a selection. */
+  onPointClick?: (index: number, event: MouseEvent) => void;
   onBackgroundClick?: () => void;
   onHover?: (index: number | null) => void;
   /** A network is leaving the plane — replaced, or the plane unmounting —
@@ -160,7 +167,7 @@ const FREE_FORCES: GraphConfig = {
 export const CosmosPlane = forwardRef<PlaneHandle, CosmosPlaneProps>(function CosmosPlane(
   {
     network, layout, buffers, visible, arrangement, inherit, backdrop, highlight, focused, outlined, config,
-    onPointClick, onBackgroundClick, onHover, onLayout, onRunning, className, children,
+    spread = 1, drawn = true, onPointClick, onBackgroundClick, onHover, onLayout, onRunning, className, children,
   },
   ref,
 ) {
@@ -214,7 +221,7 @@ export const CosmosPlane = forwardRef<PlaneHandle, CosmosPlaneProps>(function Co
     const graph = new Graph(div, {
       ...BASE,
       ...config,
-      onPointClick: (i) => handlers.current.onPointClick?.(i),
+      onPointClick: (i, _p, e) => handlers.current.onPointClick?.(i, e),
       onBackgroundClick: () => handlers.current.onBackgroundClick?.(),
       onPointMouseOver: (i) => handlers.current.onHover?.(i),
       onPointMouseOut: () => handlers.current.onHover?.(null),
@@ -266,7 +273,7 @@ export const CosmosPlane = forwardRef<PlaneHandle, CosmosPlaneProps>(function Co
     graph.setPointClusters(arr && arr.clusters.length === n ? arr.clusters : []);
     graph.setClusterPositions(arr?.clusterPositions ?? []);
     graph.setPointClusterStrength(arr && arr.strength.length === n ? arr.strength : new Float32Array(0));
-    graph.setConfigPartial({ ...FREE_FORCES, ...arr?.forces });
+    graph.setConfigPartial(spreadForces({ ...FREE_FORCES, ...arr?.forces }, spreadNow.current));
     const key = arr?.key ?? null;
     if (key !== appliedKey.current && arr?.targets && stash.current) {
       appliedKey.current = key;
@@ -292,6 +299,8 @@ export const CosmosPlane = forwardRef<PlaneHandle, CosmosPlaneProps>(function Co
     graph.render();
     graph.start(heat);
   };
+  const spreadNow = useRef(spread);
+  spreadNow.current = spread;
   const visibleNow = useRef<Uint8Array | null>(null);
   visibleNow.current = visible ?? null;
   useEffect(() => {
@@ -381,6 +390,16 @@ export const CosmosPlane = forwardRef<PlaneHandle, CosmosPlaneProps>(function Co
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [arrangement]);
 
+  // ── Spread: the same arrangement, pulled apart ────────────────────────────
+  const appliedSpread = useRef(spread);
+  useEffect(() => {
+    const graph = graphRef.current;
+    if (!graph || appliedSpread.current === spread) return;
+    appliedSpread.current = spread;
+    graph.setConfigPartial(spreadForces({ ...FREE_FORCES, ...appliedArrangement.current?.forces }, spread));
+    graph.start(0.5);
+  }, [spread]);
+
   // ── Highlight, focus, theme ───────────────────────────────────────────────
   useEffect(() => {
     graphRef.current?.setConfigPartial({
@@ -438,12 +457,27 @@ export const CosmosPlane = forwardRef<PlaneHandle, CosmosPlaneProps>(function Co
           inheriting a collapsed height from a flex parent. */}
       <PlaneContext.Provider value={view}>
         {backdrop && <div className="pointer-events-none absolute inset-0">{backdrop}</div>}
-        <div ref={host} className="absolute inset-0" />
+        <div ref={host} className={cn('absolute inset-0', !drawn && 'pointer-events-none opacity-0')} />
         <div className="pointer-events-none absolute inset-0">{children}</div>
       </PlaneContext.Provider>
     </div>
   );
 });
+
+/** An arrangement's forces, pulled apart by `factor`: nodes push harder and
+ *  sit further along their links, and gravity lets go — a hub's spokes
+ *  lengthen until its names clear each other. What holds a node to its
+ *  group, day or place (the cluster force) is left as it is, so the shape of
+ *  the view survives the spreading. */
+function spreadForces(forces: GraphConfig, factor: number): GraphConfig {
+  if (factor === 1) return forces;
+  return {
+    ...forces,
+    simulationRepulsion: (forces.simulationRepulsion ?? 0) * factor,
+    simulationLinkDistance: (forces.simulationLinkDistance ?? 1) * factor * 1.5,
+    simulationGravity: (forces.simulationGravity ?? 0) / factor,
+  };
+}
 
 function pushBuffers(graph: Graph, b: PlaneBuffers) {
   graph.setPointColors(b.colors);

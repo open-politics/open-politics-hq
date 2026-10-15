@@ -323,3 +323,99 @@ describe('merge', () => {
     expect(keyIndex(g).get(nodeKey(' a0 ', 'PERSON'))).toBe(0);
   });
 });
+
+describe('time deck', () => {
+  test('the present is lit, what is ahead fades, what is behind goes', async () => {
+    const { sliceAlpha } = await import('./TimeDeck');
+    expect(sliceAlpha(3, 3, 0)).toBe(1);
+    expect(sliceAlpha(4, 3, 1)).toBe(1);                       // inside a two-slice present
+    const ahead = [5, 6, 9].map((k) => sliceAlpha(k, 3, 1));
+    expect(ahead[0]).toBeLessThan(0.5);
+    expect(ahead[1]).toBeLessThan(ahead[0]);
+    expect(ahead[2]).toBeLessThan(ahead[1]);
+    expect(sliceAlpha(2, 3, 0)).toBe(0);                       // a slice behind is gone
+    expect(sliceAlpha(2.6, 3, 0)).toBeGreaterThan(0);          // … but fades on the way
+  });
+
+  test('a link belongs to the slice of its nearer end', async () => {
+    const { deckSlices } = await import('./TimeDeck');
+    // ann, bob, meet, acme, rome — rome undated.
+    const slice = Int32Array.from([0, 2, 1, 2, -1]);
+    const { nodes, links, named } = deckSlices(net, slice, 3, null);
+    expect(nodes).toEqual([[0], [2], [1, 3]]);
+    for (let k = 0; k < 3; k++) {
+      for (const j of links[k]) expect(Math.min(slice[net.source[j]], slice[net.target[j]])).toBe(k);
+    }
+    expect(links.flat().length).toBe(net.links);               // every link has dated ends here
+    expect(named[1]).toEqual([]);                             // occurrences are not named
+    const hidden = deckSlices(net, slice, 3, Uint8Array.from([1, 0, 1, 1, 1]));
+    expect(hidden.nodes[2]).toEqual([3]);
+  });
+});
+
+describe('gain', () => {
+  test('a type, an entity and its sub-network, composed in stops', async () => {
+    const { gainStops, GAIN_STOPS } = await import('./gain');
+    // ann —works_for→ acme; ann and bob both in the meeting.
+    const stops = gainStops(net, [
+      { kind: 'node', key: 'ann', value: 1 },
+      { kind: 'type', key: net.types[net.type[net.index.get('acme')!]], value: 0.5 },
+    ], () => null);
+    const at = (id: string) => stops[net.index.get(id)!];
+    expect(at('ann')).toBe(GAIN_STOPS);
+    expect(at('acme')).toBeCloseTo(GAIN_STOPS * 0.6 + GAIN_STOPS * 0.5);   // her neighbour, and its type up
+    expect(at('rome')).toBe(0);                                             // unlinked, untyped by the gain
+  });
+
+  test('once anything is up, the rest flattens and fades', async () => {
+    const { applyGain } = await import('./gain');
+    const sizes = Float32Array.from([10, 20, 3, 8, 6]);
+    const colors = new Float32Array(20).fill(1);
+    const linkColors = new Float32Array(net.links * 4).fill(1);
+    applyGain(net, Float32Array.from([2, 0, 0, -2, 0]), { sizes, colors, linkColors });
+    expect(sizes[0]).toBeCloseTo(20);                    // ×2 at two stops up
+    expect(sizes[1]).toBeCloseTo(3 + 17 * 0.4);          // a hub, flattened
+    expect(colors[4 * 1 + 3]).toBeCloseTo(0.4);
+    expect(colors[4 * 3 + 3]).toBeLessThan(0.4);         // turned down: fainter still
+  });
+
+  test('setGain drops a gain back at zero', async () => {
+    const { setGain } = await import('./gain');
+    const g = setGain([], 'type', 'Person', 0.5);
+    expect(g).toEqual([{ kind: 'type', key: 'Person', value: 0.5 }]);
+    expect(setGain(g, 'type', 'Person', 0)).toEqual([]);
+  });
+});
+
+describe('anchors', () => {
+  test('words gather the named and what they link to; type: keeps a type', async () => {
+    const { anchorMatches } = await import('./anchoring');
+    const m = anchorMatches(net, 'ANN');
+    expect(m.direct.map((i) => net.id[i])).toEqual(['ann']);
+    expect(new Set(m.related.map((i) => net.id[i]))).toEqual(new Set(['meet', 'acme']));
+    const typed = anchorMatches(net, `type:${net.types[net.type[net.index.get('rome')!]]}`);
+    expect(typed.direct.map((i) => net.id[i])).toEqual(['rome']);
+    expect(anchorMatches(net, 'ann', (i) => net.id[i] !== 'acme').related.map((i) => net.id[i])).toEqual(['meet']);
+  });
+
+  test('an anchor is a cluster at its point; a lane keeps the node\'s time', async () => {
+    const { anchorMatches, withAnchors } = await import('./anchoring');
+    const { byGroups, byTime } = await import('./arrange');
+    const { identity } = await import('./collapse');
+    const view = identity(net);
+    const m = [anchorMatches(net, 'ann')];
+    const free = withAnchors(byGroups(net, () => -1), view, [{ id: 'a', q: 'ann', space: 'free', x: 100, y: 200 }], m);
+    const ann = net.index.get('ann')!;
+    const c = free.clusters[ann]!;
+    expect([free.clusterPositions[2 * c], free.clusterPositions[2 * c + 1]]).toEqual([100, 200]);
+    expect(free.strength[ann]).toBeGreaterThan(free.strength[net.index.get('meet')!]);
+    expect(free.forces.simulationCluster).toBeGreaterThanOrEqual(0.4);
+
+    const times = Float64Array.from(net.id.map((_, i) => Date.UTC(2026, i, 1)));
+    const tl = byTime(net, times, 4096, 'month');
+    const lane = withAnchors(tl.arrangement, view, [{ id: 'l', q: 'ann', space: 'time', x: 0, y: 300 }], m);
+    const k = lane.clusters[ann]!, own = tl.arrangement.clusters[ann]!;
+    expect(lane.clusterPositions[2 * k]).toBe(tl.arrangement.clusterPositions[2 * own]);   // its time
+    expect(lane.clusterPositions[2 * k + 1]).toBe(300);                                    // the lane's height
+  });
+});

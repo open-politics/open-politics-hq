@@ -10,31 +10,31 @@
  * passive `GeoCanvas` (the overview's basemap, with room for deck.gl layers),
  * follows.
  *
- * **The loop is closed.** MapLibre keeps its own limits — it will not show past
- * the world's edge, zoom beyond its range, or float a world smaller than the
- * view off-centre — and the plane has none. Following one way, every refused
- * camera left the map somewhere the graph was not, and the two drifted apart.
- * So after each move the map's *actual* camera is read back, and when MapLibre
- * adjusted it the plane is fitted to the map's real viewport instead. Web
- * Mercator and the plane share one uniform scale, so fitting the viewport's
- * corners reproduces the camera exactly: the two always show the same piece of
- * the world.
+ * **The plane is never held back.** MapLibre keeps its own limits — it will
+ * not zoom out past its range, show past the poles, or float a world smaller
+ * than the view off-centre — and the plane has none. So the map goes as near as
+ * it can, its *actual* camera is read back, and whatever is left over is made
+ * up by moving and scaling the map's layer: Web Mercator and the plane share
+ * one uniform scale, so a translate and a scale close the gap exactly. Zoomed
+ * out past the map's range the world simply shrinks on screen, as it should;
+ * panned past a pole the map's edge shows, as it should. The graph and the map
+ * always show the same piece of the world, and the reader's gesture always
+ * goes where they pushed it.
  */
 import { useEffect, useRef } from 'react';
 import type { Layer } from '@deck.gl/core';
 import { GeoCanvas, type GeoCanvasHandle } from '@/components/collection/geo/GeoCanvas';
 import { SPACE_SIZE, usePlane } from './CosmosPlane';
-import { toSpace } from './arrange';
 
 /** MapLibre's world is 512 px wide at zoom 0. */
 const TILE = 512;
-/** How far the map may sit from where the plane asked, in screen pixels,
- *  before the plane is brought to the map. */
-const SLACK_PX = 0.75;
+/** Residuals smaller than this (px, or relative scale) are left alone. */
+const SLACK = 0.25;
 
 export function PlaneMap({ layers = [], contrast = 'normal' }: { layers?: Layer[]; contrast?: 'normal' | 'high' }) {
   const plane = usePlane();
   const box = useRef<HTMLDivElement>(null);
+  const layer = useRef<HTMLDivElement>(null);
   const map = useRef<GeoCanvasHandle>(null);
   const last = useRef('');
 
@@ -42,41 +42,41 @@ export function PlaneMap({ layers = [], contrast = 'normal' }: { layers?: Layer[
     const graph = plane.graph;
     const el = box.current;
     const m = map.current;
-    if (!graph || !el || !m) return;
+    if (!graph || !el || !m || !layer.current) return;
     const w = el.clientWidth, h = el.clientHeight;
-    // The world's north-west and south-east corners, on screen.
+    // The world's north-west corner and width, on screen, as the plane has it.
     const [x0, y0] = graph.spaceToScreenPosition([0, SPACE_SIZE]);
     const [x1] = graph.spaceToScreenPosition([SPACE_SIZE, 0]);
     const world = x1 - x0;
     if (!(world > 0)) return;
+    const key = `${x0.toFixed(2)}:${y0.toFixed(2)}:${world.toFixed(3)}:${w}:${h}`;
+    if (key === last.current) return;
+    last.current = key;
+
     const mx = (w / 2 - x0) / world;
     const my = (h / 2 - y0) / world;
     const lon = mx * 360 - 180;
     const lat = (Math.atan(Math.sinh(Math.PI * (1 - 2 * my))) * 180) / Math.PI;
-    const zoom = Math.log2(world / TILE);
-    const key = `${lon.toFixed(5)}:${lat.toFixed(5)}:${zoom.toFixed(4)}`;
-    if (key === last.current) return;
-    last.current = key;
-    m.jumpTo(lon, lat, zoom);
+    m.jumpTo(lon, lat, Math.log2(world / TILE));
 
-    // Did the map go where it was asked? Compare in pixels: where the plane
-    // puts the map's actual centre.
+    // Where the map really went: its world's corner and width on its canvas.
     const actual = m.camera();
     if (!actual) return;
-    const [ax, ay] = toSpace(actual.lat, actual.lon, SPACE_SIZE);
-    const [sx, sy] = graph.spaceToScreenPosition([ax, ay]);
-    const off = Math.hypot(sx - w / 2, sy - h / 2);
-    const zoomOff = Math.abs(actual.zoom - zoom) * world;
-    if (off <= SLACK_PX && zoomOff <= SLACK_PX) return;
-    // It did not: the plane follows the map. The map's viewport, in plane
-    // space, from its actual centre and zoom — not by unprojecting the corners,
-    // which clamp at the world's edge when the view shows more than the world.
-    const unit = SPACE_SIZE / (TILE * 2 ** actual.zoom);     // plane units per pixel
-    const hx = (w / 2) * unit, hy = (h / 2) * unit;
-    last.current = '';
-    graph.setZoomTransformByPointPositions(
-      new Float32Array([ax - hx, ay - hy, ax + hx, ay + hy]), 0, undefined, 0,
-    );
+    const mapWorld = TILE * 2 ** actual.zoom;
+    const amx = (actual.lon + 180) / 360;
+    const phi = (Math.max(-85.0511, Math.min(85.0511, actual.lat)) * Math.PI) / 180;
+    const amy = (1 - Math.log(Math.tan(Math.PI / 4 + phi / 2)) / Math.PI) / 2;
+    const mapX0 = w / 2 - amx * mapWorld;
+    const mapY0 = h / 2 - amy * mapWorld;
+    // The rest, as one transform of the map's layer: map pixel p lands at s·p + t.
+    const s = world / mapWorld;
+    const tx = x0 - s * mapX0, ty = y0 - s * mapY0;
+    const style = layer.current.style;
+    if (Math.abs(s - 1) * Math.max(w, h) < SLACK && Math.abs(tx) < SLACK && Math.abs(ty) < SLACK) {
+      style.transform = '';
+    } else {
+      style.transform = `translate(${tx}px, ${ty}px) scale(${s})`;
+    }
   };
 
   useEffect(() => plane.subscribe(sync)
@@ -84,10 +84,12 @@ export function PlaneMap({ layers = [], contrast = 'normal' }: { layers?: Layer[
   , [plane]);
 
   return (
-    <div ref={box} className="absolute inset-0">
-      <GeoCanvas ref={map} passive contrast={contrast} layers={layers}
-                 onReady={() => { last.current = ''; sync(); }}
-                 className="absolute inset-0" />
+    <div ref={box} className="absolute inset-0 overflow-hidden">
+      <div ref={layer} className="absolute inset-0 origin-top-left will-change-transform">
+        <GeoCanvas ref={map} passive contrast={contrast} layers={layers}
+                   onReady={() => { last.current = ''; sync(); }}
+                   className="absolute inset-0" />
+      </div>
     </div>
   );
 }
