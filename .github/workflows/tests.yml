@@ -7,129 +7,20 @@ on:
     branches: [main]
 
 jobs:
-  invariants:
-    name: Architectural invariants
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Supersede uniqueness — only asset_builder.py may write is_superseded=True
-        # HQ v2 invariant (EXECUTION.md §2.4): the supersede cascade lives in
-        # exactly one place so we can reason about versioning without chasing
-        # write-sites. Tests and docstrings are exempt; everything else fails CI.
-        run: |
-          MATCHES=$(grep -rn "is_superseded\s*=\s*True" app --include='*.py' \
-            | grep -v "__pycache__" \
-            | grep -v "asset_builder.py" \
-            | grep -v "^app/tests/" \
-            | grep -v "^\s*#" \
-            || true)
-          if [ -n "$MATCHES" ]; then
-            echo "FAIL: is_superseded=True written outside asset_builder.py:"
-            echo "$MATCHES"
-            echo ""
-            echo "All supersede cascades must route through AssetBuilder._do_supersede."
-            echo "To mark a row superseded, call:"
-            echo "    await AssetBuilder(session, uid, iid).supersedes(old).persist(new_row)"
-            echo "or reconcile_children(on_change='supersede') to version a container's parts."
-            exit 1
-          fi
-          echo "ok: single supersede cascade"
-
-      - name: Single content derivation — only asset_builder.py may hash under content/
-        # Same shape as the supersede rule. content_hash used to have SEVEN
-        # implementations across four semantics and two algorithms (md5 keyed by
-        # source_identifier, md5 of content, md5 of bytes, sha256 of blob) all writing
-        # one column — so decide() could never trust a hash it had not written itself.
-        # A source hands over CONTENT; the builder derives. Blob callers import the one
-        # function rather than growing a second.
-        run: |
-          MATCHES=$(grep -rn "hashlib" app/api/modules/content --include='*.py' \
-            | grep -v "__pycache__" \
-            | grep -v "asset_builder.py" \
-            | grep -v "^\s*#" \
-            || true)
-          if [ -n "$MATCHES" ]; then
-            echo "FAIL: hashing outside asset_builder.py under content/:"
-            echo "$MATCHES"
-            echo ""
-            echo "There is exactly one content derivation. Use it:"
-            echo "    from app.api.modules.content.asset_builder import content_hash"
-            echo "    content_hash(text) | content_hash(data) | content_hash(Path(p))"
-            exit 1
-          fi
-          echo "ok: single content derivation"
-
-      - name: Lockfile matches pyproject — uv.lock must not drift
-        # --frozen in backend/Dockerfile and in the install steps below means a
-        # stale lock fails the image build with a resolution error instead of
-        # saying "you forgot to relock". Fail here, clearly, first.
-        run: |
-          pip install uv==0.12.17
-          uv lock --check
-
-  unit-tests:
-    name: Unit tests
-    runs-on: ubuntu-latest
-    needs: invariants
-    defaults:
-      run:
-        working-directory: backend
-    env:
-      PYTHONPATH: ${{ github.workspace }}/backend
-      # Deployment config is a file, not a pile of env vars — see .github/hq-ci.yml.
-      # Only secrets live here, because only secrets live in the environment.
-      HQ_CONFIG_FILE: ${{ github.workspace }}/.github/hq-ci.yml
-      SECRET_KEY: test-secret
-      ENCRYPTION_MASTER_KEY: dGVzdGtleQ==
-      POSTGRES_PASSWORD: unused
-      REDIS_PASSWORD: ""
-      FIRST_SUPERUSER: unused@test.local
-      FIRST_SUPERUSER_PASSWORD: unused
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.13"
-
-      - name: Install uv
-        run: pip install uv==0.12.17
-
-      - name: Install dependencies
-        env:
-          UV_PROJECT_ENVIRONMENT: ${{ env.pythonLocation }}
-        run: uv sync --frozen --extra dev --no-install-project
-
-      - name: Run unit tests
-        run: >-
-          pytest -v
-          app/tests/test_config.py
-          app/tests/test_content_types.py
-          app/tests/test_filters.py
-          app/tests/test_task_decorator.py
-          app/tests/test_access_control.py
-          app/tests/test_decide.py
-
-  functional-tests:
-    name: Functional tests
+  tests:
+    name: Tests
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: backend
     env:
       PYTHONPATH: ${{ github.workspace }}/backend
-      # Deployment config is a file, not a pile of env vars — see .github/hq-ci.yml.
-      # It names the service containers below; only secrets stay here.
+      # Deployment config is a file (.github/hq-ci.yml); only secrets live in env.
       HQ_CONFIG_FILE: ${{ github.workspace }}/.github/hq-ci.yml
       SECRET_KEY: test-secret-key-not-for-production
       ENCRYPTION_MASTER_KEY: dGVzdC1lbmNyeXB0aW9uLWtleS1ub3QtZm9yLXByb2Q=
       POSTGRES_PASSWORD: testpassword
-      REDIS_PASSWORD: ""
+      REDIS_PASSWORD: test-redis-password
       FIRST_SUPERUSER: admin@test.local
       FIRST_SUPERUSER_PASSWORD: testpassword123
 
@@ -148,40 +39,54 @@ jobs:
           --health-timeout 5s
           --health-retries 10
 
-      redis:
-        image: redis:alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-
     steps:
       - uses: actions/checkout@v4
+
+      - name: Invariants
+        # Supersede cascades and content hashing each live in exactly one
+        # place: asset_builder.py. See EXECUTION.md §2.4.
+        run: |
+          fail=0
+          if grep -rn "is_superseded\s*=\s*True" app --include='*.py' \
+              | grep -v -e asset_builder.py -e '^app/tests/' -e '^\s*#'; then
+            echo "::error::is_superseded=True outside asset_builder.py — use AssetBuilder.supersedes()"
+            fail=1
+          fi
+          if grep -rn "hashlib" app/api/modules/content --include='*.py' \
+              | grep -v -e asset_builder.py -e '^\s*#'; then
+            echo "::error::hashing under content/ outside asset_builder.py — import content_hash"
+            fail=1
+          fi
+          exit $fail
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
-      - name: Install uv
-        run: pip install uv==0.12.17
-
-      - name: Install dependencies
+      - name: Install
         env:
           UV_PROJECT_ENVIRONMENT: ${{ env.pythonLocation }}
-        run: uv sync --frozen --extra dev --no-install-project
+        run: |
+          pip install uv==0.12.17
+          uv lock --check
+          uv sync --frozen --extra dev --no-install-project
 
-      - name: Create storage directory
-        run: mkdir -p /tmp/test-storage
+      # A service container can't take a command, so no --requirepass there.
+      - name: Redis
+        run: docker run -d --name redis -p 6379:6379 redis:alpine redis-server --requirepass "$REDIS_PASSWORD"
 
-      - name: Run database migrations
+      - name: Migrate
         run: alembic upgrade head
 
-      - name: Run functional tests
+      - name: Test
         run: >-
           pytest -v
+          app/tests/test_config.py
+          app/tests/test_content_types.py
+          app/tests/test_filters.py
+          app/tests/test_task_decorator.py
+          app/tests/test_access_control.py
+          app/tests/test_decide.py
           app/tests/test_tree.py
           app/tests/test_user_operations.py
           app/tests/test_processing_pipeline.py

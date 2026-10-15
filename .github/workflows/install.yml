@@ -1,0 +1,63 @@
+name: Install
+
+# What a new user does: clone, run setup.sh, get a working stack.
+
+on:
+  push:
+    branches: [main]
+    paths: &paths
+      - 'setup.sh'
+      - 'compose*.yml'
+      - 'HQ.example.yml'
+      - '.env.example'
+      - 'backend/app/core/config.py'
+      - 'backend/Dockerfile'
+      - '.github/workflows/install.yml'
+  pull_request:
+    branches: [main]
+    paths: *paths
+  workflow_dispatch:
+
+jobs:
+  install:
+    name: Fresh install
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HQ_SUPERUSER_EMAIL: ci@example.org
+      HQ_SUPERUSER_PASSWORD: ci-password-not-a-placeholder
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Clean tree
+        run: |
+          test -f HQ.example.yml && test -f .env.example
+          test ! -f .env && test ! -f HQ.yml
+
+      - name: Setup
+        run: ./setup.sh -y dev
+
+      - name: Backend ready
+        run: |
+          for i in $(seq 1 60); do
+            curl -fsS -o /dev/null http://127.0.0.1:8022/api/v1/healthz/readiness && exit 0
+            sleep 5
+          done
+          exit 1
+
+      - name: Frontend proxies /api
+        run: |
+          curl -fsS -o /dev/null http://127.0.0.1:3000/
+          curl -fsS -o /dev/null http://127.0.0.1:3000/api/v1/healthz/readiness
+
+      - name: Audit
+        run: ./setup.sh audit
+
+      - name: Render is idempotent
+        run: |
+          ./setup.sh render && cp .env /tmp/env.1
+          ./setup.sh render && diff /tmp/env.1 .env
+
+      - name: Logs
+        if: failure()
+        run: docker compose logs --tail=120
