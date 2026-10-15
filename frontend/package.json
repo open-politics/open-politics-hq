@@ -15,6 +15,10 @@
     "@ai-sdk/azure": "^2.0.38",
     "@ai-sdk/google": "^2.0.17",
     "@ai-sdk/openai": "^2.0.38",
+    "@cosmos.gl/graph": "3.4.2",
+    "@deck.gl/core": "9.3.11",
+    "@deck.gl/layers": "9.3.11",
+    "@deck.gl/mapbox": "9.3.11",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
@@ -89,6 +93,7 @@
     "lucide": "^1.6.0",
     "lucide-react": "^1.6.0",
     "mapbox-gl": "^3.15.0",
+    "maplibre-gl": "5.6.2",
     "marked": "^16.3.0",
     "motion": "^12.23.24",
     "nanoid": "^5.1.6",
@@ -165,6 +170,11 @@
     "@babel/runtime": "^7.24.7",
     "minimatch": "^9.0.6",
     "serialize-javascript": "^6.0.2",
-    "lodash-es": "^4.17.22"
+    "lodash-es": "^4.17.22",
+    "@loaders.gl/core": "4.5.3",
+    "@loaders.gl/worker-utils": "4.5.3",
+    "@loaders.gl/loader-utils": "4.5.3",
+    "@loaders.gl/schema": "4.5.3",
+    "@loaders.gl/images": "4.5.3"
   }
 }
