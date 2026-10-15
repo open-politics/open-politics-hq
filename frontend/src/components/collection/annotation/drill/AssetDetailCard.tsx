@@ -37,7 +37,7 @@ export function AssetDetailCard({
   return (
     <section
       aria-label="Asset"
-      className={cn('flex min-h-0 flex-col overflow-hidden rounded-lg border border-hud-line bg-background', className)}
+      className={cn('flex min-h-0 flex-col overflow-hidden rounded-md bg-background', className)}
     >
       <TextSpanHighlightProvider>
         <div className="scroll-edges min-h-0 flex-1 overflow-y-auto overscroll-contain">
@@ -50,7 +50,7 @@ export function AssetDetailCard({
             onBack={onBack}
             onClose={onClose}
           />
-          <div className="space-y-2 border-t border-hud-line px-4 pb-4 pt-3">
+          <div className="space-y-1.5 border-t border-hud-line px-3 pb-3 pt-2">
             <HudOverline>This run</HudOverline>
             {results == null ? (
               <p className={cn(HUD_PROSE, 'flex items-center gap-2 text-hud-dimmer')}>
@@ -63,7 +63,7 @@ export function AssetDetailCard({
                 const schema = schemas.find((s) => s.id === result.schema_id);
                 if (!schema) return null;
                 return (
-                  <div key={result.id} className="rounded-lg border border-hud-line p-2.5">
+                  <div key={result.id} className="rounded bg-hud-sunken/60 p-2">
                     <AnnotationResultDisplay
                       result={result}
                       schema={schema}

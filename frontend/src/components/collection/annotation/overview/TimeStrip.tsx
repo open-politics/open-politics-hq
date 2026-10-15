@@ -11,14 +11,14 @@
 import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
-import { HUD_LABEL, HUD_NUM, HUD_SURFACE } from '@/components/ui/chrome';
+import { HUD_GLASS, HUD_LABEL, HUD_NUM } from '@/components/ui/chrome';
 import { useContainerWidth } from '@/hooks/useContainerWidth';
 import type { TimeBin, TimeWindow } from '@/lib/overview/derive';
 
 const FORMAT: Record<string, string> = {
   day: 'd MMM', week: 'd MMM', month: 'MMM yy', quarter: 'QQQ yy', year: 'yyyy',
 };
-const H = 40;
+const H = 32;
 
 export function TimeStrip({
   bins, grain, undated, outside, window: win, onWindow, unit, actions, className,
@@ -66,8 +66,8 @@ export function TimeStrip({
     : win;
 
   return (
-    <section className={cn(HUD_SURFACE, 'rounded-lg px-3 pb-2 pt-2', className)}>
-      <div className="mb-1 flex items-baseline justify-between gap-3">
+    <section className={cn(HUD_GLASS, 'px-2 pb-1 pt-1', className)}>
+      <div className="mb-0.5 flex items-baseline justify-between gap-3">
         <span className={cn(HUD_LABEL, 'text-hud-dim')}>
           {shown ? `${fmt(shown[0])} – ${fmt(shown[1])}` : 'When'}
         </span>
@@ -127,7 +127,7 @@ export function TimeStrip({
           </div>
         )}
         {geom && (
-          <div className={cn(HUD_NUM, 'mt-1 flex justify-between text-hud-dimmer')}>
+          <div className={cn(HUD_NUM, 'mt-0.5 flex justify-between text-hud-dimmer')}>
             <span>{fmt(geom.t0)}</span>
             <span>{fmt(geom.t1)}</span>
           </div>

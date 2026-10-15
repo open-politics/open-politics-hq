@@ -12,12 +12,13 @@
  * Live over the run's `resolution` stream (`graph/tasks/decide.py`):
  * `judging` puts a pair on stage, `decided` lands its verdict — into the
  * effect when it merged, out of it when it did not — and the counts follow. A
- * person's change (`rollback`, `change`) goes through the same stream, so every
+ * person's change (`rollback`, `change`, `merge`) goes through the same stream, so every
  * open panel sees the same thing happen.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ResolutionService, type EntityDecisionOut, type ManualDecision, type ResolverPatch, type ResolverState,
+  ResolutionService, type EntityDecisionOut, type ManualDecision, type ManualMerge, type ResolverPatch,
+  type ResolverState,
 } from '@/client';
 import { useStream } from './useStream';
 
@@ -42,6 +43,8 @@ export interface UseResolutionResult {
   setResolver: (patch: ResolverPatch) => Promise<void>;
   rollback: (id: number) => Promise<void>;
   change: (id: number, body: ManualDecision) => Promise<void>;
+  /** Labels a person picked, merged into `keep` — one decision per label. */
+  merge: (body: ManualMerge) => Promise<boolean>;
   error: string | null;
 }
 
@@ -150,5 +153,19 @@ export function useResolution({
     catch (err) { setError(message(err, 'Could not change the decision')); }
   }, [infospaceId, runId, land]);
 
-  return { state, effect, current, seeding, history, historyTotal, loadHistory, setResolver, rollback, change, error };
+  const merge = useCallback(async (body: ManualMerge) => {
+    try {
+      const rows = await ResolutionService.mergeLabels({ infospaceId, runId, requestBody: body });
+      rows.forEach(land);
+      setError(null);
+      return true;
+    } catch (err) {
+      setError(message(err, 'Could not merge'));
+      return false;
+    }
+  }, [infospaceId, runId, land]);
+
+  return {
+    state, effect, current, seeding, history, historyTotal, loadHistory, setResolver, rollback, change, merge, error,
+  };
 }

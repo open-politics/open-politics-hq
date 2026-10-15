@@ -25,7 +25,7 @@ import type { NetworkView } from '@/lib/annotations/types';
 type TimeChoice = NonNullable<NetworkView['time']>;
 type GeoChoice = NonNullable<NetworkView['geo']>;
 
-export const DEFAULT_TIME: TimeChoice = { source: 'stated', grain: 'auto' };
+export const DEFAULT_TIME: TimeChoice = { source: 'stated', grain: 'auto', mode: 'flat' };
 export const DEFAULT_GEO: GeoChoice = { preset: 'stated', neighbours: true };
 
 const GRAINS: Array<{ value: TimeChoice['grain']; label: string; title: string }> = [
@@ -72,9 +72,14 @@ export function TimeButton({
       {(close) => (
         <div className="space-y-2.5">
           <HudOverline>Time</HudOverline>
-          <p className={cn(HUD_PROSE, 'text-hud-dim')}>
-            Left to right by when each node is. Brush or play a window to stream its names.
-          </p>
+          <div>
+            <HudOption active={(draft.mode ?? 'flat') === 'flat'} label="Flat"
+                       hint="Left to right by when each node is. Brush or play a window to stream its names."
+                       onClick={() => setDraft({ ...draft, mode: 'flat' })} />
+            <HudOption active={draft.mode === 'deep'} label="Deep"
+                       hint="Time as depth: the present in front, what follows waiting behind it. Scroll to travel."
+                       onClick={() => setDraft({ ...draft, mode: 'deep' })} />
+          </div>
           <div>
             <HudOption active={draft.source === 'stated'} label="As stated"
                        hint="When the row says it happened, else the document's own date."

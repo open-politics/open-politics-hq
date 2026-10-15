@@ -1179,6 +1179,9 @@ export interface NetworkView {
      *  the documents behind a node came out. */
     source: 'stated' | 'published';
     grain: 'auto' | 'day' | 'week' | 'month' | 'quarter' | 'year';
+    /** `flat`: left to right. `deep`: the present in front, what follows
+     *  behind it — scrolled through (`plane/TimeDeck`). Unset = flat. */
+    mode?: 'flat' | 'deep';
   };
   geo?: {
     /** A place-ladder preset (`forcegraph/anchors.RUNG_PRESETS`). */
@@ -1193,6 +1196,23 @@ export interface NetworkView {
   /** Geo: quiet the network over the map — unplaced nodes, links and greyed
    *  nodes fade, the map firms up. Unset = on. */
   quiet?: boolean;
+  /** Pull nodes apart so crowded hubs can be read. */
+  spread?: boolean;
+  /** Deep time: colour by group (a topic's stream) or by type. Unset = groups. */
+  color?: 'groups' | 'types';
+  /** Deep time's viewpoint (`plane/TimeDeck`). */
+  deep?: {
+    /** Depth between slices, as a share of the view's height. */
+    depth?: number;
+    /** Slices ahead over which the light falls. */
+    ahead?: number;
+    /** Where the depth converges, from the view's centre (right, down). */
+    vanish?: [number, number];
+  };
+  /** Types, entities and groups turned up or down (`plane/gain`). */
+  gains?: Array<{ kind: 'type' | 'node' | 'group'; key: string; value: number }>;
+  /** The reader's anchors (`plane/anchoring`). */
+  anchors?: Array<{ id: string; q: string; space: 'free' | 'time' | 'geo'; x: number; y: number; gain?: number }>;
 }
 
 export type PanelVizConfig =

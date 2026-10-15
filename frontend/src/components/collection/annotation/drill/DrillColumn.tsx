@@ -20,7 +20,7 @@ import type { AssetPages } from '@/hooks/useAssetPages';
 import { AssetListCard, type DrillSubject } from './AssetListCard';
 import { AssetDetailCard } from './AssetDetailCard';
 
-export const DRILL_W = 400;
+export const DRILL_W = 380;
 
 export function DrillColumn({
   subject, context, pages, openAsset, onOpenAsset, onClose, actions,
@@ -40,7 +40,7 @@ export function DrillColumn({
 }) {
   return (
     <div
-      className={cn('pointer-events-none absolute inset-y-3 right-3 z-20 flex max-w-[calc(100%-1.5rem)] flex-col gap-2', className)}
+      className={cn('pointer-events-none absolute inset-y-2 right-2 z-20 flex max-w-[calc(100%-1rem)] flex-col gap-1', className)}
       style={{ width: DRILL_W }}
     >
       <AssetListCard

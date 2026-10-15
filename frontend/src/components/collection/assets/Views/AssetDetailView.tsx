@@ -973,7 +973,7 @@ const WebContent = ({ asset, hasChildren, childAssets, setActiveTab, handleChild
     <div className="h-full w-full flex flex-col overflow-hidden min-w-0 max-w-full">
       {/* Article Content */}
       <div className="flex-1 w-full overflow-y-auto min-w-0 max-w-full overflow-x-hidden">
-        <div className="max-w-4xl mx-auto px-6 py-6 w-full min-w-0 max-w-full overflow-hidden">
+        <div className="max-w-4xl w-full min-w-0 max-w-full overflow-hidden">
           {/* Summary if available */}
           {(() => {
             const summary = asset.facets?.summary ?? asset.file_info?.summary;

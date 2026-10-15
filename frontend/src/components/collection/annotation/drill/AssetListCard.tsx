@@ -14,7 +14,7 @@ import React, { useEffect, useRef } from 'react';
 import { Loader2, Waypoints, X, type LucideIcon } from 'lucide-react';
 import type { OverviewAsset } from '@/client';
 import { cn } from '@/lib/utils';
-import { HUD_LABEL, HUD_NUM, HUD_PROSE, HUD_SURFACE, HudButton } from '@/components/ui/chrome';
+import { HUD_GLASS, HUD_LABEL, HUD_NUM, HUD_PROSE, HudButton } from '@/components/ui/chrome';
 import { relTime, TONES } from '@/components/collection/home/HomePanel';
 import { commandRegistry } from '@/lib/commandRegistry';
 
@@ -78,23 +78,23 @@ export function AssetListCard({
   return (
     <section
       aria-label={`Assets for ${name}`}
-      className={cn(HUD_SURFACE, 'relative flex min-h-0 flex-col overflow-hidden rounded-lg', className)}
+      className={cn(HUD_GLASS, 'relative flex min-h-0 flex-col overflow-hidden', className)}
     >
-      <span aria-hidden className={cn('pointer-events-none absolute inset-y-3 left-0 w-[2px] rounded-full', TONES.green.accent)} />
+      <span aria-hidden className={cn('pointer-events-none absolute inset-y-2 left-0 w-[2px] rounded-full', TONES.green.accent)} />
 
-      <header className="flex items-start gap-2.5 px-4 pb-2 pt-3">
-        <span className={cn('mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md', TONES.green.tile)}>
+      <header className="flex items-center gap-2 px-2.5 pb-1 pt-1.5">
+        <span className={cn('flex size-6 shrink-0 items-center justify-center rounded', TONES.green.tile)}>
           <Icon className="size-3.5" />
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
-            <h3 className="truncate text-sm font-medium tracking-tight text-foreground">{name}</h3>
-            <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium tabular-nums text-muted-foreground">
+            <h3 className="truncate text-[13px] font-medium tracking-tight text-foreground">{name}</h3>
+            <span className="shrink-0 rounded bg-muted px-1 text-[10.5px] font-medium tabular-nums text-muted-foreground">
               {total == null ? '…' : total.toLocaleString()}
             </span>
             {loading && <Loader2 className="size-3 shrink-0 animate-spin text-muted-foreground" />}
           </div>
-          <p className="truncate text-xs text-muted-foreground">
+          <p className="truncate text-[11px] leading-tight text-muted-foreground">
             {[caption, ...context].join(' · ')}
           </p>
         </div>
@@ -104,18 +104,18 @@ export function AssetListCard({
       </header>
 
       <ol className={cn(
-        'min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-3 transition-opacity [scrollbar-width:thin]',
+        'min-h-0 flex-1 overflow-y-auto overscroll-contain px-2.5 pb-1.5 transition-opacity [scrollbar-width:thin]',
         stale && 'opacity-50',
       )}>
         {items.map((a) => {
           const open = a.id === openId;
           return (
             <li key={a.id}
-                className={cn('group -mx-1.5 flex items-center rounded-md transition-colors',
+                className={cn('group -mx-1 flex items-center rounded transition-colors',
                               open ? 'bg-muted/70' : 'hover:bg-muted/50')}>
               <button type="button" onClick={() => onOpen(a.id)}
-                      className="flex min-w-0 flex-1 items-center gap-2 py-1 pl-1.5 text-left">
-                <span className={cn('min-w-0 flex-1 truncate text-sm',
+                      className="flex min-w-0 flex-1 items-center gap-2 py-[3px] pl-1 text-left">
+                <span className={cn('min-w-0 flex-1 truncate text-[12.5px]',
                                     open ? 'text-foreground' : 'text-foreground/90')}>
                   {a.title || `Asset ${a.id}`}
                 </span>

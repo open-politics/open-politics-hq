@@ -71,7 +71,7 @@ export default function ArticleView({
     <div className={cn("h-full w-full flex flex-col min-h-0 overflow-y-auto", className)}>
       {/* Content */}
       <div className="flex-1 w-full overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-6 py-6">
+        <div className="max-w-4xl">
           {/* Summary if available - hide when duplicated at start of content */}
           {metadata?.summary && (() => {
             const sum = (metadata.summary || '').trim();

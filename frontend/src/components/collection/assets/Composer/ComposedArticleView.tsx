@@ -178,7 +178,7 @@ export default function ComposedArticleView({
 
       {/* Article Content */}
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-4xl mx-auto px-6 py-6">
+        <div className="max-w-4xl">
           <div className="prose prose-gray max-w-none">
             <div className="text-base leading-relaxed text-foreground">
               {processedContent}

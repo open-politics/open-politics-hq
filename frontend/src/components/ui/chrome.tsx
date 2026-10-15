@@ -352,6 +352,16 @@ export const HUD_SURFACE =
   'backdrop-blur-xl backdrop-saturate-150';
 
 /**
+ * The same glass with no edge, for what floats over a canvas — lists, the time
+ * strip, the drill column. Over a map or a graph the blur already says where
+ * a card ends; a hairline around every one of them is a frame around a frame,
+ * and a column of cards becomes a column of boxes. Tighter corners too: these
+ * sit close to each other and to the canvas edge.
+ */
+export const HUD_GLASS =
+  'rounded-md bg-hud-surface shadow-none backdrop-blur-xl backdrop-saturate-150';
+
+/**
  * A text field wearing the chrome.
  *
  * shadcn's `Input` is `border-input dark:bg-input/30` with a 3px focus ring —
@@ -381,7 +391,7 @@ export function HudOption({
   hint?: React.ReactNode;
   disabled?: boolean;
   trailing?: React.ReactNode;
-  onClick?: () => void;
+  onClick?: (event: React.MouseEvent<HTMLButtonElement>) => void;
   className?: string;
 }) {
   return (
@@ -507,5 +517,68 @@ export function HudStat({ label, value, meter }: { label: string; value: string;
         <span className={cn(HUD_NUM, 'text-hud-fg')}>{value}</span>
       </span>
     </div>
+  );
+}
+
+/**
+ * A gain — a hairline slider, centre is "as is", left turns down, right turns
+ * up. Small enough to sit inside a list row or beside a chip: a 2px track, the
+ * filled part running from the centre to the value, a dot for the knob. Drag
+ * or use the arrow keys; a double-click puts it back to the centre.
+ */
+export function HudGain({
+  value, onChange, title, className,
+}: {
+  /** −1 … +1. */
+  value: number;
+  onChange: (value: number) => void;
+  title?: string;
+  className?: string;
+}) {
+  const track = React.useRef<HTMLSpanElement>(null);
+  const at = (clientX: number) => {
+    const r = track.current?.getBoundingClientRect();
+    if (!r || r.width === 0) return value;
+    const v = ((clientX - r.left) / r.width) * 2 - 1;
+    return Math.abs(v) < 0.06 ? 0 : Math.max(-1, Math.min(1, v));
+  };
+  const left = value < 0 ? 50 + value * 50 : 50;
+  const width = Math.abs(value) * 50;
+  return (
+    <span
+      role="slider"
+      tabIndex={0}
+      aria-valuemin={-1}
+      aria-valuemax={1}
+      aria-valuenow={Math.round(value * 100) / 100}
+      title={title ?? (value === 0 ? 'Drag right to turn up, left to turn down' : `${value > 0 ? 'Up' : 'Down'} ${Math.round(Math.abs(value) * 100)}% — double-click to reset`)}
+      onPointerDown={(e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        onChange(at(e.clientX));
+      }}
+      onPointerMove={(e) => {
+        if ((e.currentTarget as HTMLElement).hasPointerCapture(e.pointerId)) onChange(at(e.clientX));
+      }}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => { e.stopPropagation(); onChange(0); }}
+      onKeyDown={(e) => {
+        if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { e.preventDefault(); onChange(Math.min(1, value + 0.1)); }
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { e.preventDefault(); onChange(Math.max(-1, value - 0.1)); }
+        if (e.key === '0' || e.key === 'Backspace') onChange(0);
+      }}
+      className={cn('relative inline-flex h-3 w-10 shrink-0 cursor-ew-resize touch-none items-center outline-none', className)}
+    >
+      <span ref={track} className="relative h-[2px] w-full rounded-full bg-hud-line">
+        <span aria-hidden className="absolute left-1/2 top-1/2 h-1.5 w-px -translate-y-1/2 bg-hud-line-strong" />
+        <span aria-hidden className={cn('absolute inset-y-0 rounded-full', value >= 0 ? 'bg-hud-fg' : 'bg-hud-dim')}
+              style={{ left: `${left}%`, width: `${width}%` }} />
+        <span aria-hidden
+              className={cn('absolute top-1/2 size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full',
+                            value === 0 ? 'bg-hud-dim' : 'bg-hud-fg')}
+              style={{ left: `${50 + value * 50}%` }} />
+      </span>
+    </span>
   );
 }
