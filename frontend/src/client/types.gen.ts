@@ -1717,6 +1717,48 @@ export type EnrichmentConfig = {
     embedding_dimension_override?: (number | null);
 };
 
+export type EntityDecisionOut = {
+    id: number;
+    status: string;
+    reason: string;
+    priority: number;
+    a: Side;
+    b: Side;
+    keep?: (string | null);
+    type?: (string | null);
+    p_same?: (number | null);
+    p_type?: ({
+    [key: string]: (number);
+} | null);
+    confidence?: (number | null);
+    model?: (string | null);
+    scope: string;
+    canon_effect?: ({
+    [key: string]: unknown;
+} | null);
+    /**
+     * Who decided; null = the model.
+     */
+    by?: (number | null);
+    at?: (string | null);
+    /**
+     * What the model was shown.
+     */
+    state: string;
+    /**
+     * Every earlier verdict, oldest first.
+     */
+    trail?: Array<{
+        [key: string]: unknown;
+    }>;
+};
+
+export type EntityDecisionPage = {
+    items: Array<EntityDecisionOut>;
+    total: number;
+    offset: number;
+};
+
 /**
  * A merge group: names that should resolve to ``keep``.
  *
@@ -2597,6 +2639,14 @@ export type ListingSection_AssetNode_ = {
     cursor_next?: (string | null);
 };
 
+export type ManualDecision = {
+    verdict: 'merged' | 'separate';
+    keep?: ('a' | 'b' | null);
+    type?: (string | null);
+};
+
+export type verdict = 'merged' | 'separate';
+
 /**
  * One value column of the output relation.
  *
@@ -3239,6 +3289,27 @@ export type ResolveIntoCanonRequest = {
     enabled?: boolean;
 };
 
+export type ResolverPatch = {
+    running?: (boolean | null);
+    scope?: ('run' | 'canon' | null);
+    threshold?: (number | null);
+};
+
+export type ResolverState = {
+    running: boolean;
+    scope: 'run' | 'canon';
+    threshold: number;
+    canon_id: (number | null);
+    /**
+     * Decisions per status.
+     */
+    counts: {
+        [key: string]: (number);
+    };
+};
+
+export type scope = 'run' | 'canon';
+
 export type ResourceType = 'source' | 'bundle' | 'asset' | 'schema' | 'infospace' | 'run' | 'package' | 'dataset' | 'mixed';
 
 export type ResultStatus = 'success' | 'failed';
@@ -3519,6 +3590,11 @@ export type SharedResourcePreview = {
     name: string;
     description?: (string | null);
     content: (app__schemas__AssetPreview | BundlePreview | AnnotationRunPreview);
+};
+
+export type Side = {
+    name: string;
+    type: string;
 };
 
 export type SimilarPairRead = {
@@ -6793,6 +6869,70 @@ export type DeleteRelationshipOverlayData = {
 };
 
 export type DeleteRelationshipOverlayResponse = (DeleteImpact);
+
+export type GetResolverData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type GetResolverResponse = (ResolverState);
+
+export type PatchResolverData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: ResolverPatch;
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type PatchResolverResponse = (ResolverState);
+
+export type ListEntityDecisionsData = {
+    infospaceId: number;
+    limit?: number;
+    offset?: number;
+    packageToken?: (string | null);
+    runId: number;
+    /**
+     * One status; omitted = everything decided.
+     */
+    status?: (string | null);
+    xPackageToken?: (string | null);
+};
+
+export type ListEntityDecisionsResponse = (EntityDecisionPage);
+
+export type EntityDecisionsInEffectData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type EntityDecisionsInEffectResponse = (Array<EntityDecisionOut>);
+
+export type RollbackEntityDecisionData = {
+    decisionId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type RollbackEntityDecisionResponse = (EntityDecisionOut);
+
+export type ChangeEntityDecisionData = {
+    decisionId: number;
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: ManualDecision;
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type ChangeEntityDecisionResponse = (EntityDecisionOut);
 
 export type CreateRunData = {
     infospaceId: number;
