@@ -2647,6 +2647,18 @@ export type ManualDecision = {
 
 export type verdict = 'merged' | 'separate';
 
+export type ManualMerge = {
+    /**
+     * The label the merged entity carries.
+     */
+    keep: Side;
+    others: Array<Side>;
+    /**
+     * Its type; omitted = keep's.
+     */
+    type?: (string | null);
+};
+
 /**
  * One value column of the output relation.
  *
@@ -6933,6 +6945,16 @@ export type ChangeEntityDecisionData = {
 };
 
 export type ChangeEntityDecisionResponse = (EntityDecisionOut);
+
+export type MergeLabelsData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: ManualMerge;
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type MergeLabelsResponse = (Array<EntityDecisionOut>);
 
 export type CreateRunData = {
     infospaceId: number;
