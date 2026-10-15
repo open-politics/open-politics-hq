@@ -35,6 +35,10 @@ export interface ResolvedReturn {
 interface ChatState {
   // The floating companion's visible form (persisted).
   placement: ChatPlacement
+  // The expanded view: the chat window pulled up from below the page, where it
+  // otherwise rests with only its header in view. Transient — a reload lands
+  // on the page.
+  drawerOpen: boolean
   // The active conversation (persisted) — the id both surfaces re-hydrate from.
   conversationId: number | null
   agent?: string
@@ -50,6 +54,8 @@ interface ChatState {
   openChat: () => void
   collapseChat: () => void
   toggleChat: () => void
+  openDrawer: () => void
+  closeDrawer: () => void
   setSeedPrompt: (p: string | null) => void
   setConversationId: (id: number | null) => void
   addPendingReturn: (r: PendingReturn) => void
@@ -61,6 +67,7 @@ export const useChatStore = create<ChatState>()(
   persist(
     (set) => ({
       placement: 'collapsed',
+      drawerOpen: false,
       conversationId: null,
       agent: undefined,
       seedPrompt: null,
@@ -68,9 +75,13 @@ export const useChatStore = create<ChatState>()(
       resolvedQueue: [],
 
       setPlacement: (placement) => set({ placement }),
-      openChat: () => set({ placement: 'open' }),
+      openChat: () => set({ placement: 'open', drawerOpen: false }),
       collapseChat: () => set({ placement: 'collapsed' }),
       toggleChat: () => set((s) => ({ placement: s.placement === 'open' ? 'collapsed' : 'open' })),
+      // The drawer and the small window are two forms of one window, so taking
+      // one puts the other away.
+      openDrawer: () => set({ drawerOpen: true, placement: 'collapsed' }),
+      closeDrawer: () => set({ drawerOpen: false }),
       setSeedPrompt: (seedPrompt) => set({ seedPrompt }),
       setConversationId: (conversationId) => set({ conversationId }),
       addPendingReturn: (r) => set((s) => ({ pendingReturns: { ...s.pendingReturns, [r.token]: r } })),

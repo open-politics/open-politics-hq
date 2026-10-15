@@ -21,6 +21,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
+  useSidebarSide,
 } from "@/components/ui/sidebar"
 import { useInfospaceStore } from "@/zustand_stores/storeInfospace"
 import { IconRenderer } from "@/components/collection/utilities/icons/icon-picker"
@@ -28,6 +29,7 @@ import EditInfospaceOverlay from "@/components/collection/management/EditInfospa
 
 export function InfospaceSwitcher() {
   const { isMobile } = useSidebar()
+  const sidebarSide = useSidebarSide()
   const { theme } = useTheme()
   const [isEditOverlayOpen, setIsEditOverlayOpen] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
@@ -137,7 +139,7 @@ export function InfospaceSwitcher() {
           <DropdownMenuContent
             className="w-[--radix-dropdown-menu-trigger-width] min-w-72 bg-sidebar text-sidebar-foreground border border-sidebar-border rounded-lg"
             align="start"
-            side={isMobile ? "bottom" : "right"}
+            side={isMobile || sidebarSide === "top" ? "bottom" : "right"}
             sideOffset={4}
           >
             <DropdownMenuLabel className="text-xs text-muted-foreground">

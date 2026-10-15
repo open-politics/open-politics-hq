@@ -61,10 +61,21 @@ export function useScrollEdges<T extends HTMLElement>(
     const ro = new ResizeObserver(measure);
     ro.observe(el);
 
-    const mo = new MutationObserver(measure);
+    // Contents mutate in bursts (a table filling, a chart redrawing); one
+    // measure per frame answers all of a burst, and reading layout once
+    // after it is cheaper than once per mutation in the middle of it.
+    let frame = 0;
+    const mo = new MutationObserver(() => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        measure();
+      });
+    });
     mo.observe(el, { childList: true, subtree: true, characterData: true });
 
     return () => {
+      cancelAnimationFrame(frame);
       el.removeEventListener('scroll', measure);
       ro.disconnect();
       mo.disconnect();

@@ -11,6 +11,7 @@ import {
 } from '@/client';
 import { useProvidersStore } from '@/zustand_stores/storeProviders';
 import { authHeaders } from '@/lib/authHeaders';
+import { assert } from '@/lib/assert';
 
 type User = UserOut & {
   avatar?: string;
@@ -45,9 +46,22 @@ const useAuth = () => {
     return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
+  // Drop the credential, keep the page: an expired session is "no user", not a redirect.
+  const clearSession = () => {
+    localStorage.removeItem('access_token');
+    setHasToken(false);
+    OpenAPI.HEADERS = undefined;
+  };
+
   const { data: user, isLoading } = useQuery<User | null, Error>({
     queryKey: ["CurrentUser"],
-    queryFn: UsersService.readUserMe,
+    // A rejected token means signed out — clear it once here rather than retrying it on every mount.
+    queryFn: () => UsersService.readUserMe().catch((e: ApiError) => {
+      if (e.status !== 401) throw e;
+      assert(hasToken, '401 on /users/me without a token sent');
+      clearSession();
+      return null;
+    }),
     enabled: hasToken && !isLoggingOut,
     staleTime: 5 * 60 * 1000, // 5 minutes
     gcTime: 10 * 60 * 1000, // 10 minutes
@@ -63,7 +77,10 @@ const useAuth = () => {
 
   const loginMutation = useMutation({
     mutationFn: async (data: AccessToken) => {
+      // Login exchanges credentials; a stale Bearer riding along can get it rejected upstream.
+      OpenAPI.HEADERS = undefined;
       const response = await LoginService.loginAccessToken({ formData: data });
+      assert(response.access_token, 'login succeeded without a token');
       localStorage.setItem('access_token', response.access_token);
       OpenAPI.HEADERS = async () => ({ ...authHeaders(response.access_token) });
       return response;
@@ -95,10 +112,7 @@ const useAuth = () => {
     queryClient.cancelQueries();
     queryClient.clear();
     
-    // Remove token and clear authentication state
-    localStorage.removeItem('access_token');
-    setHasToken(false);
-    OpenAPI.HEADERS = undefined;
+    clearSession();
     setError(null);
     
     // Navigate to login page

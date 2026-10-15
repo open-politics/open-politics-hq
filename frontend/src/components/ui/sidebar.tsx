@@ -5,6 +5,8 @@ import { Slot } from "@radix-ui/react-slot"
 import { VariantProps, cva } from "class-variance-authority"
 import { usePathname } from "next/navigation"
 import { useIsMobile } from "@/hooks/use-mobile"
+import { useScrollEdges } from "@/hooks/useScrollEdges"
+import { useWheelScrollX } from "@/hooks/useWheelScrollX"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -57,6 +59,24 @@ function readStoredOpen(): boolean | undefined {
 }
 
 const SidebarContext = React.createContext<SidebarContextProps | null>(null)
+
+type SidebarSide = "left" | "right" | "top"
+
+/**
+ * The edge the panel is laid out against. `top` is the same composition
+ * rotated: header → content → footer read left to right instead of top to
+ * bottom, and whatever opens off the panel opens downward instead of sideways.
+ *
+ * Most of that rotation is CSS keyed off `data-side` on the panel's `group`,
+ * exactly like the `collapsible=icon` rules. This carries the side to the few
+ * places where it is a prop rather than a class — a Radix `side`, a scroller
+ * that runs the other way.
+ */
+const SidebarSideContext = React.createContext<SidebarSide>("left")
+
+function useSidebarSide() {
+  return React.useContext(SidebarSideContext)
+}
 
 function useSidebar() {
   const context = React.useContext(SidebarContext)
@@ -200,7 +220,7 @@ SidebarProvider.displayName = "SidebarProvider"
 const Sidebar = React.forwardRef<
   HTMLDivElement,
   React.ComponentProps<"div"> & {
-    side?: "left" | "right"
+    side?: SidebarSide
     variant?: "sidebar" | "floating" | "inset"
     collapsible?: "offcanvas" | "icon" | "none"
   }
@@ -217,9 +237,16 @@ const Sidebar = React.forwardRef<
     ref
   ) => {
     const { isMobile, state, openMobile, setOpenMobile } = useSidebar()
+    // On a phone the panel is a sheet whatever its desktop edge, and a sheet
+    // dropping from the top would bury the screen it navigates — so `top`
+    // lays out as `left` there, and everything inside reads it that way.
+    const layoutSide = isMobile && side === "top" ? "left" : side
+    const padded = variant === "floating" || variant === "inset"
+
+    let panel: React.ReactNode
 
     if (collapsible === "none") {
-      return (
+      panel = (
         <div
           className={cn(
             "flex h-full w-[var(--sidebar-width)] flex-col bg-sidebar text-sidebar-foreground",
@@ -231,10 +258,8 @@ const Sidebar = React.forwardRef<
           {children}
         </div>
       )
-    }
-
-    if (isMobile) {
-      return (
+    } else if (isMobile) {
+      panel = (
         <Sheet open={openMobile} onOpenChange={setOpenMobile}>
           <SheetContent
             data-sidebar="sidebar"
@@ -248,7 +273,7 @@ const Sidebar = React.forwardRef<
                 "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
               } as React.CSSProperties
             }
-            side={side}
+            side={layoutSide}
             {...props}
           >
             <SheetHeader className="sr-only">
@@ -259,50 +284,86 @@ const Sidebar = React.forwardRef<
           </SheetContent>
         </Sheet>
       )
+    } else if (side === "top") {
+      panel = (
+        <div
+          ref={ref}
+          className="group peer hidden text-sidebar-foreground md:block"
+          data-state={state}
+          data-collapsible={state === "collapsed" ? collapsible : ""}
+          data-variant={variant}
+          data-side={side}
+        >
+          {/* In the flow, with no spacer. A side panel is `fixed` and shadowed
+              by a spacer so its width can animate; a bar is exactly as tall as
+              its row, and the row animates itself as the labels fold. */}
+          <div
+            className={cn(
+              "relative w-full group-data-[collapsible=offcanvas]:hidden",
+              padded ? "p-2" : "border-b",
+              className
+            )}
+            {...props}
+          >
+            <div
+              data-sidebar="sidebar"
+              className="flex w-full flex-row items-center bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border"
+            >
+              {children}
+            </div>
+          </div>
+        </div>
+      )
+    } else {
+      panel = (
+        <div
+          ref={ref}
+          className="group peer hidden text-sidebar-foreground md:block"
+          data-state={state}
+          data-collapsible={state === "collapsed" ? collapsible : ""}
+          data-variant={variant}
+          data-side={side}
+        >
+          {/* This is what handles the sidebar gap on desktop */}
+          <div
+            className={cn(
+              "relative w-[var(--sidebar-width)] bg-transparent transition-[width] duration-200 ease-linear",
+              "group-data-[collapsible=offcanvas]:w-0",
+              "group-data-[side=right]:rotate-180",
+              padded
+                ? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_1rem)]"
+                : "group-data-[collapsible=icon]:w-[var(--sidebar-width-icon)]"
+            )}
+          />
+          <div
+            className={cn(
+              "fixed inset-y-0 z-10 hidden h-svh w-[var(--sidebar-width)] transition-[left,right,width] duration-200 ease-linear md:flex",
+              side === "left"
+                ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
+                : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
+              // Adjust the padding for floating and inset variants.
+              padded
+                ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_1rem_+_2px)]"
+                : "group-data-[collapsible=icon]:w-[var(--sidebar-width-icon)] group-data-[side=left]:border-r group-data-[side=right]:border-l",
+              className
+            )}
+            {...props}
+          >
+            <div
+              data-sidebar="sidebar"
+              className="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border"
+            >
+              {children}
+            </div>
+          </div>
+        </div>
+      )
     }
 
     return (
-      <div
-        ref={ref}
-        className="group peer hidden text-sidebar-foreground md:block"
-        data-state={state}
-        data-collapsible={state === "collapsed" ? collapsible : ""}
-        data-variant={variant}
-        data-side={side}
-      >
-        {/* This is what handles the sidebar gap on desktop */}
-        <div
-          className={cn(
-            "relative w-[var(--sidebar-width)] bg-transparent transition-[width] duration-200 ease-linear",
-            "group-data-[collapsible=offcanvas]:w-0",
-            "group-data-[side=right]:rotate-180",
-            variant === "floating" || variant === "inset"
-              ? "group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_1rem)]"
-              : "group-data-[collapsible=icon]:w-[var(--sidebar-width-icon)]"
-          )}
-        />
-        <div
-          className={cn(
-            "fixed inset-y-0 z-10 hidden h-svh w-[var(--sidebar-width)] transition-[left,right,width] duration-200 ease-linear md:flex",
-            side === "left"
-              ? "left-0 group-data-[collapsible=offcanvas]:left-[calc(var(--sidebar-width)*-1)]"
-              : "right-0 group-data-[collapsible=offcanvas]:right-[calc(var(--sidebar-width)*-1)]",
-            // Adjust the padding for floating and inset variants.
-            variant === "floating" || variant === "inset"
-              ? "p-2 group-data-[collapsible=icon]:w-[calc(var(--sidebar-width-icon)_+_1rem_+_2px)]"
-              : "group-data-[collapsible=icon]:w-[var(--sidebar-width-icon)] group-data-[side=left]:border-r group-data-[side=right]:border-l",
-            className
-          )}
-          {...props}
-        >
-          <div
-            data-sidebar="sidebar"
-            className="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border"
-          >
-            {children}
-          </div>
-        </div>
-      </div>
+      <SidebarSideContext.Provider value={layoutSide}>
+        {panel}
+      </SidebarSideContext.Provider>
     )
   }
 )
@@ -349,6 +410,7 @@ const SidebarRail = React.forwardRef<
   React.ComponentProps<"button">
 >(({ className, ...props }, ref) => {
   const { toggleSidebar } = useSidebar()
+  const side = useSidebarSide()
 
   return (
     <button
@@ -359,12 +421,17 @@ const SidebarRail = React.forwardRef<
       onClick={toggleSidebar}
       title="Toggle Sidebar"
       className={cn(
-        "absolute inset-y-0 z-20 hidden w-2 -translate-x-1/2 transition-all ease-linear after:absolute after:inset-y-0 after:left-1/2 group-data-[side=left]:-right-4 group-data-[side=right]:left-0 sm:flex",
-        "[[data-side=left]_&]:cursor-w-resize [[data-side=right]_&]:cursor-e-resize",
-        "[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
-        "group-data-[collapsible=offcanvas]:translate-x-0 group-data-[collapsible=offcanvas]:after:left-full",
-        "[[data-side=left][data-collapsible=offcanvas]_&]:-right-2",
-        "[[data-side=right][data-collapsible=offcanvas]_&]:-left-2",
+        side === "top"
+          ? // Along the bottom edge, in the gap between the bar and the page.
+            "absolute inset-x-0 bottom-0 z-20 hidden h-2 cursor-ns-resize sm:flex"
+          : [
+              "absolute inset-y-0 z-20 hidden w-2 -translate-x-1/2 transition-all ease-linear after:absolute after:inset-y-0 after:left-1/2 group-data-[side=left]:-right-4 group-data-[side=right]:left-0 sm:flex",
+              "[[data-side=left]_&]:cursor-w-resize [[data-side=right]_&]:cursor-e-resize",
+              "[[data-side=left][data-state=collapsed]_&]:cursor-e-resize [[data-side=right][data-state=collapsed]_&]:cursor-w-resize",
+              "group-data-[collapsible=offcanvas]:translate-x-0 group-data-[collapsible=offcanvas]:after:left-full",
+              "[[data-side=left][data-collapsible=offcanvas]_&]:-right-2",
+              "[[data-side=right][data-collapsible=offcanvas]_&]:-left-2",
+            ],
         className
       )}
       {...props}
@@ -417,7 +484,11 @@ const SidebarHeader = React.forwardRef<
     <div
       ref={ref}
       data-sidebar="header"
-      className={cn("flex flex-col gap-2 p-2", className)}
+      className={cn(
+        "flex flex-col gap-2 p-2",
+        "group-data-[side=top]:max-w-[var(--sidebar-width)] group-data-[side=top]:shrink-0",
+        className
+      )}
       {...props}
     />
   )
@@ -432,7 +503,11 @@ const SidebarFooter = React.forwardRef<
     <div
       ref={ref}
       data-sidebar="footer"
-      className={cn("flex flex-col gap-2 p-2", className)}
+      className={cn(
+        "flex flex-col gap-2 p-2",
+        "group-data-[side=top]:max-w-[var(--sidebar-width)] group-data-[side=top]:shrink-0",
+        className
+      )}
       {...props}
     />
   )
@@ -458,6 +533,10 @@ const SidebarContent = React.forwardRef<
   HTMLDivElement,
   React.ComponentProps<"div">
 >(({ className, ...props }, ref) => {
+  if (useSidebarSide() === "top") {
+    return <SidebarContentRow ref={ref} className={className} {...props} />
+  }
+
   return (
     <div
       ref={ref}
@@ -472,6 +551,42 @@ const SidebarContent = React.forwardRef<
 })
 SidebarContent.displayName = "SidebarContent"
 
+/**
+ * The content region of a bar: one row between the pinned header and footer
+ * that scrolls sideways when it does not fit — collapsed or not, since even
+ * the icon strip outgrows a narrow window. HQ draws no scrollbars, so the row
+ * fades at whichever end has more behind it, and a mouse wheel moves it.
+ */
+const SidebarContentRow = React.forwardRef<
+  HTMLDivElement,
+  React.ComponentProps<"div">
+>(({ className, ...props }, ref) => {
+  const rowRef = useScrollEdges<HTMLDivElement>("x")
+  useWheelScrollX(rowRef)
+
+  const setRef = React.useCallback(
+    (node: HTMLDivElement | null) => {
+      rowRef.current = node
+      if (typeof ref === "function") ref(node)
+      else if (ref) ref.current = node
+    },
+    [rowRef, ref]
+  )
+
+  return (
+    <div
+      ref={setRef}
+      data-sidebar="content"
+      className={cn(
+        "scroll-edges-x flex min-w-0 flex-1 flex-row items-center gap-2 overflow-x-auto overflow-y-hidden",
+        className
+      )}
+      {...props}
+    />
+  )
+})
+SidebarContentRow.displayName = "SidebarContentRow"
+
 const SidebarGroup = React.forwardRef<
   HTMLDivElement,
   React.ComponentProps<"div">
@@ -480,7 +595,11 @@ const SidebarGroup = React.forwardRef<
     <div
       ref={ref}
       data-sidebar="group"
-      className={cn("relative flex w-full min-w-0 flex-col p-2", className)}
+      className={cn(
+        "relative flex w-full min-w-0 flex-col p-2",
+        "group-data-[side=top]:w-auto group-data-[side=top]:shrink-0 group-data-[side=top]:flex-row group-data-[side=top]:items-center",
+        className
+      )}
       {...props}
     />
   )
@@ -498,8 +617,10 @@ const SidebarGroupLabel = React.forwardRef<
       ref={ref}
       data-sidebar="group-label"
       className={cn(
-        "flex h-8 shrink-0 items-center rounded-md px-2 text-xs font-medium text-sidebar-foreground/70 outline-none ring-sidebar-ring transition-[margin,opacity] duration-200 ease-linear focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0",
+        "flex h-8 shrink-0 items-center rounded-md px-2 text-xs font-medium text-sidebar-foreground/70 outline-none ring-sidebar-ring transition-[margin,opacity,max-width,padding] duration-200 ease-linear focus-visible:ring-2 [&>svg]:size-4 [&>svg]:shrink-0",
         "group-data-[collapsible=icon]:-mt-8 group-data-[collapsible=icon]:opacity-0",
+        "group-data-[side=top]:max-w-40 group-data-[side=top]:overflow-hidden group-data-[side=top]:whitespace-nowrap",
+        "[[data-side=top][data-collapsible=icon]_&]:max-w-0 [[data-side=top][data-collapsible=icon]_&]:px-0",
         className
       )}
       {...props}
@@ -551,7 +672,11 @@ const SidebarMenu = React.forwardRef<
   <ul
     ref={ref}
     data-sidebar="menu"
-    className={cn("flex w-full min-w-0 flex-col gap-1", className)}
+    className={cn(
+      "flex w-full min-w-0 flex-col gap-1",
+      "group-data-[side=top]:w-auto group-data-[side=top]:flex-row group-data-[side=top]:items-center",
+      className
+    )}
     {...props}
   />
 ))
@@ -564,7 +689,7 @@ const SidebarMenuItem = React.forwardRef<
   <li
     ref={ref}
     data-sidebar="menu-item"
-    className={cn("group/menu-item relative", className)}
+    className={cn("group/menu-item relative group-data-[side=top]:shrink-0", className)}
     {...props}
   />
 ))
@@ -629,6 +754,7 @@ const SidebarMenuButton = React.forwardRef<
   ) => {
     const Comp = asChild ? Slot : "button"
     const { isMobile, state } = useSidebar()
+    const side = useSidebarSide()
 
     const button = (
       <Comp
@@ -655,7 +781,7 @@ const SidebarMenuButton = React.forwardRef<
       <Tooltip>
         <TooltipTrigger asChild>{button}</TooltipTrigger>
         <TooltipContent
-          side="right"
+          side={side === "top" ? "bottom" : "right"}
           align="center"
           hidden={state !== "collapsed" || isMobile}
           {...tooltip}
@@ -834,4 +960,5 @@ export {
   SidebarSeparator,
   SidebarTrigger,
   useSidebar,
+  useSidebarSide,
 }

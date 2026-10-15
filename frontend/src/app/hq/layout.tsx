@@ -1,9 +1,7 @@
 'use client'
 
-import { SidebarInset, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
+import { SidebarInset, useSidebar } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/collection/_unsorted_legacy/AppSidebar"
-import { TopbarSlotProvider, TopbarSlotRenderer } from "@/components/layout/TopbarSlot"
-import { DefaultTopbar } from "@/components/layout/DefaultTopbar"
 import { BottomRail } from "@/components/layout/BottomRail"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable"
@@ -21,8 +19,11 @@ import { OperatorCompanion } from "@/components/collection/chat/OperatorCompanio
 import { TextSpanHighlightProvider } from "@/components/collection/contexts/TextSpanHighlightContext"
 import { ArrowLeft, Menu as MenuIcon, ExternalLink, X } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { useEffect, useState, useRef } from 'react';
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useRef, type CSSProperties } from 'react';
+import { usePathname, useRouter } from "next/navigation";
+import { usePushIntent } from "@/hooks/usePushIntent";
+import { useChatStrip } from "@/hooks/useChatStrip";
+import { useChatStore } from "@/zustand_stores/storeChat";
 import Link from "next/link";
 
 // Main content + the global right dock. The dock is a resizable split beside
@@ -110,10 +111,56 @@ function MainContentWithInspector({
 function SidebarContent({ children, user }: { children: React.ReactNode, user: any }) {
   const { isMobile: sidebarMobile } = useSidebar();
   const mainContentRef = useRef<HTMLDivElement>(null);
-  // Focus mode (annotation runner) hides all chrome for a clean canvas — that
-  // includes this app-level top bar. The runner clears the flag on unmount so
-  // it never leaks onto other routes.
+
+  // Focus mode (annotation runner) hides all chrome for a clean canvas — the
+  // navigation bar and the rail. The runner clears the flag on unmount so it
+  // never leaks onto other routes.
   const focusMode = useAnnotationRunStore((s) => s.focusMode);
+
+  // The shell is a vertical sequence — navigation bar, content, chat drawer —
+  // and scrolling moves along it, past the content's own scroll:
+  //  - push down anywhere and the bar slides away;
+  //  - push up past the top of the content, against some resistance, and it
+  //    comes back from its own place;
+  //  - keep pushing down past the end of the content — the same swipe can
+  //    carry on once the bar has gone — and the chat comes up with the hand,
+  //    the page moving up with it, and settles at whichever end is nearer
+  //    when you let go (`useChatStrip`).
+  // The bar snaps; it is a few pixels of chrome. The chat is a place, so it
+  // is moved to rather than summoned. A new route brings the bar back,
+  // because arriving somewhere is exactly when you want to see where you are.
+  const insetRef = useRef<HTMLDivElement>(null);
+  const [barAway, setBarAway] = useState(false);
+  const pathname = usePathname();
+  const drawerOpen = useChatStore((s) => s.drawerOpen);
+  usePushIntent(insetRef, {
+    direction: "down",
+    travel: 48,
+    enabled: !barAway,
+    onPush: () => setBarAway(true),
+  });
+  usePushIntent(insetRef, {
+    direction: "up",
+    travel: 160,
+    pastEdge: true,
+    enabled: barAway,
+    onPush: () => setBarAway(false),
+  });
+  // Past the end of the page, the chat — followed by hand, not triggered.
+  // The bar goes first: the chat is the far end of the sequence. Focus mode
+  // has no bar, the chat page is the chat already, and the small window has
+  // the chat in hand.
+  const chatPlacement = useChatStore((s) => s.placement);
+  useChatStrip(insetRef, {
+    canOpen: (barAway || focusMode) && chatPlacement !== "open" && pathname !== "/hq/chat",
+    // However a pull starts, the bar is behind you once it has.
+    onPull: () => setBarAway(true),
+  });
+  // However the drawer was opened, the bar is already behind you by then.
+  useEffect(() => {
+    if (drawerOpen) setBarAway(true);
+  }, [drawerOpen]);
+  useEffect(() => setBarAway(false), [pathname]);
 
   // User preferences
   const { preferences, initializePreferences, updatePreference } = useUserPreferencesStore();
@@ -175,24 +222,39 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
   }, []);
 
   return (
-    <TopbarSlotProvider>
-      <AppSidebar />
+    <>
+      {/* Navigation runs across the top. Focus mode takes it too: the runner's
+          exit-focus control sits in the top-right corner, where the bar's
+          account menu would otherwise be underneath it. */}
+      {/* Collapsed by `grid-template-rows` rather than a measured height, so
+          the bar can be any height (expanded, icon strip) and still animate
+          to nothing. `invisible` lands when the slide ends and takes the bar
+          out of the tab order while it is away. */}
+      {!focusMode && (
+        <div
+          className={cn(
+            "grid shrink-0 transition-[grid-template-rows,opacity,visibility] duration-200 ease-out",
+            barAway ? "invisible grid-rows-[0fr] opacity-0" : "grid-rows-[1fr]"
+          )}
+        >
+          <div className="min-h-0 overflow-hidden">
+            <AppSidebar side="top" />
+          </div>
+        </div>
+      )}
       <SidebarInset
+        ref={insetRef}
         className={cn(
           "min-h-0 max-w-full overflow-hidden",
-          hasCustomBackground && "bg-transparent backdrop-blur-sm"
+          hasCustomBackground && "bg-transparent backdrop-blur-sm",
+          drawerOpen && "pointer-events-none"
         )}
+        // The strip's upper card: a gap all round on a desktop, and pulled up
+        // it slides up with the chat. (See `--chat-pull` in globals.css.)
+        data-chat-strip="page"
+        data-bar-away={barAway || focusMode || undefined}
+        style={{ "--chat-pull": drawerOpen ? 1 : 0 } as CSSProperties}
       >
-        {!focusMode && (
-        <header className="relative z-10 mb-1 flex h-14 shrink-0 items-center gap-2 border-b px-3 md:h-16 md:px-4">
-          <SidebarTrigger className="-ml-1" />
-          <div className="h-4 w-[1px] mx-2 bg-border" />
-          <div className="flex-1 min-w-0 flex items-center gap-2">
-            <TopbarSlotRenderer fallback={<DefaultTopbar />} />
-          </div>
-        </header>
-        )}
-
         {/* Mobile Info Banner */}
         {sidebarMobile && !preferences.docs_banner_dismissed && (
           <div className="relative mx-3 mb-2 flex-none sm:hidden">
@@ -229,7 +291,7 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
             to know the rail is there. */}
         {!focusMode && <BottomRail />}
       </SidebarInset>
-    </TopbarSlotProvider>
+    </>
   );
 }
 
@@ -238,6 +300,13 @@ export default function HQLayout({ children }: { children: React.ReactNode }) {
   // Focus mode strips every piece of chrome, the rail included — so the
   // reservation it publishes has to go to zero with it.
   const focusMode = useAnnotationRunStore((s) => s.focusMode);
+  // The canvas the page and the chat sit on shows between them; a wallpaper,
+  // when there is one, is that canvas.
+  const wallpaper = useUserPreferencesStore((s) => !!(
+    s.preferences.custom_background_url ||
+    s.preferences.custom_background_url_light ||
+    s.preferences.custom_background_url_dark
+  ));
   const activeInfospace = useInfospaceStore.getState().activeInfospace;
   const router = useRouter();
   const [isClient, setIsClient] = useState(false);
@@ -278,7 +347,7 @@ export default function HQLayout({ children }: { children: React.ReactNode }) {
       <div
         data-app-shell
         data-rail={focusMode ? 'off' : 'on'}
-        className="h-dvh w-full flex flex-col md:flex-row overflow-hidden"
+        className={cn("h-dvh w-full flex flex-col overflow-hidden", !wallpaper && "bg-[var(--strip-canvas)]")}
       >
         <CommandRegistryBridge />
         <ActiveObservations />

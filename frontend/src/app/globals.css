@@ -881,6 +881,87 @@ html:has([data-app-shell]) body {
    single breakpoint at the call site. */
 [data-app-shell] { --app-rail: 0px; }
 
+/* ── The page and the chat: cards on a canvas ──────────────────────────────
+   On a desktop the page is a card on the canvas — the same gap all round as
+   the navigation bar leaves above it, and rounded corners — and the chat is
+   the next card down, the same width, the same corners, out of view below
+   it. Scrolling past the end of the page moves the strip to it, the way a
+   scrolling tiler moves between windows: nothing floats, nothing casts a
+   shadow, nothing blurs; the strip moves and the canvas shows between its
+   cards. On a phone the page stays edge to edge (the rail is there), and in
+   focus mode there is no chrome at all, cards included.
+
+   Pulled up, the chat leaves the top sixth of the screen to the page — the
+   peek. The page slides up with it, but the peek shows it from
+   `--drawer-overlap` above its end rather than its last stretch, which is
+   usually empty; the part below is clipped, so they still read as two cards
+   a gap apart, never one laid over the other. */
+[data-app-shell] {
+  --drawer-peek: calc(100dvh / 6);
+  --drawer-overlap: 15%;
+  --strip-gap: 0.5rem;
+  --strip-radius: 0.75rem;
+  /* The page's margin and corners: zero where it is not a card. */
+  --card-gap: 0px;
+  --card-radius: 0px;
+}
+
+@media (min-width: 768px) {
+  [data-app-shell][data-rail="on"] {
+    --card-gap: var(--strip-gap);
+    --card-radius: var(--strip-radius);
+    --app-rail: var(--card-gap);
+  }
+}
+
+/* Where along the strip you are: one number on every part of it, 0 resting,
+   1 pulled up (`hooks/useChatStrip.ts` follows the hand with it). Registered
+   so it can transition, which lets each part derive its own motion from it
+   and still move as one — and not inherited, so moving it restyles three
+   elements, not the page's whole subtree. */
+@property --chat-pull { syntax: '<number>'; inherits: false; initial-value: 0; }
+
+[data-chat-strip] {
+  transition: --chat-pull var(--chat-pull-ms, 420ms) cubic-bezier(0.16, 1, 0.3, 1);
+}
+[data-chat-strip][data-following] { transition: none; }
+
+/* The page card. Its top gap is the bar's while the bar is there. */
+[data-chat-strip="page"] {
+  width: auto;
+  margin: 0 var(--card-gap) var(--card-gap);
+  border-radius: var(--card-radius);
+  transition: --chat-pull var(--chat-pull-ms, 420ms) cubic-bezier(0.16, 1, 0.3, 1), margin-top 200ms ease-out;
+}
+[data-chat-strip="page"][data-bar-away] { margin-top: var(--card-gap); }
+
+/* Away from rest — the bar is gone by then — the page slides up by
+   `pull × (peek + overlap − 100%)` and is clipped a gap above the chat's top
+   edge, wherever that is on its way. Clipping makes no containing block, so
+   `fixed` things inside stay put; the transform does, so it is only applied
+   while away. */
+[data-chat-strip="page"][data-chat-moved] {
+  --pull-shift: calc(var(--chat-pull) * (var(--drawer-peek) + var(--drawer-overlap) - 100%));
+  --chat-top: calc(var(--drawer-peek) + var(--card-gap) + (1 - var(--chat-pull)) * (100dvh - var(--drawer-peek)));
+  translate: 0 var(--pull-shift);
+  clip-path: inset(0 0 max(0px, calc(100% - var(--chat-top) + 2 * var(--card-gap) + var(--pull-shift))) 0 round 0 0 var(--strip-radius) var(--strip-radius));
+}
+
+/* The chat card: the page's margins and corners, so their edges line up.
+   Resting, it sits exactly one screen below where it is pulled up to. */
+[data-chat-strip="window"] {
+  inset: calc(var(--drawer-peek) + var(--card-gap)) var(--card-gap) var(--card-gap);
+  border-radius: var(--strip-radius) var(--strip-radius) var(--card-radius) var(--card-radius);
+  translate: 0 calc((1 - var(--chat-pull)) * (100% + 2 * var(--card-gap)));
+}
+/* Over the peek, the page steps back a little as the chat comes forward. */
+[data-chat-strip="peek"] { opacity: min(1, var(--chat-pull)); }
+
+/* The canvas the cards sit on, seen in the gaps. A wallpaper, when set, is
+   the canvas instead. */
+:root { --strip-canvas: color-mix(in oklab, var(--background), black 8%); }
+.dark { --strip-canvas: color-mix(in oklab, var(--background), black 45%); }
+
 @media (max-width: 767px) {
   [data-app-shell][data-rail="on"] {
     --app-rail: calc(3.5rem + env(safe-area-inset-bottom));
@@ -934,3 +1015,22 @@ html:has([data-app-shell]) body {
   backdrop-filter: blur(24px) saturate(1.5);
   box-shadow: none;
 }
+/* ── Plane labels ──────────────────────────────────────────────────────────
+   Names over the GPU graph (`graph/plane/PlaneLabels`). Positioned per frame by
+   transform, so nothing here may animate position. The halo is the graph's own
+   label token, so labels read over the plane on either theme — and over a map
+   when the plane sits on one. */
+.plane-labels .plane-label {
+  position: absolute;
+  left: 0;
+  top: 0;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 14px;
+  letter-spacing: -0.01em;
+  color: var(--graph-node-label);
+  text-shadow: 0 0 3px var(--graph-label-halo), 0 0 1px var(--graph-label-halo);
+  will-change: transform;
+}
+.plane-labels .plane-label[data-emphasis="2"] { font-weight: 500; }
+.plane-labels .plane-label[data-emphasis="1"] { font-weight: 600; font-size: 12.5px; }

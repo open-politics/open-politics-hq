@@ -473,3 +473,39 @@ export function HudMeter({
     </span>
   );
 }
+
+/**
+ * Whether a canvas is following its source. `live` pulses: the stream is open
+ * and the next commit will repaint. `settled` is a reading that can no longer
+ * change; `offline` a stream that dropped and is retrying.
+ */
+export function HudLiveDot({ status, live }: { status: string; live: boolean }) {
+  const following = status === 'live';
+  const label = status === 'error' ? 'offline' : following ? (live ? 'live' : 'following') : status === 'ready' ? 'settled' : 'loading';
+  return (
+    <span className={cn(HUD_NUM, 'flex items-center gap-1.5 text-hud-dimmer')}>
+      <span
+        aria-hidden
+        className={cn(
+          'size-1.5 rounded-full',
+          following ? 'bg-hud-fg animate-pulse' : status === 'error' ? 'bg-rose-500' : 'bg-hud-line-strong',
+        )}
+      />
+      {label}
+    </span>
+  );
+}
+
+/** One line of a stats card: a caps label, a right-aligned number, and a meter
+ *  when the number is a share. */
+export function HudStat({ label, value, meter }: { label: string; value: string; meter?: number }) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <span className={cn(HUD_LABEL, 'text-hud-dimmer')}>{label}</span>
+      <span className="flex items-center gap-2">
+        {meter != null && <HudMeter value={meter} />}
+        <span className={cn(HUD_NUM, 'text-hud-fg')}>{value}</span>
+      </span>
+    </div>
+  );
+}

@@ -23,6 +23,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   useSidebar,
+  useSidebarSide,
 } from "@/components/ui/sidebar"
 import useAuth from "@/hooks/useAuth"
 import { useState, useEffect } from 'react'
@@ -42,6 +43,7 @@ export interface NavUserProps {
 
 export function NavUser({ user }: NavUserProps) {
   const { isMobile } = useSidebar()
+  const sidebarSide = useSidebarSide()
   const { logout } = useAuth()
   const [opacity, setOpacity] = useState(1)
 
@@ -86,7 +88,7 @@ export function NavUser({ user }: NavUserProps) {
           </DropdownMenuTrigger>
           <DropdownMenuContent
             className="w-64 bg-sidebar text-sidebar-foreground border border-sidebar-border"
-            side={isMobile ? "bottom" : "right"}
+            side={isMobile || sidebarSide === "top" ? "bottom" : "right"}
             align="end"
           >
             <DropdownMenuLabel>My Account</DropdownMenuLabel>

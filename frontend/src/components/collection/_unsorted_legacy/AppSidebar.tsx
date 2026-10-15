@@ -234,7 +234,7 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
           The remaining taxonomy (Tools / Stores / Sharing / Settings) is left
           alone deliberately: three of those still head a single item, but which
           way they should merge is a product call, not a layout one. */}
-      <SidebarContent className="flex flex-col">
+      <SidebarContent>
         <NavMain items={navMain} />
         <NavMain title="Inquire" items={inquireNav} />
         <NavMain title="Tools" items={toolsNav} />
@@ -244,7 +244,7 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
         {/* {user?.is_superuser && (
           <NavProjects projects={projects} />
         )} */}
-        <SidebarGroup className="mt-auto">
+        <SidebarGroup className="mt-auto group-data-[side=top]:mt-0 group-data-[side=top]:ml-auto">
           <SidebarGroupLabel>Links</SidebarGroupLabel>
           <SidebarMenu>
             {links.map((link) => (
@@ -269,7 +269,7 @@ export function AppSidebar({ ...props }: AppSidebarProps) {
             ))}
             
           </SidebarMenu>
-          <SidebarMenu className="mt-2">
+          <SidebarMenu className="mt-2 group-data-[side=top]:mt-0">
             <SidebarGroupLabel>Theme</SidebarGroupLabel>
             <SidebarMenuItem>
               <ModeSwitcher />
