@@ -48,6 +48,10 @@ export function useGeocodedEntities(args: {
   runId: number | null | undefined;
   fieldPath: string | null | undefined;
   enabled?: boolean;
+  /** Ask for boundary polygons too. Only for a map that draws areas — a
+   *  country's polygon alone can be megabytes, and a run's worth of them was
+   *  enough to run the API server out of memory. */
+  geometry?: boolean;
 }): {
   entities: GeocodedEntity[];
   isLoading: boolean;
@@ -59,7 +63,7 @@ export function useGeocodedEntities(args: {
    *  race window. */
   refetch: () => Promise<void>;
 } {
-  const { infospaceId, runId, fieldPath, enabled = true } = args;
+  const { infospaceId, runId, fieldPath, enabled = true, geometry = false } = args;
   const [entities, setEntities] = useState<GeocodedEntity[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -67,8 +71,8 @@ export function useGeocodedEntities(args: {
   // ``refetch`` reads from the same scope as the current effect run.
   // Stash a ref so the returned callback always sees the latest args
   // without making the consumer re-pass them every call.
-  const lastArgsRef = useRef({ infospaceId, runId, fieldPath, enabled });
-  lastArgsRef.current = { infospaceId, runId, fieldPath, enabled };
+  const lastArgsRef = useRef({ infospaceId, runId, fieldPath, enabled, geometry });
+  lastArgsRef.current = { infospaceId, runId, fieldPath, enabled, geometry };
 
   const fetchOnce = useCallback(async () => {
     const cur = lastArgsRef.current;
@@ -85,6 +89,7 @@ export function useGeocodedEntities(args: {
         infospaceId: cur.infospaceId,
         runId: cur.runId,
         fieldPath: cur.fieldPath,
+        geometry: cur.geometry,
       });
       // eslint-disable-next-line no-console
       console.log('[useGeocodedEntities] response', {
@@ -115,7 +120,7 @@ export function useGeocodedEntities(args: {
       cancelled = true;
       void cancelled;
     };
-  }, [enabled, infospaceId, runId, fieldPath, fetchOnce]);
+  }, [enabled, infospaceId, runId, fieldPath, geometry, fetchOnce]);
 
   return { entities, isLoading, error, refetch: fetchOnce };
 }

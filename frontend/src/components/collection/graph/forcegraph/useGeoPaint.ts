@@ -37,6 +37,7 @@ import {
 } from './anchors';
 import type { GraphNode, GraphViewConfig } from '../graphTypes';
 import type { ThemeTokens } from './resolveNodeStyle';
+import { loadCountries } from '@/lib/geo/world';
 
 export type GeoPainter = (ctx: CanvasRenderingContext2D, globalScale: number) => void;
 
@@ -57,42 +58,24 @@ let worldPromise: Promise<Ring[]> | null = null;
 function loadWorld(): Promise<Ring[]> {
   if (worldRings) return Promise.resolve(worldRings);
   if (!worldPromise) {
-    // Natural Earth 110m via world-atlas (ISC; the data itself is public
-    // domain). Replaces amCharts geodata, which cost 344MB and ships under a
-    // linkware licence requiring a visible branding link on anything it
-    // renders - an obligation this underlay never met.
-    // Both imports stay dynamic, so the map is still fetched lazily and once.
-    worldPromise = Promise.all([
-      import('world-atlas/countries-110m.json'),
-      import('topojson-client'),
-    ])
-      .then(([topoMod, { feature }]) => {
-        const topo: any = (topoMod as any).default ?? topoMod;
-        // TopoJSON -> GeoJSON. `objects.countries` is a GeometryCollection, so
-        // feature() yields a FeatureCollection and the walk below is unchanged.
-        const fc: any = feature(topo, topo.objects.countries);
-        const rings: Ring[] = [];
-        for (const f of fc.features ?? []) {
-          const g = f.geometry;
-          if (!g) continue;
-          const polys = g.type === 'Polygon' ? [g.coordinates]
-            : g.type === 'MultiPolygon' ? g.coordinates
-            : [];
-          for (const poly of polys) {
-            // Outer ring only. Holes (lakes, enclaves) cost geometry for
-            // detail nobody reads at graph zoom.
-            const outer = poly?.[0];
-            if (Array.isArray(outer) && outer.length > 2) rings.push(outer as Ring);
-          }
+    worldPromise = loadCountries().then((fc) => {
+      const rings: Ring[] = [];
+      for (const f of fc.features ?? []) {
+        const g: any = f.geometry;
+        if (!g) continue;
+        const polys = g.type === 'Polygon' ? [g.coordinates]
+          : g.type === 'MultiPolygon' ? g.coordinates
+          : [];
+        for (const poly of polys) {
+          // Outer ring only. Holes (lakes, enclaves) cost geometry for
+          // detail nobody reads at graph zoom.
+          const outer = poly?.[0];
+          if (Array.isArray(outer) && outer.length > 2) rings.push(outer as Ring);
         }
-        worldRings = rings;
-        return rings;
-      })
-      .catch(() => {
-        // A missing map must never take the graph down with it.
-        worldRings = [];
-        return [];
-      });
+      }
+      worldRings = rings;
+      return rings;
+    });
   }
   return worldPromise;
 }
