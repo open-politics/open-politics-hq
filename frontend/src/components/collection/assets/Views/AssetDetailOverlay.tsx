@@ -20,6 +20,9 @@ import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { searchInAnnotationValue } from '@/lib/annotations/search';
 import { useAssetDetail } from './AssetDetailContext';
+import { useAssetRunResults } from '@/lib/annotations/ledger';
+
+const EMPTY: FormattedAnnotation[] = [];
 
 interface AssetDetailOverlayProps {
   open: boolean;
@@ -28,7 +31,8 @@ interface AssetDetailOverlayProps {
   highlightAssetIdOnOpen: number | null;
   onLoadIntoRunner?: (runId: number, runName: string) => void;
   onOpenManagerRequest?: () => void;
-  // NEW: Optional annotation results to display alongside the asset
+  /** Annotation results to show beside the asset. Left out, with an
+   *  `activeRunId`, the overlay fetches the asset's results in that run. */
   annotationResults?: FormattedAnnotation[];
   schemas?: AnnotationSchemaRead[];
   // NEW: Optional run ID to filter results by current run only
@@ -42,7 +46,7 @@ export default function AssetDetailOverlay({
   highlightAssetIdOnOpen,
   onLoadIntoRunner,
   onOpenManagerRequest,
-  annotationResults = [],
+  annotationResults: givenResults,
   schemas = [],
   activeRunId = null
 }: AssetDetailOverlayProps) {
@@ -52,6 +56,15 @@ export default function AssetDetailOverlay({
   const [dataFetched, setDataFetched] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const { getAssetById } = useAssetStore();
+  // Only this asset's, only when open — never the whole run.
+  const fetchedResults = useAssetRunResults(
+    open && !givenResults ? assetId : null,
+    activeRunId,
+    activeInfospace?.id,
+  );
+  // Fetched results are this asset's already, its children's included.
+  const fetched = !givenResults;
+  const annotationResults = givenResults ?? fetchedResults ?? EMPTY;
   const [asset, setAsset] = useState<AssetRead | null>(null);
   
   // Mobile: track which panel is visible (asset or annotations)
@@ -167,7 +180,7 @@ export default function AssetDetailOverlay({
     }
     
     let filtered = annotationResults.filter(result => {
-      const matchesAsset = result.asset_id === assetId;
+      const matchesAsset = fetched || result.asset_id === assetId;
       // If activeRunId is provided, also filter by run_id (use Number() to handle type mismatches)
       const matchesRun = !activeRunId || Number(result.run_id) === Number(activeRunId);
       return matchesAsset && matchesRun;
@@ -191,18 +204,18 @@ export default function AssetDetailOverlay({
     }
     
     return filtered;
-  }, [assetId, annotationResults, activeRunId, overlaySearchTerm]);
+  }, [assetId, annotationResults, activeRunId, overlaySearchTerm, fetched]);
 
   // Count results before search filtering (for panel visibility)
   const resultsBeforeSearch = useMemo(() => {
     if (!assetId || !annotationResults) return 0;
     return annotationResults.filter(result => {
-      const matchesAsset = result.asset_id === assetId;
+      const matchesAsset = fetched || result.asset_id === assetId;
       // Use Number() to handle type mismatches
       const matchesRun = !activeRunId || Number(result.run_id) === Number(activeRunId);
       return matchesAsset && matchesRun;
     }).length;
-  }, [assetId, annotationResults, activeRunId]);
+  }, [assetId, annotationResults, activeRunId, fetched]);
 
   // Check if we should show the annotations panel (based on pre-search results, not post-search)
   const showAnnotations = resultsBeforeSearch > 0 && schemas.length > 0;
@@ -291,7 +304,7 @@ export default function AssetDetailOverlay({
                   <h3 className="font-semibold text-xs sm:text-sm">Annotation Results</h3>
                   <p className="text-[10px] sm:text-xs text-muted-foreground mt-0.5">
                     {overlaySearchTerm && overlaySearchTerm.trim().length > 0
-                      ? `${assetResults.length} of ${annotationResults.filter(r => r.asset_id === assetId && (!activeRunId || r.run_id === activeRunId)).length} result${assetResults.length !== 1 ? 's' : ''} match${assetResults.length !== 1 ? '' : 'es'} search`
+                      ? `${assetResults.length} of ${resultsBeforeSearch} result${assetResults.length !== 1 ? 's' : ''} match${assetResults.length !== 1 ? '' : 'es'} search`
                       : `${assetResults.length} result${assetResults.length !== 1 ? 's' : ''} for this asset`}
                   </p>
                 </div>

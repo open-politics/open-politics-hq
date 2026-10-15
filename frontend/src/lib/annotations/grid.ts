@@ -43,31 +43,29 @@ export const heightUnits = (px: number, rowHeight: number): number =>
   Math.max(1, Math.round(px / rowHeight));
 
 // --- Quick sizes (the Panel Layout popover) ---
-// Calibrated so they reproduce the historical 4×3 / 6×4 / 8×5 / 12×6 presets
-// exactly at the legacy 12 × 150px geometry, and scale cleanly past it.
+// Widths, as a share of the page: a panel is a column of the dashboard strip,
+// and its height is its share of that column (see lib/annotations/strip).
 const SIZE_PRESETS = {
-  small: { wFrac: 1 / 3, px: 450 },
-  medium: { wFrac: 1 / 2, px: 600 },
-  large: { wFrac: 2 / 3, px: 750 },
-  full: { wFrac: 1, px: 900 },
+  small: { wFrac: 1 / 3, label: '⅓' },
+  medium: { wFrac: 1 / 2, label: '½' },
+  large: { wFrac: 2 / 3, label: '⅔' },
+  full: { wFrac: 1, label: 'full' },
 } as const;
 export type QuickSize = keyof typeof SIZE_PRESETS;
 
-export const quickSize = (size: QuickSize, geo: GridGeometry): { w: number; h: number } => {
-  const p = SIZE_PRESETS[size];
-  return { w: widthUnits(p.wFrac, geo.columns), h: heightUnits(p.px, geo.rowHeight) };
-};
+/** A quick size's width in grid columns at the active geometry. */
+export const quickWidth = (size: QuickSize, geo: GridGeometry): number =>
+  widthUnits(SIZE_PRESETS[size].wFrac, geo.columns);
 
-/** Label for a quick-size button, e.g. "Small (8×6)" at the active geometry. */
-export const quickSizeLabel = (size: QuickSize, geo: GridGeometry): string => {
-  const { w, h } = quickSize(size, geo);
-  return `${size[0].toUpperCase()}${size.slice(1)} (${w}×${h})`;
-};
+/** Label for a quick-size button, e.g. "Small · ⅓". */
+export const quickSizeLabel = (size: QuickSize): string =>
+  `${size[0].toUpperCase()}${size.slice(1)} · ${SIZE_PRESETS[size].label}`;
 
 // --- Per-type default footprint (addPanel) ---
 // Matches the old absolute defaults at the legacy geometry, fraction/px-based
 // so a finer grid yields proportionally larger unit counts (same visual size).
 const TYPE_DEFAULTS: Record<string, { wFrac: number; px: number }> = {
+  overview: { wFrac: 1, px: 760 }, // the front door: full width, map-tall
   table: { wFrac: 1, px: 900 }, // 12×6 legacy
   chart: { wFrac: 2 / 3, px: 750 }, // 8×5
   pie: { wFrac: 1 / 2, px: 600 }, // 6×4
@@ -102,44 +100,4 @@ export const upgradeLayoutGeometry = (config: { layout?: any; panels?: any[] } |
     gp.h = Math.max(1, Math.round((gp.h || 1) * sy));
   });
   config.layout = { type: 'grid', columns: DEFAULT_GRID_COLUMNS, rowHeight: DEFAULT_ROW_HEIGHT };
-};
-
-// --- First-fit packing ---
-// Places each {w,h} in array order at the topmost-leftmost free slot. Shared by
-// the randomizer and any caller that needs to lay out a fresh set of sizes.
-export const packByOrder = (
-  items: { w: number; h: number }[],
-  columns: number,
-): { x: number; y: number }[] => {
-  const grid: boolean[][] = [];
-  const fits = (x: number, y: number, w: number, h: number): boolean => {
-    for (let r = y; r < y + h; r++) {
-      if (!grid[r]) grid[r] = new Array(columns).fill(false);
-      for (let c = x; c < x + w; c++) {
-        if (c >= columns || grid[r][c]) return false;
-      }
-    }
-    return true;
-  };
-  const mark = (x: number, y: number, w: number, h: number): void => {
-    for (let r = y; r < y + h; r++) {
-      if (!grid[r]) grid[r] = new Array(columns).fill(false);
-      for (let c = x; c < x + w; c++) {
-        if (c < columns) grid[r][c] = true;
-      }
-    }
-  };
-  return items.map(({ w, h }) => {
-    const ww = Math.max(1, Math.min(columns, w));
-    const hh = Math.max(1, h);
-    for (let y = 0; y < 1000; y++) {
-      for (let x = 0; x <= columns - ww; x++) {
-        if (fits(x, y, ww, hh)) {
-          mark(x, y, ww, hh);
-          return { x, y };
-        }
-      }
-    }
-    return { x: 0, y: grid.length };
-  });
 };

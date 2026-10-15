@@ -1111,7 +1111,7 @@ const WebContent = ({ asset, hasChildren, childAssets, setActiveTab, handleChild
 
           {/* Article Metadata */}
           <div className="mt-8 pt-6 border-t w-full min-w-0 max-w-full overflow-hidden">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm w-full min-w-0 max-w-full">
+            <div className="grid grid-cols-1 @3xl:grid-cols-2 gap-4 text-sm w-full min-w-0 max-w-full">
               
               {/* Basic Info */}
               <div className="space-y-2">
@@ -1550,7 +1550,7 @@ const DefaultAssetContent = ({ asset, renderTextDisplay, suppressTextBody = fals
           </div>
 
           {/* Image Grid */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-4 gap-4">
             {imageAssets.map((imageAsset, index) => (
               <Card
                 key={imageAsset.id}
@@ -1655,7 +1655,7 @@ const DefaultAssetContent = ({ asset, renderTextDisplay, suppressTextBody = fals
                 </div>
                 
                 {/* Image Details */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                <div className="grid grid-cols-1 @3xl:grid-cols-2 gap-4 text-sm">
                   <div>
                     <strong>ID:</strong> {selectedChildAsset.id}
                   </div>
@@ -1993,8 +1993,10 @@ const DefaultAssetContent = ({ asset, renderTextDisplay, suppressTextBody = fals
     );
   };
 
+  // A container, so its grids lay out for the room it is given — a strip
+  // column or an overlay — not for the screen.
   return (
-    <div className="asset-detail-view flex h-full min-h-0 w-full max-w-full flex-col overflow-hidden">
+    <div className="asset-detail-view @container flex h-full min-h-0 w-full max-w-full flex-col overflow-hidden">
       {isLoadingAsset ? (
         <div className="flex items-center justify-center h-full mt-10">
           <Loader2 className="h-6 w-6 animate-spin mr-2" />

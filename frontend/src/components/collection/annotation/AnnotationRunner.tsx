@@ -1,6 +1,10 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useShallow } from 'zustand/react/shallow';
+import { RunStrip, scrollToRunColumn } from './strip/RunStrip';
+import type { RunLedger } from '@/lib/annotations/ledger';
+import { columnWidth, heightOf, stripColumns } from '@/lib/annotations/strip';
 import {
   Card,
   CardHeader,
@@ -87,110 +91,15 @@ import { nanoid } from 'nanoid';
 export type FilterLogicMode = 'and' | 'or';
 
 // Helper function to get asset icon
-const getAssetIcon = (kind: string) => {
-  switch (kind) {
-    case 'pdf':
-      return <FileText className="w-4 h-4" />;
-    case 'csv':
-      return <TableIcon className="w-4 h-4" />;
-    case 'image':
-      return <ImageIcon className="w-4 h-4" />;
-    case 'video':
-      return <Video className="w-4 h-4" />;
-    case 'audio':
-      return <Music className="w-4 h-4" />;
-    case 'web':
-    case 'article':
-      return <Globe className="w-4 h-4" />;
-    case 'text':
-    case 'text_chunk':
-      return <Type className="w-4 h-4" />;
-    case 'email':
-    case 'mbox':
-      return <Mail className="w-4 h-4" />;
-    default:
-      return <FileText className="w-4 h-4" />;
-  }
-};
-
-// Simple asset list component for the runner
-interface RunAssetListProps {
-  assets: AssetRead[];
-  onAssetView: (asset: AssetRead) => void;
-}
-
-const RunAssetList: React.FC<RunAssetListProps> = ({ assets, onAssetView }) => {
-  return (
-    <div className="space-y-3">
-      {assets.map((asset) => (
-        <Card key={asset.id} className="p-4 border border-green-200 dark:border-green-800 bg-green-50/20 dark:bg-green-950/10 hover:bg-green-100/30 dark:hover:bg-green-900/20 transition-colors">
-          <div className="flex items-start justify-between">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="p-1.5 rounded-md bg-green-500/20 dark:bg-green-500/20 text-green-700 dark:text-green-400">
-                  {getAssetIcon(asset.kind)}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-semibold text-base truncate text-gray-900 dark:text-gray-100">
-                    {asset.title || `Asset ${asset.id}`}
-                  </h3>
-                  <div className="flex items-center gap-2 mt-1">
-                    <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200 dark:bg-green-950/20 dark:text-green-400 dark:border-green-800 text-xs">
-                      {asset.kind.replace('_', ' ').toUpperCase()}
-                    </Badge>
-                    <span className="text-xs text-gray-500 dark:text-gray-500">
-                      ID: {asset.id}
-                    </span>
-                  </div>
-                </div>
-              </div>
-              
-              {asset.text_content && (
-                <p className="text-sm text-gray-600 dark:text-gray-400 mt-2 line-clamp-2">
-                  {asset.text_content.substring(0, 200)}...
-                </p>
-              )}
-              
-              <div className="flex items-center gap-4 mt-3 text-xs text-gray-500 dark:text-gray-500">
-                <span>Created: {format(new Date(asset.created_at), 'MMM d, yyyy')}</span>
-                {asset.updated_at && asset.updated_at !== asset.created_at && (
-                  <span>Updated: {format(new Date(asset.updated_at), 'MMM d, yyyy')}</span>
-                )}
-                {(() => {
-                  const fn = asset.file_info?.filename ?? asset.file_info?.original_filename;
-                  return typeof fn === 'string' ? <span>File: {fn}</span> : null;
-                })()}
-              </div>
-            </div>
-            
-            <div className="flex gap-2 ml-4">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onAssetView(asset)}
-                className="border-green-200 dark:border-green-800 bg-green-50/20 dark:bg-green-950/10 text-green-700 dark:text-green-400 hover:bg-green-100/50 dark:hover:bg-green-900/20"
-              >
-                <Eye className="w-4 h-4 mr-1" />
-                View Details
-              </Button>
-            </div>
-          </div>
-        </Card>
-      ))}
-    </div>
-  );
-};
-
 interface AnnotationRunnerProps {
   allRuns: AnnotationRunRead[];
   isLoadingRuns: boolean;
   onSelectRun: (runId: number) => void;
   allSchemas: AnnotationSchemaRead[];
-  allSources: { id: number; name: string }[];
   activeRun: AnnotationRunRead | null;
   isProcessing: boolean;
-  results: FormattedAnnotation[];
-  assets: AssetRead[];
+  /** Where the run's scope stands, as counts (see `lib/annotations/ledger`). */
+  ledger: RunLedger;
   onClearRun: () => void;
   onRunWithNewAssets: (template: { schemaIds: number[], config: any, assetIds: number[] }) => void;
   onRetrySingleResult?: (resultId: number, customPrompt?: string) => Promise<AnnotationRead | null>;
@@ -203,11 +112,9 @@ export default function AnnotationRunner({
   isLoadingRuns,
   onSelectRun,
   allSchemas,
-  allSources,
   activeRun,
   isProcessing: isProcessingProp,
-  results: currentRunResults,
-  assets: currentRunAssets,
+  ledger,
   onClearRun,
   onRunWithNewAssets,
   onRetrySingleResult: onRetrySingleResultProp,
@@ -234,23 +141,39 @@ export default function AnnotationRunner({
   const isActuallyProcessing = isProcessingProp || isRetryingJob;
 
   // State managed by Zustand now
+  // Field by field, so a store change this component does not read (a poll
+  // landing on another slice) does not re-render it and every panel below.
   const {
     dashboardConfig,
     isDashboardDirty,
-    setDashboardConfig,
     updateDashboardConfig,
     addPanel,
     updatePanel,
     removePanel,
     compactLayout,
     randomizeLayout,
-    setDashboardDirty,
     saveDashboardToBackend,
     setActiveRun,
     addScope,
     focusMode,
     toggleFocusMode,
-  } = useAnnotationRunStore();
+  } = useAnnotationRunStore(
+    useShallow((s) => ({
+      dashboardConfig: s.dashboardConfig,
+      isDashboardDirty: s.isDashboardDirty,
+      updateDashboardConfig: s.updateDashboardConfig,
+      addPanel: s.addPanel,
+      updatePanel: s.updatePanel,
+      removePanel: s.removePanel,
+      compactLayout: s.compactLayout,
+      randomizeLayout: s.randomizeLayout,
+      saveDashboardToBackend: s.saveDashboardToBackend,
+      setActiveRun: s.setActiveRun,
+      addScope: s.addScope,
+      focusMode: s.focusMode,
+      toggleFocusMode: s.toggleFocusMode,
+    })),
+  );
   
   const { activeInfospace } = useInfospaceStore();
 
@@ -258,6 +181,29 @@ export default function AnnotationRunner({
   // CSS grid track count, row height, and every per-panel position clamp below.
   // Legacy dashboards resolve to 12 × 150px; new ones to the finer default.
   const gridGeo = resolveGridGeometry(dashboardConfig?.layout);
+
+  // The page is one strip, read left to right (`strip/RunStrip`): sources,
+  // assets, an asset up close, the run, then its panels.
+  const isRunColumnPinned = useAnnotationRunStore((s) => s.runColumnPinned);
+  const sourcesOpen = useAnnotationRunStore((s) => s.runSourcesOpen);
+  const setSourcesOpen = useAnnotationRunStore((s) => s.setRunSourcesOpen);
+  const [detailAssetId, setDetailAssetId] = useState<number | null>(null);
+  // Narrow, the assets stack above the run, and only when asked for.
+  const [narrowAssetsOpen, setNarrowAssetsOpen] = useState(false);
+  useEffect(() => {
+    setDetailAssetId(null);
+    setNarrowAssetsOpen(false);
+  }, [activeRun?.id]);
+  // To the last column, whichever element is doing the scrolling — the strip
+  // when wide, the panels' own row when narrow.
+  const jumpToEnd = useCallback(() => {
+    const columns = document.querySelectorAll('[data-panel-strip] [data-strip-column]');
+    columns[columns.length - 1]?.scrollIntoView({ behavior: 'smooth', inline: 'end', block: 'nearest' });
+  }, []);
+  const showAssets = useCallback(() => {
+    setNarrowAssetsOpen(true);
+    scrollToRunColumn('assets');
+  }, []);
 
   // Initialize dashboard config when activeRun changes
   useEffect(() => {
@@ -382,29 +328,24 @@ export default function AnnotationRunner({
     },
   }, { enabled: !!dashboardConfig });
 
-  // Auto-add initial table panel as soon as any rows land — no need to wait
-  // for terminal status. Panels self-refresh via polling + per-row commits,
-  // so seeing data progressively is the expected UX.
+  // Every run opens on its overview — where, when and who, read from buckets,
+  // so it is fast at any size and fills live as rows land. Added as soon as
+  // the first row exists; nothing to configure.
   useEffect(() => {
     if (activeRun &&
         dashboardConfig &&
         (!dashboardConfig.panels || dashboardConfig.panels.length === 0) &&
-        currentRunResults.length > 0) {
-
-      const initialTablePanel = {
-        type: 'table' as const,
-        name: 'Results Table',
-        description: 'Complete annotation results in tabular format',
+        (ledger.summary?.annotations ?? 0) > 0) {
+      addPanel({
+        type: 'overview',
+        name: 'Overview',
+        description: 'Where, when and who — the run at a glance',
         settings: {},
-      };
-
-      console.log('Auto-adding initial table panel for run:', activeRun.id, 'status:', activeRun.status);
-      addPanel(initialTablePanel);
+      });
     }
-  }, [activeRun, dashboardConfig, currentRunResults, addPanel]);
+  }, [activeRun, dashboardConfig, ledger.summary?.annotations, addPanel]);
 
   const [isSchemesCollapsed, setIsSchemesCollapsed] = useState(false);
-  const [isSourceStatsOpen, setIsSourceStatsOpen] = useState(false);
   // Ctrl+P quick panel picker (keyboard-navigable).
   const [isPanelPickerOpen, setIsPanelPickerOpen] = useState(false);
   const [isAssetSelectorOpen, setIsAssetSelectorOpen] = useState(false);
@@ -577,7 +518,6 @@ export default function AnnotationRunner({
 
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isSchemasDialogOpen, setIsSchemasDialogOpen] = useState(false);
-  const [isAssetsDialogOpen, setIsAssetsDialogOpen] = useState(false);
   // Extension flow — adding assets / schemas to the active run.
   const [isExtendSchemasOpen, setIsExtendSchemasOpen] = useState(false);
   const [extendSelectedSchemaIds, setExtendSelectedSchemaIds] = useState<number[]>([]);
@@ -600,19 +540,15 @@ export default function AnnotationRunner({
     allSchemas.filter(s => !parentExistingSchemaIds.includes(s.id))
   ), [allSchemas, parentExistingSchemaIds]);
   
+  // Keyed on the ids, not the run: the run is a new object on every bit of
+  // progress, and every panel memoizes on this list.
+  const runSchemeIds: number[] =
+    (activeRun as any)?.schema_ids || (activeRun?.configuration as any)?.schema_ids || (activeRun as any)?.target_schema_ids || [];
+  const runSchemeKey = runSchemeIds.join(',');
   const runSchemes = useMemo(() => {
-    const config = activeRun?.configuration as any;
-    const schemeIds = (activeRun as any)?.schema_ids || config?.schema_ids || (activeRun as any)?.target_schema_ids || [];
-    if (!schemeIds || schemeIds.length === 0) return [];
-    const filtered = allSchemas.filter(s => schemeIds.includes(s.id));
-    console.log('[AnnotationRunner] runSchemes computed', {
-      activeRunId: activeRun?.id,
-      schemeIds,
-      allSchemasCount: allSchemas.length,
-      filteredCount: filtered.length
-    });
-    return filtered;
-  }, [activeRun, allSchemas]);
+    const ids = new Set(runSchemeKey ? runSchemeKey.split(',').map(Number) : []);
+    return allSchemas.filter((s) => ids.has(s.id));
+  }, [runSchemeKey, allSchemas]);
 
   // Handle field interactions from charts/visualizations - now just shows the asset
   const handleFieldInteraction = useCallback((result: FormattedAnnotation, fieldKey: string) => {
@@ -620,47 +556,6 @@ export default function AnnotationRunner({
     setSelectedAssetIdForDetail(result.asset_id);
     setIsAssetDetailOpen(true);
   }, []);
-
-  const runDataSources = useMemo(() => allSources, [allSources]);
-
-  const sourceStats = useMemo(() => {
-    if (!currentRunAssets || currentRunAssets.length === 0 || !runDataSources) {
-      return null;
-    }
-
-    const totalRecords = currentRunAssets.length;
-    const sourceCounts: Record<number, number> = {};
-    const sourceMap = new Map(runDataSources.map((ds: any) => [ds.id, ds.name || `Source ${ds.id}`]));
-    
-    currentRunAssets.forEach((record: any) => {
-      const sourceId = record.source_id;
-      if (sourceId !== null && sourceId !== undefined) {
-        if(sourceMap.has(sourceId)) {
-          sourceCounts[sourceId] = (sourceCounts[sourceId] || 0) + 1;
-        }
-      }
-    });
-
-    const detailedStats = Object.entries(sourceCounts)
-      .map(([dsIdStr, count]) => {
-        const dsId = parseInt(dsIdStr);
-        const percentage = totalRecords > 0 ? ((count / totalRecords) * 100).toFixed(1) : '0.0';
-        return {
-          id: dsId,
-          name: sourceMap.get(dsId) || `Source ${dsId}`,
-          count: count,
-          percentage: `${percentage}%`
-        };
-      })
-      .sort((a, b) => b.count - a.count);
-
-    return {
-      totalRecords,
-      totalSourcesInRun: runDataSources.length,
-      sourcesWithRecordsCount: detailedStats.length,
-      detailedStats
-    };
-  }, [currentRunAssets, runDataSources]);
 
   const handleUpdateRun = useCallback((field: 'name' | 'description' | 'live', value: string | boolean) => {
     if (!activeRun) return;
@@ -691,6 +586,9 @@ export default function AnnotationRunner({
   const navAssetIdsRef = useRef<number[]>([]);
   const [navTick, setNavTick] = useState(0);
   const setNavAssetIdsBridge = useCallback((ids: number[]) => {
+    const prev = navAssetIdsRef.current;
+    // Tables report their rows on every render; only a different list is news.
+    if (prev.length === ids.length && prev.every((id, i) => id === ids[i])) return;
     navAssetIdsRef.current = ids;
     setNavTick((t) => t + 1);
   }, []);
@@ -751,14 +649,69 @@ export default function AnnotationRunner({
 
   return (
     <AssetDetailContext.Provider value={assetDetailBridge}>
-    <div className="flex-1 flex flex-col overflow-auto">
-      <div className={cn("flex-1 space-y-0.5", focusMode ? "p-0.25" : "p-1.5 md:p-2 md:p-0")}>
+    {/* Floating exit-focus button — only rendered while focus mode is on.
+        Stays in the top-right of the viewport so the panel canvas has
+        zero chrome below it. Tooltip surfaces the Ctrl+F shortcut. */}
+    {focusMode && (
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              variant="outline"
+              size="icon"
+              onClick={toggleFocusMode}
+              className="fixed top-3 right-3 z-50 h-7 w-7 bg-background/80 backdrop-blur shadow-sm"
+              aria-label="Exit focus mode"
+            >
+              <Minimize2 className="h-3.5 w-3.5" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="left">
+            Exit focus mode (Ctrl+F)
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    )}
+
+    {/* One strip of columns, niri-style: sources, assets and an asset up
+        close to the left of the run (`RunStrip`), every panel to its right.
+        Sideways scrolling moves along it and snaps to column edges, so
+        nothing rests half in view. Each panel takes its share of the page's
+        width and all of its height — the strip has no rows, so there is no
+        height to leave empty.
+
+        Narrow, the run folds to a line above and the panels are a strip of
+        their own, one page wide each. */}
+    <RunStrip
+      run={activeRun}
+      ledger={ledger}
+      schemas={runSchemes}
+      pinned={isRunColumnPinned}
+      sourcesOpen={sourcesOpen}
+      onSourcesOpen={setSourcesOpen}
+      detailAssetId={detailAssetId}
+      onDetailAsset={(id) => {
+        // Narrow, there is no room beside the list: the asset opens over it.
+        const strip = document.querySelector('[data-panel-strip]');
+        if (id != null && strip && getComputedStyle(strip).flexDirection === 'column') {
+          openDetailOverlayBridge(id);
+          return;
+        }
+        setDetailAssetId(id);
+      }}
+      narrowAssetsOpen={narrowAssetsOpen}
+      onExtendAssets={canExtendRun ? () => {
+        setSelectedAssetIds([]);
+        setIsAssetSelectorOpen(true);
+      } : undefined}
+    >
         <AnnotationRunnerHeader
+          onJumpToEnd={jumpToEnd}
           activeRun={activeRun}
           dashboardConfig={dashboardConfig}
           isDashboardDirty={isDashboardDirty}
           runSchemes={runSchemes}
-          currentRunAssets={currentRunAssets}
+          summary={ledger.summary}
           isProcessing={isActuallyProcessing}
           isRetryingJob={isRetryingJob}
           onUpdateRun={handleUpdateRun}
@@ -771,54 +724,29 @@ export default function AnnotationRunner({
           onDeleteRun={() => setIsDeleteDialogOpen(true)}
           onClearRun={onClearRun}
           onOpenSchemasDialog={() => setIsSchemasDialogOpen(true)}
-          onOpenAssetsDialog={() => setIsAssetsDialogOpen(true)}
-          onExtendAssets={canExtendRun ? () => {
-            setSelectedAssetIds([]);
-            setIsAssetSelectorOpen(true);
-          } : undefined}
+          onShowAssets={showAssets}
           onExtendSchemas={canExtendRun ? () => {
             setExtendSelectedSchemaIds([]);
             setIsExtendSchemasOpen(true);
           } : undefined}
           canExtend={canExtendRun}
           allSchemas={runSchemes}
-          allResults={currentRunResults}
         />
 
-        {/* Floating exit-focus button — only rendered while focus mode is on.
-            Stays in the top-right of the viewport so the panel canvas has
-            zero chrome below it. Tooltip surfaces the Ctrl+F shortcut. */}
-        {focusMode && (
-          <TooltipProvider>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={toggleFocusMode}
-                  className="fixed top-3 right-3 z-50 h-7 w-7 bg-background/80 backdrop-blur shadow-sm"
-                  aria-label="Exit focus mode"
-                >
-                  <Minimize2 className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="left">
-                Exit focus mode (Ctrl+F)
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        )}
 
-        <div className="flex-1 min-h-0">
-          {/* Render the panel grid as soon as we have a dashboard config —
+
+        {/* Wide, this wrapper steps out of the box tree (`contents`) so the
+            panels sit in the same strip as the run column. Narrow, it is the
+            strip. */}
+        <div className="flex min-h-0 min-w-0 flex-1 snap-x snap-proximity gap-px overflow-x-auto overflow-y-hidden @3xl/page:contents">
+          {/* Render the panels as soon as we have a dashboard config —
               even while the run is still processing. Panels self-fetch and
               re-render as incremental annotations land (per-row commits in
               process_assets_parallel + 3s polling). Header shows the
               run-level progress bar; no full-view blocking state. */}
           {!dashboardConfig ? (
-            <div className="flex items-center justify-center h-64 text-muted-foreground">Loading dashboard configuration...</div>
+            <div className="flex flex-1 items-center justify-center text-muted-foreground">Loading dashboard configuration...</div>
           ) : (
-            /* Dynamic Grid Layout with Proper Positioning */
             <DragScopeProvider
               onResolve={(targetPanelId, pending) => {
                 const sourcePanel = dashboardConfig?.panels?.find(
@@ -861,155 +789,60 @@ export default function AnnotationRunner({
                 );
               }}
             >
-      {/* Container queries, not media queries.
-          `@media (min-width: 768px)` asked how wide the *window* is, which is
-          the one measurement that has nothing to do with this grid: open the
-          dock beside the runner on a 1440px monitor and the dashboard is 500px
-          wide while the media query still reports "desktop", so panels keep
-          their multi-column placement in a column that cannot hold it.
-          `@container page` asks the page surface — the same question a phone
-          asks, answered once.
-
-          The mobile branch also dropped `max-height`, which was pinning a
-          stacked panel to the height it had been given as a *grid cell*. With
-          rows auto-sized that number means nothing, and it clipped the panel
-          body, which is `overflow-hidden`.
-
-          Stacked panels get a *definite* height instead: `height: auto` left
-          every `h-full` child — the chart's ResponsiveContainer, the map canvas —
-          resolving against nothing. The clamp keeps each panel proportional to
-          its desktop size, never under 280px, and never taller than 70% of the
-          screen, so the next panel always peeks in and says "keep scrolling". */}
-      <style jsx global>{`
-        @container page (min-width: 48rem) {
-          .dashboard-grid { grid-auto-rows: var(--row-h); }
-          .dashboard-panel {
-            grid-column: calc(var(--grid-x) + 1) / span var(--grid-w);
-            grid-row: calc(var(--grid-y) + 1) / span var(--grid-h);
-            height: calc(var(--grid-h) * var(--row-h)) !important;
-            max-height: calc(var(--grid-h) * var(--row-h)) !important;
-          }
-        }
-        @container page (max-width: 47.999rem) {
-          .dashboard-grid { grid-template-columns: 1fr !important; grid-auto-rows: auto !important; }
-          .dashboard-panel {
-            grid-column: 1 !important;
-            grid-row: auto !important;
-            height: clamp(17.5rem, calc(var(--grid-h) * var(--row-h)), 70dvh) !important;
-            min-height: 0 !important;
-            max-height: none !important;
-          }
-        }
-      `}</style>
-              <div
-                className="dashboard-grid relative w-full overflow-y-auto grid grid-cols-1 gap-0.25"
-                style={{
-                // Column count + row height come from the dashboard geometry. The
-                // ``--row-h`` var drives both ``grid-auto-rows`` and the panel
-                // height rules in the media queries above (desktop = fixed rows,
-                // mobile = auto-sized + single column).
-                gridTemplateColumns: `repeat(${gridGeo.columns}, minmax(0, 1fr))`,
-                ['--row-h' as any]: `${gridGeo.rowHeight}px`,
-                minHeight: (() => {
-                  try {
-                    if (!dashboardConfig?.panels || dashboardConfig.panels.length === 0) {
-                      return '300px';
-                    }
-
-                    // Calculate the exact height needed for all panels
-                    const heights = dashboardConfig.panels
-                      .filter(p => p && p.grid_position && typeof p.grid_position.y === 'number' && typeof p.grid_position.h === 'number')
-                      .map(p => (p.grid_position.y || 0) + (p.grid_position.h || 0));
-
-                    if (heights.length === 0) {
-                      return '300px';
-                    }
-
-                    const maxHeight = Math.max(...heights);
-                    return `${Math.max(maxHeight, 2) * gridGeo.rowHeight}px`;
-                  } catch (error) {
-                    console.warn('Error calculating grid height:', error);
-                    return '300px';
-                  }
-                })(),
-                // Ensure the grid can expand as needed
-                paddingBottom: '2rem'
-              }}
-            >
-              {(dashboardConfig?.panels || [])
-                .filter(panel => panel && panel.id && panel.grid_position) // Filter out invalid panels
-                .sort((a, b) => {
-                  // Sort by y position first, then x position for consistent rendering
-                  const aY = a.grid_position?.y || 0;
-                  const bY = b.grid_position?.y || 0;
-                  const aX = a.grid_position?.x || 0;
-                  const bX = b.grid_position?.x || 0;
-                  
-                  if (aY !== bY) {
-                    return aY - bY;
-                  }
-                  return aX - bX;
-                })
-                .map(panel => {
-                  // Defensive handling of panel properties
+              {stripColumns((dashboardConfig?.panels || []).filter(panel => panel && panel.id && panel.grid_position))
+                .map(members => {
+                  // A column of the strip, as wide as its share of the grid's
+                  // columns and never narrower than a panel can be read at.
+                  // Growing by the same share closes the gap when the columns
+                  // together are narrower than the page. Its panels stack top
+                  // to bottom at the heights they declare; room they leave at
+                  // the bottom stays until Compact is asked to fill it.
                   const cols = gridGeo.columns;
-                  const gridPos = panel.grid_position || { x: 0, y: 0, w: 6, h: 4 };
-                  const safeX = Math.max(0, Math.min(cols - 1, gridPos.x || 0));
-                  const safeY = Math.max(0, gridPos.y || 0);
-                  const safeW = Math.max(1, Math.min(cols - safeX, gridPos.w || 6));
-                  // Desktop: full height. Mobile: capped to ~600px worth of units.
-                  const safeH = Math.max(1, gridPos.h || 4);
-                  const mobileH = Math.min(Math.ceil(600 / gridGeo.rowHeight), safeH);
+                  const width = Math.max(1, Math.min(cols, columnWidth(members)));
 
                   return (
                     <div
-                      key={panel.id}
-                      data-panel-id={panel.id}
+                      key={members[0].id}
+                      data-strip-column
                       className={cn(
-                        "dashboard-panel relative transition-all duration-200 ease-in-out overflow-hidden",
-                        // Responsive behavior for smaller screens
-                        "min-w-0 w-full h-full",
-                        // Stack panels on mobile and small screens
-                        "max-md:row-span-1"
+                        "relative flex min-h-0 min-w-0 shrink-0 basis-full snap-start flex-col gap-px",
+                        "@3xl/page:grow-[var(--grid-w)] @3xl/page:basis-[max(20rem,calc(var(--grid-w)/var(--grid-cols)*(100%_-_var(--pinned,0px))))]",
                       )}
-                      style={{
-                        // A floor, not a target — the CSS above decides the real
-                        // height per layout. Small enough that a stacked panel on
-                        // a phone is not mostly empty space.
-                        minHeight: `${Math.min(mobileH, 4) * gridGeo.rowHeight}px`,
-                        zIndex: 1,
-                        // CSS custom properties consumed by `.dashboard-panel`
-                        // in the `<style jsx global>` block above. Custom
-                        // properties inherit downward, so they must live on
-                        // THIS element (the one the rule targets).
-                        '--grid-x': safeX,
-                        '--grid-y': safeY,
-                        '--grid-w': safeW,
-                        '--grid-h': safeH,
-                      } as React.CSSProperties}
+                      style={{ '--grid-w': width, '--grid-cols': cols } as React.CSSProperties}
                     >
-                    <DroppablePanelZone
-                      panelId={panel.id}
-                      className="relative w-full h-full"
-                    >
-                      <PanelRenderer
-                        panel={panel}
-                        infospaceId={activeInfospace?.id || 0}
-                        runId={activeRun?.id || 0}
-                        allSchemas={runSchemes}
-                        onUpdatePanel={updatePanel}
-                        onRemovePanel={removePanel}
-                        onMapPointClick={handleMapPointClick}
-                        mapHighlightLocation={mapHighlightLocation}
-                        chartHighlightTimestamp={chartHighlightTimestamp}
-                        onResultSelect={handleResultSelect}
-                        onRetrySingleResult={retrySingleResult}
-                        retryingResultId={isRetryingResultId}
-                        onFieldInteraction={handleFieldInteraction}
-                        onTimestampClick={handleTimestampClick}
-                        onLocationClick={handleLocationClick}
-                      />
-                    </DroppablePanelZone>
+                      {members.map((panel) => (
+                          <div
+                            key={panel.id}
+                            data-panel-id={panel.id}
+                            className="relative min-h-0 overflow-hidden"
+                            // Shrinkable by the hairline gaps, so three thirds
+                            // fill the column exactly instead of overflowing it.
+                            style={{ flex: `0 1 ${heightOf(panel) * 100}%` }}
+                          >
+                          <DroppablePanelZone
+                            panelId={panel.id}
+                            className="relative w-full h-full"
+                          >
+                            <PanelRenderer
+                              panel={panel}
+                              infospaceId={activeInfospace?.id || 0}
+                              runId={activeRun?.id || 0}
+                              allSchemas={runSchemes}
+                              onUpdatePanel={updatePanel}
+                              onRemovePanel={removePanel}
+                              onMapPointClick={handleMapPointClick}
+                              mapHighlightLocation={mapHighlightLocation}
+                              chartHighlightTimestamp={chartHighlightTimestamp}
+                              onResultSelect={handleResultSelect}
+                              onRetrySingleResult={retrySingleResult}
+                              retryingResultId={isRetryingResultId}
+                              onFieldInteraction={handleFieldInteraction}
+                              onTimestampClick={handleTimestampClick}
+                              onLocationClick={handleLocationClick}
+                            />
+                          </DroppablePanelZone>
+                          </div>
+                      ))}
                     </div>
                   );
                 })
@@ -1017,19 +850,18 @@ export default function AnnotationRunner({
               
               {/* Empty State */}
               {(!dashboardConfig?.panels || dashboardConfig.panels.length === 0) && (
-                <div className="row-span-2 flex items-center justify-center border-2 border-dashed border-gray-300 rounded-lg bg-gray-50/50" style={{ gridColumn: '1 / -1' }}>
+                <div className="m-2 flex min-w-0 flex-1 basis-full snap-start items-center justify-center rounded-lg border-2 border-dashed border-gray-300 bg-gray-50/50">
                   <div className="text-center text-gray-500">
                     <LayoutDashboard className="h-12 w-12 mx-auto mb-4 opacity-50" />
                     <h3 className="text-lg font-medium mb-2">No Dashboard Panels</h3>
-                    <p className="text-sm">Use the toolbar above to add visualization panels to your dashboard.</p>
+                    <p className="text-sm">Add visualization panels from the run column.</p>
                   </div>
                 </div>
               )}
-              </div>
             </DragScopeProvider>
           )}
         </div>
-      </div>
+    </RunStrip>
 
       <Dialog open={isAssetSelectorOpen} onOpenChange={setIsAssetSelectorOpen}>
         <DialogContent className="max-w-7xl h-[80vh] flex flex-col">
@@ -1231,39 +1063,6 @@ export default function AnnotationRunner({
       </DialogContent>
     </Dialog>
 
-    <Dialog open={isAssetsDialogOpen} onOpenChange={setIsAssetsDialogOpen}>
-      <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle>Assets Used in This Run</DialogTitle>
-          <DialogDescription>
-            This run processes {currentRunAssets.length} asset{currentRunAssets.length !== 1 ? 's' : ''}. Click "View Details" to see the full asset content.
-          </DialogDescription>
-        </DialogHeader>
-        <ScrollArea className="flex-1 p-4 overflow-y-auto scrollbar-hide">
-          {currentRunAssets.length === 0 ? (
-            <div className="text-center text-muted-foreground py-8">
-              <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No assets found for this run.</p>
-            </div>
-          ) : (
-            <RunAssetList 
-              assets={currentRunAssets} 
-              onAssetView={(asset) => {
-                setSelectedAssetId(asset.id);
-                setIsResultDialogOpen(true);
-                setIsAssetsDialogOpen(false);
-              }}
-            />
-          )}
-        </ScrollArea>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => setIsAssetsDialogOpen(false)}>
-            Close
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
-
     <AnnotationSchemaCard
         show={!!viewingSchema}
         onClose={() => setViewingSchema(null)}
@@ -1293,7 +1092,7 @@ export default function AnnotationRunner({
                 <AnnotationResultDisplay
                   result={selectedAnnotationResult}
                   schema={runSchemes.find(s => s.id === selectedAnnotationResult.schema_id) || runSchemes[0]}
-                  asset={currentRunAssets?.find(a => a.id === selectedAnnotationResult.asset_id) ?? null}
+                  asset={null}
                   renderContext="dialog"
                   compact={false}
                 />
@@ -1360,28 +1159,16 @@ export default function AnnotationRunner({
       </DialogContent>
     </Dialog>
 
-    {/* Asset Detail Overlay - shows the normal asset view when clicking results */}
-    {(() => {
-      console.log('[AnnotationRunner] Rendering AssetDetailOverlay with', {
-        isOpen: isAssetDetailOpen,
-        assetId: selectedAssetIdForDetail,
-        currentRunResultsCount: currentRunResults?.length || 0,
-        runSchemesCount: runSchemes?.length || 0,
-        activeRunId: activeRun?.id
-      });
-      return (
-        <AssetDetailOverlay
-          open={isAssetDetailOpen}
-          onClose={closeAssetDetail}
-          assetId={selectedAssetIdForDetail}
-          highlightAssetIdOnOpen={null}
-          annotationResults={currentRunResults}
-          schemas={runSchemes}
-          activeRunId={activeRun?.id}
-          // Don't pass onLoadIntoRunner since we're already in the runner context
-        />
-      );
-    })()}
+    {/* The asset over the page — from a panel, or narrow. It fetches the
+        asset's annotations in this run itself. */}
+    <AssetDetailOverlay
+      open={isAssetDetailOpen}
+      onClose={closeAssetDetail}
+      assetId={selectedAssetIdForDetail}
+      highlightAssetIdOnOpen={null}
+      schemas={runSchemes}
+      activeRunId={activeRun?.id}
+    />
 
     <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
       <AlertDialogContent>
@@ -1409,7 +1196,6 @@ export default function AnnotationRunner({
       onOpenChange={setIsPanelPickerOpen}
       onPick={handlePickPanel}
     />
-    </div>
     </AssetDetailContext.Provider>
   );
 }

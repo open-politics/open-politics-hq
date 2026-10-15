@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { toast } from 'sonner';
 import { 
@@ -26,10 +26,24 @@ import {
     AssetsService,
 } from '@/client';
 
+/** The run as it was, when nothing anyone looks at has changed — so a poll
+ *  that finds the run where it was re-renders nothing downstream. */
+function keepIfSame(prev: AnnotationRunRead, next: AnnotationRunRead): AnnotationRunRead {
+  const same =
+    prev.updated_at === next.updated_at &&
+    prev.status === next.status &&
+    prev.progress_current === next.progress_current &&
+    prev.progress_total === next.progress_total &&
+    prev.live === next.live;
+  return same ? prev : next;
+}
+
 export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
   const { activeInfospace } = useInfospaceStore();
   const [runs, setRuns] = useState<AnnotationRunRead[]>([]);
   const [activeRun, setActiveRun] = useState<AnnotationRunRead | null>(null);
+  const activeRunIdRef = useRef<number | null>(null);
+  activeRunIdRef.current = activeRun?.id ?? null;
   const [isLoadingRuns, setIsLoadingRuns] = useState(false);
   const [isCreatingRun, setIsCreatingRun] = useState(false);
   const [isRetryingRun, setIsRetryingRun] = useState(false);
@@ -211,7 +225,7 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
         if (prevActiveRun) {
           const updatedActiveRun = response.data.find(run => run.id === prevActiveRun.id);
           if (updatedActiveRun) {
-            return updatedActiveRun;
+            return keepIfSame(prevActiveRun, updatedActiveRun);
           }
         }
         return prevActiveRun;
@@ -221,6 +235,19 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
       setError(e.body?.detail || e.message);
     } finally {
       setIsLoadingRuns(false);
+    }
+  }, [activeInfospace]);
+
+  // The open run, re-read on its own — what a page watching one run polls,
+  // rather than the whole run list. Quiet: no loading state, no toast.
+  const refreshActiveRun = useCallback(async () => {
+    const id = activeRunIdRef.current;
+    if (!activeInfospace?.id || id == null) return;
+    try {
+      const fresh = await RunsService.getRun({ infospaceId: activeInfospace.id, runId: id, includeCounts: false });
+      setActiveRun((prev) => (prev && prev.id === fresh.id ? keepIfSame(prev, fresh) : prev));
+    } catch {
+      // The next poll, or the stream, will catch up.
     }
   }, [activeInfospace]);
 
@@ -331,6 +358,7 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
     extendRun,
     runs,
     loadRuns,
+    refreshActiveRun,
     deleteRun,
     activeRun,
     setActiveRun,

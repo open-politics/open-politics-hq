@@ -80,9 +80,15 @@ function elbowPath(sx: number, sy: number, lx: number, ex: number, ey: number): 
 export function SourceStreams({
   containerRef,
   streams,
+  watch,
 }: {
   containerRef: React.RefObject<HTMLElement | null>;
   streams: SourceStream[];
+  /** The parts of the container whose DOM changes can move an anchor — by
+   *  default all of it. A container that also holds a long, busy list (rows
+   *  restyling as they update) names just the parts that carry anchors, so
+   *  the list's churn does not re-measure the lines. */
+  watch?: React.RefObject<HTMLElement | null>[];
 }) {
   const [drawn, setDrawn] = React.useState<DrawnStream[]>([]);
   // Clear without thrashing identity when already empty.
@@ -192,12 +198,15 @@ export function SourceStreams({
     ro.observe(container);
     // Tree expand/collapse adds/removes rows and animates transforms — catch both.
     const mo = new MutationObserver(schedule);
-    mo.observe(container, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['style', 'class'],
-    });
+    const watched = watch ? watch.map((r) => r.current).filter((el): el is HTMLElement => !!el) : [container];
+    for (const el of watched) {
+      mo.observe(el, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['style', 'class'],
+      });
+    }
     // Scroll doesn't bubble; capture catches it from either scroll container.
     container.addEventListener('scroll', schedule, true);
     window.addEventListener('resize', schedule);
@@ -223,7 +232,7 @@ export function SourceStreams({
       container.removeEventListener('scroll', schedule, true);
       window.removeEventListener('resize', schedule);
     };
-  }, [containerRef, streams, measure, clearDrawn]);
+  }, [containerRef, streams, watch, measure, clearDrawn]);
 
   if (drawn.length === 0) return null;
 

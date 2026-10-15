@@ -3,19 +3,17 @@
 import { useAnnotationRunStore } from "@/zustand_stores/useAnnotationRunStore";
 import AnnotationRunner from "@/components/collection/annotation/AnnotationRunner";
 import AnnotationRunnerDock from "@/components/collection/annotation/AnnotationRunnerDock";
-import { useEffect, useState, useMemo, useCallback, useRef } from "react";
-import { AnnotationRunRead, AnnotationRunCreate, AnnotationSchemaRead, AssetRead, AnnotationRead } from "@/client";
-import { toast } from "sonner";
+import { useEffect, useCallback, useRef } from "react";
+import { AnnotationRunRead } from "@/client";
 import { useInfospaceStore } from "@/zustand_stores/storeInfospace";
 import { useAnnotationSystem } from "@/hooks/useAnnotationSystem";
-import { useStream, type StreamEvent } from "@/hooks/useStream";
+import { useStream } from "@/hooks/useStream";
 import { useAssetStore } from "@/zustand_stores/storeAssets";
-import { AnnotationsService, RunsService } from "@/client";
+import { RunsService } from "@/client";
 import { useSurfaceCommands } from "@/hooks/useSurfaceCommands";
-import { adaptEnhancedAnnotationToFormattedAnnotation } from "@/lib/annotations/adapters";
-import { FormattedAnnotation, AnnotationRunParams } from "@/lib/annotations/types";
+import { AnnotationRunParams } from "@/lib/annotations/types";
+import { useRunLedger } from "@/lib/annotations/ledger";
 import { runPollIntervalMs } from "@/lib/annotations/pollIntervals";
-import { motion } from "framer-motion";
 import { Surface } from '@/components/layout/Surface';
 
 export default function AnnotationRunnerPage() {
@@ -36,6 +34,7 @@ export default function AnnotationRunnerPage() {
     schemas,
     loadSchemas,
     retrySingleResult,
+    refreshActiveRun,
   } = useAnnotationSystem({ autoLoadRuns: true });
 
   const { assets, fetchAssets: fetchAllAssets } = useAssetStore();
@@ -75,8 +74,6 @@ export default function AnnotationRunnerPage() {
     },
   });
 
-  const [runResults, setRunResults] = useState<FormattedAnnotation[]>([]);
-  const [isLoadingResults, setIsLoadingResults] = useState(false);
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
@@ -86,86 +83,11 @@ export default function AnnotationRunnerPage() {
     }
   }, [activeInfospace?.id, loadSchemas, fetchAllAssets]);
 
-  const fetchRunResults = useCallback(async (runId: number, silent = false) => {
-    if (!activeInfospace?.id) return;
-    if (!silent) setIsLoadingResults(true);
-    try {
-        const response = await AnnotationsService.getRunResults({
-            infospaceId: activeInfospace.id,
-            runId: runId,
-            limit: 5000,
-        });
-        const formatted = response.map(r => adaptEnhancedAnnotationToFormattedAnnotation(r));
-        setRunResults(formatted);
-    } catch (e: any) {
-        if (!silent) toast.error("Failed to load run results.", { description: e.body?.detail || e.message });
-    } finally {
-        if (!silent) setIsLoadingResults(false);
-    }
-  }, [activeInfospace?.id]);
-
-  // Extract assets from run results to ensure we only show assets that have annotations
-  const runAssets = useMemo<AssetRead[]>(() => {
-    if (!runResults || runResults.length === 0) return [];
-    
-    const uniqueAssets = new Map<number, AssetRead>();
-    
-    runResults.forEach(annotation => {
-      if (annotation.asset_id) {
-        // Try to find the asset in the full assets list first
-        const fullAsset = assets.find(a => a.id === annotation.asset_id);
-        if (fullAsset) {
-          uniqueAssets.set(annotation.asset_id, fullAsset);
-        } else if (annotation.asset) {
-          // If not found in full assets, use the asset data from the annotation
-          const assetFromAnnotation: AssetRead = {
-            id: annotation.asset.id,
-            uuid: `asset-${annotation.asset.id}`, // FormattedAnnotation.asset doesn't have uuid
-            title: annotation.asset.title || `Asset ${annotation.asset.id}`,
-            kind: annotation.asset.kind as any, // Should be AssetKind from client models
-            text_content: annotation.asset.text_content || '',
-            created_at: annotation.asset.created_at,
-            updated_at: annotation.asset.created_at,
-            infospace_id: activeInfospace?.id || 0,
-            user_id: 0,
-            source_id: annotation.asset.source_id || 0,
-            parent_asset_id: annotation.asset.parent_asset_id || null,
-            part_index: null,
-            is_container: false,
-          };
-          uniqueAssets.set(annotation.asset_id, assetFromAnnotation);
-        } else {
-          // If no asset data available, create a minimal asset
-          const minimalAsset: AssetRead = {
-            id: annotation.asset_id,
-            uuid: `asset-${annotation.asset_id}`,
-            title: `Asset ${annotation.asset_id}`,
-            kind: 'text',
-            text_content: '',
-            created_at: annotation.timestamp || new Date().toISOString(),
-            updated_at: annotation.timestamp || new Date().toISOString(),
-            infospace_id: activeInfospace?.id || 0,
-            user_id: 0,
-            source_id: 0,
-            parent_asset_id: null,
-            part_index: null,
-            is_container: false,
-          };
-          uniqueAssets.set(annotation.asset_id, minimalAsset);
-        }
-      }
-    });
-    
-    return Array.from(uniqueAssets.values());
-  }, [runResults, assets, activeInfospace?.id]);
-
-  useEffect(() => {
-    if (activeRun?.id) {
-      fetchRunResults(activeRun.id);
-    } else {
-      setRunResults([]);
-    }
-  }, [activeRun?.id, fetchRunResults]);
+  // Where the run's scope stands, as counts — fetched once per run, then
+  // re-asked (throttled) as progress arrives. Nothing on this page needs
+  // the run's annotations themselves; whatever shows one asset's fetches
+  // that asset's.
+  const ledger = useRunLedger(activeRun);
 
   // Presence: subscribe to annotation run stream for live progress.
   // A *live* run is never really "done" — when it's completed it's watching,
@@ -201,9 +123,7 @@ export default function AnnotationRunnerPage() {
               }
             : prev,
         );
-        if (event.data.run_id) {
-          fetchRunResults(event.data.run_id, true);
-        }
+        ledger.refresh();
       }
       if (event.type === 'completed' || event.type === 'completed_with_errors' || event.type === 'failed') {
         // Terminal event: apply status immediately so isRunning flips off
@@ -219,40 +139,34 @@ export default function AnnotationRunnerPage() {
             : prev,
         );
         loadRuns();
-        if (event.data.run_id) fetchRunResults(event.data.run_id);
+        void ledger.refreshNow();
       }
     },
   });
 
-  // Polling baseline: every 3s while the run is active, regardless of SSE.
-  // SSE is the low-latency path; this is the always-works fallback so the UI
-  // updates even if the stream silently drops events. The small duplicate
-  // cost is worth the reliability — loadRuns + results are already cached by
-  // the server and both requests are cheap.
+  // Polling baseline while the run is active, whatever the stream does: SSE
+  // is the low-latency path, this the always-works fallback. Both asks are
+  // small — the one run, and the ledger's counts — and a poll that finds
+  // nothing changed changes nothing on screen.
   useEffect(() => {
     if (pollIntervalRef.current) {
       clearInterval(pollIntervalRef.current);
       pollIntervalRef.current = null;
     }
-
     if (isRunActive && activeRun?.id) {
-      const runId = activeRun.id;
       // Fast while processing; slow for a caught-up "watching" live run.
-      pollIntervalRef.current = setInterval(async () => {
-        await loadRuns();
-        await fetchRunResults(runId, true);
+      pollIntervalRef.current = setInterval(() => {
+        void refreshActiveRun();
+        ledger.refresh();
       }, runPollIntervalMs({ status: activeRun?.status }));
-    } else if (activeRun?.status === 'completed' || activeRun?.status === 'completed_with_errors' || activeRun?.status === 'failed') {
-      fetchRunResults(activeRun.id);
     }
-
     return () => {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
         pollIntervalRef.current = null;
       }
     };
-  }, [activeRun?.id, activeRun?.status, isRunActive, loadRuns, fetchRunResults]);
+  }, [activeRun?.id, activeRun?.status, isRunActive, refreshActiveRun, ledger.refresh]);
 
   const handleSelectRunFromHistory = (runId: number) => {
     const runToLoad = runs.find(r => r.id === runId);
@@ -272,28 +186,15 @@ export default function AnnotationRunnerPage() {
     setActiveRun(null);
   };
 
-  // Enhanced retry function that refreshes results after success
+  // A retried result moves the counts.
+  const { refreshNow: refreshLedger } = ledger;
   const retrySingleResultWithRefresh = useCallback(async (resultId: number, customPrompt?: string) => {
     const result = await retrySingleResult(resultId, customPrompt);
-    if (result && activeRun?.id) {
-      // Refresh the current run results after successful retry
-      await fetchRunResults(activeRun.id);
-    }
+    if (result) void refreshLedger();
     return result;
-  }, [retrySingleResult, activeRun?.id, fetchRunResults]);
-  
-  const allSources = useMemo(() => {
-    const sourcesMap = new Map();
-    assets.forEach(asset => {
-        if(asset.source_id && !sourcesMap.has(asset.source_id)) {
-            sourcesMap.set(asset.source_id, {id: asset.source_id, name: `Source ${asset.source_id}`})
-        }
-    });
-    return Array.from(sourcesMap.values());
-  }, [assets]);
+  }, [retrySingleResult, refreshLedger]);
 
-  // Calculate the isProcessing state
-  const isProcessing = isLoadingResults || activeRun?.status === 'running' || activeRun?.status === 'pending';
+  const isProcessing = activeRun?.status === 'running' || activeRun?.status === 'pending';
   
   return (
     <Surface>
@@ -303,11 +204,9 @@ export default function AnnotationRunnerPage() {
             isLoadingRuns={isLoadingRuns}
             onSelectRun={handleSelectRunFromHistory}
             allSchemas={schemas}
-            allSources={allSources}
             activeRun={activeRun}
             isProcessing={isProcessing}
-            results={runResults}
-            assets={runAssets}
+            ledger={ledger}
             onClearRun={clearActiveRun}
             onRunWithNewAssets={(template) => { /* Logic to be implemented if needed */ }}
             onRetrySingleResult={retrySingleResultWithRefresh}
