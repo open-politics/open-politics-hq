@@ -28,7 +28,7 @@ unset POSTGRES_PASSWORD POSTGRES_USER POSTGRES_DB POSTGRES_PORT POSTGRES_SERVER 
       BACKEND_WORKERS CELERY_CONCURRENCY CELERY_PROCESSING_CONCURRENCY \
       COMPOSE_FILE COMPOSE_PROFILES COMPOSE_PROJECT_NAME COMPOSE_BAKE \
       HQ_BIND_HOST HQ_SEARXNG_PORT \
-      TAG INSTALL_DEV DOCKER_IMAGE_BACKEND S3_BUCKET_NAME 2>/dev/null || true
+      INSTALL_DEV DOCKER_IMAGE_BACKEND DOCKER_IMAGE_FRONTEND S3_BUCKET_NAME 2>/dev/null || true
 
 # Constants: paths, file modes, and the key lists everything else reads
 
@@ -655,6 +655,7 @@ migrate_env_to_conf() {
   _mv BACKEND_WORKERS     deployment.services.backend.workers
   _mv DOCKER_IMAGE_BACKEND deployment.services.backend.image
   _mv FRONTEND_PORT       deployment.services.frontend.port
+  _mv DOCKER_IMAGE_FRONTEND deployment.services.frontend.image
   _mv CELERY_CONCURRENCY  deployment.services.celery.workers
   _mv CELERY_PROCESSING_CONCURRENCY deployment.services.celery.processing_workers
   _mv POSTGRES_SERVER     deployment.services.database.host
@@ -803,7 +804,7 @@ MIGRATED_ENV_KEYS=(
   SMTP_HOST SMTP_PORT SMTP_TLS SMTP_SSL SMTP_USER
   EMAILS_FROM_NAME EMAILS_FROM_EMAIL
   DISCOURSE_CONNECT_ENABLED DISCOURSE_CONNECT_URL
-  DOCKER_IMAGE_FRONTEND WIPE_DB MINIO_ENDPOINT MINIO_HOST MINIO_PORT
+  TAG WIPE_DB MINIO_ENDPOINT MINIO_HOST MINIO_PORT
   MINIO_ROOT_USER MINIO_ROOT_PASSWORD MINIO_BUCKET_NAME MINIO_REGION
   MINIO_ACCESS_KEY MINIO_SECRET_KEY MINIO_SECURE MINIO_USE_SSL
 )
@@ -926,7 +927,7 @@ RENDERED_ENV_KEYS=(
   CELERY_CONCURRENCY CELERY_PROCESSING_CONCURRENCY
   NOMINATIM_PBF_URL NOMINATIM_REPLICATION_URL NOMINATIM_IMPORT_STYLE
   DOMAIN ACME_EMAIL
-  DOCKER_IMAGE_BACKEND TAG INSTALL_DEV S3_BUCKET_NAME COMPOSE_BAKE
+  DOCKER_IMAGE_BACKEND DOCKER_IMAGE_FRONTEND INSTALL_DEV S3_BUCKET_NAME COMPOSE_BAKE
 )
 
 YAML_BACKED_ENV_KEYS=(
@@ -1018,7 +1019,7 @@ render_projection() {
   printf 'DOMAIN=%s\n'                        "$(yget deployment.network.domain)"
   printf 'ACME_EMAIL=%s\n'                    "$(yget deployment.network.acme_email)"
   printf 'DOCKER_IMAGE_BACKEND=%s\n'          "$(yget deployment.services.backend.image)"
-  printf 'TAG=%s\n'                           "$(yget deployment.services.backend.tag)"
+  printf 'DOCKER_IMAGE_FRONTEND=%s\n'         "$(yget deployment.services.frontend.image)"
   printf 'INSTALL_DEV=%s\n'                   "$([[ "$(yget stack.environment)" == local ]] && echo true || echo false)"
   printf 'S3_BUCKET_NAME=%s\n'                "$(yget deployment.services.s3.bucket)"
 }

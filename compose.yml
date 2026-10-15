@@ -20,7 +20,7 @@ services:
       retries: 20
 
   backend:
-    image: '${DOCKER_IMAGE_BACKEND:-backend}:${TAG-latest}'
+    image: '${DOCKER_IMAGE_BACKEND:-backend:latest}'
     restart: always
     depends_on:
       db: { condition: service_healthy }
@@ -73,6 +73,7 @@ services:
       retries: 20
 
   frontend:
+    image: '${DOCKER_IMAGE_FRONTEND:-frontend:latest}'
     build:
       context: ./frontend
       dockerfile: Dockerfile
@@ -86,7 +87,7 @@ services:
       - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
 
   celery_worker:
-    image: '${DOCKER_IMAGE_BACKEND:-backend}:${TAG-latest}'
+    image: '${DOCKER_IMAGE_BACKEND:-backend:latest}'
     build:
       context: ./backend
       args:
@@ -112,7 +113,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   celery_worker_processing:
-    image: '${DOCKER_IMAGE_BACKEND:-backend}:${TAG-latest}'
+    image: '${DOCKER_IMAGE_BACKEND:-backend:latest}'
     build:
       context: ./backend
       args:
@@ -138,7 +139,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   celery_beat:
-    image: '${DOCKER_IMAGE_BACKEND:-backend}:${TAG-latest}'
+    image: '${DOCKER_IMAGE_BACKEND:-backend:latest}'
     build:
       context: ./backend
       args:

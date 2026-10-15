@@ -53,10 +53,10 @@ deployment:
     backend:
       port: 8022
       workers: 1
-      image: backend
-      tag: latest
+      image: backend:latest
     frontend:
       port: 3000
+      image: frontend:latest
     celery:
       workers: 1
       processing_workers: 1

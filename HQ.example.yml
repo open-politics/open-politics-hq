@@ -58,10 +58,10 @@ deployment:
     backend:
       port: 8022                  # both sides, the container binds this too
       workers: auto               # uvicorn, production only. auto = 1 per cpu (2-8); or set a number
-      image: backend              # registry path, see scripts/push-registry-containers.sh
-      tag: latest
+      image: backend:latest       # bare name builds locally. or a published one: openpoliticsproject/backend:<tag>
     frontend:
       port: 3000
+      image: frontend:latest      # same, openpoliticsproject/frontend:<tag>
     celery:
       workers: auto               # default, llm, embedding, external_api queues.
                                   # auto = 2 per cpu (2-8) - these wait on other people's APIs

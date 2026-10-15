@@ -17,8 +17,8 @@ NC='\033[0m' # No Color
 
 # List of services with their Dockerfile paths and context paths
 declare -A services=(
-  ["backend"]="./backend/Dockerfile ./backend"
-  ["frontend"]="./frontend/Dockerfile ./frontend"
+  ["backend"]="../backend/Dockerfile ../backend"
+  ["frontend"]="../frontend/Dockerfile ../frontend"
   # ["celery_worker"]="./backend/Dockerfile ./backend"
 )
 
