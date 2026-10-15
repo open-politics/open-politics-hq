@@ -35,7 +35,9 @@ def test_entity_field_is_recognised_as_an_entity():
 def test_scalar_entity_field():
     m = _map([{"name": "location", "type": "entity", "entity_type": "Location"}])
     assert m.entity_paths == ("document.location",)
-    assert "document.location" in m.place_paths
+    # Typed `Location`, but nothing DECLARES it spatial — that is discovered
+    # from its values, not read off its type name.
+    assert m.place_paths == ()
 
 
 def test_entity_alternate_types_and_closed_names():
@@ -162,7 +164,7 @@ def test_companion_can_author_the_canonical_graph_schema():
     }
     assert "document.event_timestamp" in m.time_paths
     assert "document.observations[*].timestamp" in m.time_paths
-    assert "document.location" in m.place_paths
+    assert m.place_paths == ()   # declared nowhere; discovered from values
     tie = m.get("document.entities[*]").canon
     assert tie.type == "Person" and tie.inject == "types"
 

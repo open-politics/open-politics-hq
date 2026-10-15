@@ -242,35 +242,84 @@ def test_entity_vocabulary_reported_even_when_unconstrained():
     assert node.type_constrained is False
 
 
-def test_time_and_place_candidates():
+def test_time_is_the_declared_date_shape_not_the_name():
+    """`when`, `timestamp`, `dated` — none of them make a string a date. The
+    author's `format: date` does, whatever the field is called."""
     m = build_schema_map(document(
         event_timestamp={"type": "string"},
-        location=entity_object("Location"),
-        claim={"type": "string"},
+        quando={"type": "string", "format": "date"},
         observations={
             "type": "array",
             "items": {"type": "object", "properties": {
                 "timestamp": {"type": "string"},
-                "note": {"type": "string"},
+                "datum": {"type": "string", "format": "date-time"},
             }},
         },
     ))
-    assert "document.event_timestamp" in m.time_paths
-    assert "document.observations[*].timestamp" in m.time_paths
-    assert "document.claim" not in m.time_paths
-    assert "document.location" in m.place_paths
+    assert m.time_paths == ("document.quando", "document.observations[*].datum")
 
 
-def test_place_candidate_by_entity_type_not_just_name():
-    """A field called ``origin`` typed Location is still a place anchor."""
-    m = build_schema_map(document(origin=entity_object("Location")))
-    assert "document.origin" in m.place_paths
+def test_place_is_declared_not_named():
+    """A field called `location` typed `Location` is not a place by
+    declaration — nothing in the contract says so. Whether its VALUES are
+    somewhere is a data question (`annotation/bindings.py`)."""
+    m = build_schema_map(document(
+        location=entity_object("Location"),
+        origin=entity_object("Location"),
+        city={"type": "string"},
+    ))
+    assert m.place_paths == ()
+
+
+def test_place_declared_by_a_geo_section_and_by_reference_into_it():
+    """`places` declares `frame: geo`; `ort` borrows its vocabulary through
+    `x-ref`; the section binding names `bei` as where a row happened. Three
+    declarations, no English."""
+    lugares = {"type": "array", "items": entity_object("Lugar"),
+               "x-graph": {"frame": "geo"}}
+    hechos = {
+        "type": "array",
+        "items": {"type": "object", "properties": {
+            "bei": entity_object("Lugar"),
+            "wer": entity_object("Persona"),
+        }},
+        "x-graph": {"about": "self", "place": {"at": "bei.name"}},
+    }
+    m = build_schema_map(document(
+        lugares=lugares, ort=entity_object("Lugar", ref="lugares"), hechos=hechos,
+    ))
+    assert m.place_paths == (     # contract order
+        "document.lugares[*]", "document.ort", "document.hechos[*].bei",
+    )
+
+
+def test_a_mixed_reference_is_not_a_place_declaration():
+    """`subject` may name an actor OR a place — declaring it spatial would put
+    every actor on the map."""
+    m = build_schema_map(document(
+        places={"type": "array", "items": entity_object("Location"),
+                "x-graph": {"frame": "geo"}},
+        actors={"type": "array", "items": entity_object("Person")},
+        subject={**entity_object("Person"), "x-ref": ["actors", "places"]},
+    ))
+    assert "document.subject" not in m.place_paths
+
+
+def test_a_binding_to_a_missing_field_is_ignored():
+    """The template said `when`; the contract has `when_timestamp`. An address
+    that resolves to nothing is not a declaration."""
+    m = build_schema_map(document(events={
+        "type": "array",
+        "items": {"type": "object", "properties": {"name": {"type": "string"}}},
+        "x-graph": {"about": "self", "place": {"at": "at.name"}},
+    }))
+    assert m.place_paths == ()
 
 
 def test_triplet_optional_fields_are_addressable():
     """Time bindings and edge weights point at triplet-internal fields."""
     m = build_schema_map(document(actions=triplet_array(optional={
-        "start_date": {"type": "string"},
+        "start_date": {"type": "string", "format": "date"},
         "confidence": {"type": "number"},
     })))
     assert m.get("document.actions[*].confidence").shape == "number"
