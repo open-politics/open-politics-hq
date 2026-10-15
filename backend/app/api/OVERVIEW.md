@@ -42,7 +42,7 @@ app/
     cursor.py                   # Opaque cursor encode/decode
     redis.py                    # Shared Redis client
     task_utils.py               # run_async_in_celery, …
-    initial_data.py             # Seed data (superuser, scenario sources/bundles)
+    seed.py                     # First-boot bootstrap (superuser only)
 
   api/
     modules/
@@ -108,13 +108,15 @@ app/
       conversational_intelligence/  # MCP server + conversation service (Layer 5)
       sharing/                  # Packages, backups (Layer 6)
       identity_infospace_user/  # Users, infospaces, Access/Requires (Layer 1)
-      foundation_service_providers/ # Provider protocols + registry + resolve() (Layer 0)
+      foundation_service_providers/ # Domains · dialects · features · quirks · resolve() (Layer 0)
+                                #   providers.py = every declaration; one package per domain
 
     routes/                     # HTTP surface — thin dispatchers over primitives
     dependency_injection.py     # FastAPI DI (providers + the surviving services)
 
   models.py / schemas.py        # RE-EXPORT HUBS
   main.py                       # App lifecycle
+  prestart.py                   # Boot gate: wait for DB -> migrate -> seed, one process
 ```
 
 ---
@@ -193,6 +195,8 @@ Tier 3 is opt-in. With it off — the default — a known identifier never reach
 
 **The source realization contract:** `read` always yields identity + locator (+ inline `text` only when it is the *full* content — a snippet is preview metadata, never `text`). `fetch` passes inline text through, else acquires from the locator. Because the locator always carries forward, `fetch` can always complete. Browse/preview = `read`/`view` stopping before `fetch`.
 
+**Full vs snippet is one constant and one helper, at L2.** `sources.SCRAPE_THRESHOLD` (800 chars) is the cut; `sources.realize_article(item, ctx, preview=…)` is the second half of the contract — pass inline text through, else scrape the locator, else keep the preview, recording which branch ran in `content_source`. A scrape failure never fails the item (a monitor that drops a story on a 403 is worse than one that keeps the headline), which is also why this is not a content type: a processor that raises marks the asset FAILED and removes it from every run's scope. `rss` and `web_search` both call it; `search.web` and `routes/assets` import the same constant. Feeds and metasearch hand the full body and a two-line lede over through **one** field, so nothing but length distinguishes them — and both those sources used to store the lede as if it were the document.
+
 ---
 
 ## System Taxonomy
@@ -205,7 +209,10 @@ Tier 3 is opt-in. With it off — the default — a known identifier never reach
 | Content Type | process(ctx, asset) → children + modalities; recognition signals (ext/mime/magic) | `@content_type` in `content/types/<kind>.py` | `@content_type class PDF` |
 | Enricher | check query + one discovery function | `@enricher` in `content/enrichers.py` | `@enricher("ocr", check=…, capability="ocr", triggers=["asset.processed"])` |
 | Annotation Schema | extraction contract | DB record, user-created | `{"fields": [...]}` |
-| Provider | external service behind a capability protocol | `@provider` in `foundation_service_providers/providers.py` | `resolve("scraping")` |
+| Provider | a **composition**: an endpoint + per domain a dialect, features, quirks, models | `@provider` in `foundation_service_providers/providers.py` | `resolve("scraping")` |
+| Dialect | a wire **packaging** — how a request and reply are shaped. One dialect serves many endpoints | `Domain.dialect()` in a domain package | `Language.dialects.blocks` (anthropic + llamacpp) |
+| Feature | an optional API surface an endpoint exposes; bound onto the instance | module with `PROVIDES` under `<domain>/features/` | `hasattr(p, "pull_model")` |
+| Quirk | a typed flag where one endpoint deviates inside its dialect | `<Domain>Quirks` dataclass | `LanguageQuirks(thinking_tags=True)` |
 
 ### Dimension 2: Registries
 
@@ -216,7 +223,8 @@ One registration, everything derives. Never branch on kind with if/elif — look
 | Source registry (`sources/__init__`) | `kind → SourceHandler class` | `ingest` task dispatch, `intake` validation, Source create validation |
 | ContentTypeRegistry (`types/__init__`) | `kind → ContentTypeDescriptor` | `detect_kind` (signals), `process_asset` (processor), importability, previews |
 | @task registry (`core/tasks.py`) | `name → TaskDescriptor` | beat dispatcher, `kick_tasks`, event subscriptions |
-| Provider registry | `(capability, key) → ProviderDescriptor` | `resolve()` / `ctx.provider()` — chain: explicit → infospace enrichment_config → owner defaults → env. BYOK runtime keys bypass the cache. |
+| Provider registry | `(domain, key) → ProviderDescriptor` | `resolve()` / `ctx.provider()` — chain: explicit → infospace enrichment_config → owner defaults → env. BYOK runtime keys bypass the cache. `CAPABILITIES` is *derived* from registered domains. |
+| Domain registry | `name → Domain` | one per capability; owns its protocol, dialects, features, quirks type, and engine (language: turn loop, embedding: batch loop) |
 
 ### Dimension 3: Composables
 
@@ -249,7 +257,7 @@ Dispatch mechanisms (all four first-class): **events** (fast path), **kick** (`k
 
 | Domain | Layer | Owns | Key Primitives |
 |---|---|---|---|
-| Foundation Providers | L0 | protocols, implementations, resolve() | `resolve()`, capability gating, BYOK |
+| Foundation Providers | L0 | 8 domains, their dialects/features/quirks, resolve() | `resolve()`, `list_models()`, capability gating, BYOK |
 | Core Infrastructure | L0 | @task, events, dispatch, streams | `@task`, `emit()`, `kick_tasks()`, `ctx.job_progress` |
 | Identity / Infospace | L1 | User, Infospace, access | `Requires()`, `Access`, `PackageScope` |
 | Content | L2 | Asset, Bundle, Source, IngestionJob; sources/types/enrichers; tree | `intake`, `ingest`, `process_asset`, tree verbs, `AssetQuery`, `AssetBuilder` |
@@ -272,8 +280,8 @@ Dispatch mechanisms (all four first-class): **events** (fast path), **kick** (`k
 | `web` | `{url}` \| `{urls: […]}` (+ inline `text` passthrough) | post-fetch kind detection: HTML → WEB stub (WebArticle scrapes in process); real file → blob |
 | `upload` | `{storage_path, filename?, title?, path?}` | route stages bytes first; `path` → sub-bundle placement |
 | `text` | `{text, title?, event_timestamp?}` | identity = content hash |
-| `rss` | `{feed_url, max_items?}` | inline entry content; drift token = pubdate |
-| `web_search` | `{query, max_results?}` | uses `ctx.search_provider`; snippet-wiggle-safe tokens |
+| `rss` | `{feed_url, max_items?}` | entry body inline when ≥ `SCRAPE_THRESHOLD`, else `fetch` scrapes the entry link; drift token = pubdate |
+| `web_search` | `{query, max_results?}` | uses `ctx.search_provider`; result body inline when ≥ `SCRAPE_THRESHOLD`, else `fetch` scrapes the URL; snippet-wiggle-safe tokens |
 | `directory` | `{path, copy_mode?, inbox_mode?, stable_seconds?, …}` | streaming `os.walk`; `mtime:size` tokens; inbox = same source with `inbox_mode` (helpers live here) |
 | `crawl` | `{base_url, max_depth?, max_urls?}` | bounded same-origin BFS discovery; fetch == web's fetch |
 
@@ -344,6 +352,8 @@ Ingestion progress rides the same machinery one level up: `ctx.job_progress(job_
 ## Graph Streaming — `stream_graph` with `GraphSource` variants
 
 Annotation triplets and persistent graphs share one streaming primitive: `stream_graph(session, iid, source, *, top_n_nodes, top_n_edges, chunk_size)` (`modules/graph/stream.py`), with `AnnotationGraphSource` (LATERAL over `Annotation.value`) and `PersistentGraphSource` (GraphEdge + Entity). Chunked, deduped across chunks, hard-stops at top-N — never materializes the full set in Python. Multi-graph-field schemas tag edges with `source_field_path`; legacy `"triplets"` keys are honored forever.
+
+A run's graph is configured in one place, `graph/reading.py` (`configure(aq, q=…)` → source; `collect` → graph), which both `/view`'s graph phase and the network panel's stream (`routes/network.py`, columns for the GPU via `graph/network.py`) call. `AnnotationGraphSource` windows each projection by **annotation** (next N ids off the index, then the LATERAL over just those, each value decompressed once in a materialised CTE) — paging the exploded rows themselves was quadratic in the run.
 
 Node identity is `_node_id(name, type)` — a global hash. That is load-bearing: the same entity named by a triplet, a nested row's entity leaf, or a top-level roster collapses into **one** node with no reconciliation code. Field-shape recognition comes from `annotation/schema_map.py` (one detector, shared with the frontend), not from local pattern-matching; `stream.py`'s `_SUBJECT_NAME_KEYS` COALESCE ladder survives only as the legacy fallback for schemas with no explicit role bindings.
 
@@ -466,6 +476,7 @@ An `output_contract` is a JSON Schema decorated with HQ extensions. **One** modu
 | `x-ref` | this field **reuses another field's vocabulary** — the linking primitive. A string **or a list**: one role can draw from several rosters (a `via` that is an intermediary *or* a routing account). Resolution walks a DAG, registering the field under every anchor it reaches. Merging never depended on it — node identity is `name + type` — so what a list adds is the *declaration*: enum propagation, and telling `SchemaMap` two paths name one population |
 | `x-canon` | this field resolves into a canon (+ injection controls, see below) |
 | `x-fromSource` / `x-toSource` | a triplet's endpoints are drawn from a named entity field |
+| `include_justification` | each item carries an inline `{reasoning, text_spans[]}`. On an **array it is declared on `items`**, not on the array node — one justification per item is the point. `core.task_utils.justification_flag()` is the one reader (it takes both placements); `schema_map`, `split_schema_for_extraction` and the Pydantic builder all go through it. All three used to read the array node alone, so the flag was written by the editor, stored, exported — and never read for any array section |
 
 `build_schema_map()` → `SchemaMap`: `fields` (typed `FieldNode` per path), `vocabularies` (the `x-ref` equivalence classes — `anchor_for(path)` gives the field a path resolves through), and `entity_paths` / `triplet_paths` / `time_paths` / `place_paths` as *candidates* a role picker offers. `schema_map_for()` caches on contract **content**, so there is no invalidation to get wrong. Served on `AnnotationSchemaRead.schema_map` (computed, never stored).
 
@@ -547,14 +558,14 @@ Per-asset ownership (no parent→child copying). `merge_facets()` bypasses ORM; 
 | Mechanism | Where | What it prevents |
 |---|---|---|
 | Atomic claim | `ingest` (job) + `item_processing` (asset) | double-processing: `UPDATE … WHERE status=PENDING`, rowcount=0 → skip |
-| Redis slot concurrency | `@task` wrapper (`max_concurrency` per task × infospace) | herd effects per infospace |
+| Redis slot concurrency | `@task` wrapper (`slot_held`, `max_concurrency` per task × infospace) | herd effects per infospace. The slot is held by a **heartbeat** — `SLOT_TTL=90` refreshed every `SLOT_HEARTBEAT=30` by a daemon thread — so a killed worker frees it in ~a minute. It was `ttl = timeout*2+60` released in a `finally`, which a killed process never reaches: four hours per crash on `process_annotation_run`, and four crashes wedged an infospace. Refresh and release are compare-and-act against a per-acquisition token, so a stalled heartbeat can never extend a slot that is no longer its own |
 | Structural block | `@task` wrapper (ProviderError → `:block` key) | retry storms on misconfig; cleared by config save |
 | Source claim | `run_source_ingestion` sets PROCESSING + advances `next_poll_at` | double-minting a poll mid-run |
 | Poll circuit breaker | `source_polling` check (`consecutive_failures` ≤ threshold) | dead-feed retry storms |
 | Stale reset | `reset_stale_processing` (3600s) | assets stuck after worker crash |
 | `task_acks_late` + `reject_on_worker_lost` | celery_app | lost work on worker death |
 
-Beat runs as a single instance; workers replicate freely (all downstream work is idempotent via claims + the dedup ladder, with asset identity enforced by a DB constraint rather than by convention — this claim used to be aspirational, and ~20% of newly created assets were duplicates because of it). Content work runs on its own `-Q processing` pool so a long ingest cannot starve annotate/embed.
+Beat runs as a single instance; workers replicate freely (all downstream work is idempotent via claims + the dedup ladder, with asset identity enforced by a DB constraint rather than by convention — this claim used to be aspirational, and ~20% of newly created assets were duplicates because of it). Content work runs on its own `-Q processing` pool so a long ingest cannot starve annotate/embed. Decisions ride `-Q logic` on the shared worker: a decision backend commonly answers one request at a time, so its width comes from the endpoint's own `parallel` quirk (the semaphore in `judge_many`) rather than from the pool — and when a consumer makes that contention real, the queue splits onto its own `--concurrency=1` worker the way `processing` already did.
 
 ---
 
@@ -578,7 +589,10 @@ Beat runs as a single instance; workers replicate freely (all downstream work is
 
 **7. Cross-domain trigger?** → emit an event; the subscribing @task handles it. Routes may compose any domain (they're outside the layer hierarchy).
 
-**8. New provider?** → `@provider` declaration; resolve via `resolve()` / `ctx.provider()` only.
+**8. New provider?** → one `@provider` declaration in `providers.py` (~15 lines if its wire
+already exists); resolve via `resolve()` / `ctx.provider()` only. A *new wire* is a dialect
+module under `<domain>/dialects/`. An optional API surface is a feature module. A one-endpoint
+deviation is a quirk field — see `DECISIONS.md` for which of the three a difference belongs to.
 
 **9. New injected context?** → it goes in `content/contexts.py`.
 
