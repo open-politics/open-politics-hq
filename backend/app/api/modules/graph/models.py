@@ -359,3 +359,71 @@ class CanonProposal(SQLModel, table=True):
         UniqueConstraint("canon_id", "type", "normalized_surface", name="uq_canon_proposal_surface"),
         Index("ix_canon_proposal_canon_status", "canon_id", "status"),
     )
+
+
+class EntityDecision(SQLModel, table=True):
+    """One pair of graph entities, and what was decided about them.
+
+    The live resolver (``graph/tasks/decide.py``) asks the logic model two
+    questions about a pair — *the same entity?* and *what is it?* — and writes
+    the answer here; a person can roll it back or decide it by hand. One row per
+    pair per run, keyed on the normalized pair, so a pair is never asked twice:
+
+        pending      waiting for the model
+        merged       one entity: ``keep`` names it, ``type`` types it — in effect
+        separate     two entities — in effect (nothing merges)
+        unsure       the model answered below the run's threshold — waits for a person
+        rolled_back  a person undid it — not in effect, and not asked again
+
+    ``trail`` is every earlier state of the row, oldest first, so the history a
+    reader opens is the whole of it and nothing is rewritten.
+
+    ``scope`` is where a decision took effect: ``run`` (the network reads it,
+    promote may fold it into a canon later) or ``canon`` (written into the run's
+    canon at once; ``canon_effect`` records exactly what, so rollback can undo
+    it). Either way the network reads every decision in effect.
+    """
+    __tablename__ = "entity_decision"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    infospace_id: int = Field(foreign_key="infospace.id", index=True)
+    run_id: int = Field(foreign_key="annotationrun.id", index=True)
+    a_name: str
+    a_type: str
+    b_name: str
+    b_type: str
+    #: Normalized, order-independent pair — the dedup key.
+    pair_key: str
+    #: Why the pair was asked: type · acronym · contains · spelling.
+    reason: str
+    #: Asked in descending order: how much of the network the pair touches.
+    priority: float = Field(default=0.0)
+    #: Exactly what the model was shown — the two labels and their company —
+    #: built once when the pair was found, so judging never rebuilds the graph
+    #: and the history can show what a decision was made on.
+    state: str = Field(default="", sa_column=Column(Text))
+    status: str = Field(default="pending")
+    keep: Optional[str] = None                     # "a" | "b" — whose name survives
+    type: Optional[str] = None                     # the merged entity's type
+    p_same: Optional[float] = None
+    p_type: Optional[Dict[str, float]] = Field(default=None, sa_column=Column(JSONB))
+    confidence: Optional[float] = None
+    model: Optional[str] = None
+    wire: Optional[str] = None
+    scope: str = Field(default="run")
+    canon_effect: Optional[Dict[str, Any]] = Field(default=None, sa_column=Column(JSONB))
+    #: Null when the model decided.
+    decided_by: Optional[int] = Field(default=None, foreign_key="user.id")
+    decided_at: Optional[datetime] = None
+    trail: List[Dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSONB))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc),
+        sa_column_kwargs={"onupdate": lambda: datetime.now(timezone.utc)},
+    )
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "pair_key", name="uq_entity_decision_pair"),
+        Index("ix_entity_decision_run_status", "run_id", "status"),
+        Index("ix_entity_decision_run_priority", "run_id", "priority"),
+    )

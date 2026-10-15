@@ -48,6 +48,7 @@ from app.api.modules.graph.models import (
     GraphEdge,
     FragmentCuration,
     CanonProposal,
+    EntityDecision,
 )
 from app.api.modules.flow.models import (
     Flow,
