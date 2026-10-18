@@ -558,6 +558,10 @@ export type AssetsOut = {
     count: number;
 };
 
+export type AssetsWhere = {
+    assets: Array<(number)>;
+};
+
 export type AssetTransferRequest = {
     asset_ids: Array<(number)>;
     source_infospace_id: number;
@@ -4069,6 +4073,27 @@ export type ValidationError = {
 };
 
 /**
+ * A condition on the run's annotation values — ``sentiment = negative``,
+ * ``topics ~ energy``. Values are alternatives.
+ */
+export type ValueTerm = {
+    /**
+     * A field path, as the schema map writes it (`topics[*]`).
+     */
+    path: string;
+    /**
+     * `=` is one of the values; `~` contains one.
+     */
+    op: '=' | '~';
+    values: Array<(string)>;
+};
+
+/**
+ * `=` is one of the values; `~` contains one.
+ */
+export type op = '=' | '~';
+
+/**
  * The unified /view request.
  *
  * One shared :class:`Formula` is the data scope across every requested
@@ -6643,6 +6668,16 @@ export type NetworkAssetsData = {
 };
 
 export type NetworkAssetsResponse = (NetworkAssetsPage);
+
+export type NetworkWhereData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: ValueTerm;
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type NetworkWhereResponse = (AssetsWhere);
 
 export type OverviewStreamData = {
     infospaceId: number;
