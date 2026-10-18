@@ -21,6 +21,11 @@ Interned and columnar: one list per channel, small integers where a string
 repeats. Everything else about a node — its evidence, its places, its forwarded
 properties — is read by opening the assets behind it (:func:`assets_of`), the
 same list the overview opens for a place or a name.
+
+The way in goes the other way too: :func:`assets_where` reads which of the
+run's assets carry an annotation value — ``sentiment = negative``, ``topics ~
+energy`` — so a reader can gather the nodes those documents produced, beside
+the names, types and groups the graph itself carries.
 """
 from __future__ import annotations
 
@@ -32,7 +37,7 @@ from sqlmodel import Session
 
 from app.api.modules.graph.schemas import GraphResultData
 
-__all__ = ["pack", "assets_of"]
+__all__ = ["pack", "assets_of", "assets_where"]
 
 #: Node ``kind`` on the wire. Entities are the labelled nouns; occurrences the
 #: numerous connective tissue — the renderer treats them oppositely.
@@ -202,3 +207,38 @@ def assets_of(
         "total": rows[0].total if rows else 0,
         "offset": offset,
     }
+
+
+def assets_where(scope: Any, path: str, op: str, values: Sequence[str]) -> list[int]:
+    """The run's assets with an annotation whose ``path`` is (``=``) or
+    contains (``~``) any of ``values`` — any schema of the run, read under
+    *scope* as everything else is.
+
+    ``=`` also matches every spelling an alias at ``path`` folds into a value,
+    so a value offered by the alias-merged distinct list finds its raw rows.
+    ``~`` is a case-insensitive substring. An array path (``topics[*]``)
+    matches when any element does.
+    """
+    from app.core.filters import FieldCondition, FilterSet
+
+    wanted = [v for v in dict.fromkeys(str(v).strip() for v in values) if v]
+    if not wanted:
+        return []
+    if op == "=":
+        spellings = list(wanted)
+        folded = {v.lower() for v in wanted}
+        for mm in scope.merge_maps:
+            if mm.field_path != path:
+                continue
+            for entry in mm.entries:
+                if entry.keep.lower() in folded:
+                    spellings.extend(entry.names)
+        cond = FieldCondition(path=path, operator="in", value=list(dict.fromkeys(spellings)))
+        return scope.query().filter(FilterSet(conditions=[cond])).asset_ids()
+    if op == "~":
+        out: set[int] = set()
+        for v in wanted:
+            cond = FieldCondition(path=path, operator="contains", value=v)
+            out.update(scope.query().filter(FilterSet(conditions=[cond])).asset_ids())
+        return sorted(out)
+    raise ValueError(f"unknown operator {op!r}")

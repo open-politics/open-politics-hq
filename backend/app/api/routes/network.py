@@ -3,6 +3,8 @@
     POST /infospaces/{iid}/runs/{run_id}/network          (SSE)
     POST /infospaces/{iid}/runs/{run_id}/network/assets   (JSON) — the assets
          behind a set of the graph's annotations; see :func:`network_assets`
+    POST /infospaces/{iid}/runs/{run_id}/network/where    (JSON) — the assets
+         whose annotations carry a value; see :func:`network_where`
 
     frame     denominators + the watermark (the overview's frame)
     building  every few seconds while the graph assembles: elapsed time
@@ -27,7 +29,7 @@ import hashlib
 import json
 import logging
 import time
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.sse import EventSourceResponse, ServerSentEvent
@@ -210,3 +212,40 @@ def network_assets(
         except LookupError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         return net.assets_of(scope, body.annotations, offset=body.offset, limit=body.limit)
+
+
+# ─── Gathering by value ──────────────────────────────────────────────────────
+
+
+class ValueTerm(BaseModel):
+    """A condition on the run's annotation values — ``sentiment = negative``,
+    ``topics ~ energy``. Values are alternatives."""
+
+    path: str = Field(description="A field path, as the schema map writes it (`topics[*]`).")
+    op: Literal["=", "~"] = Field(description="`=` is one of the values; `~` contains one.")
+    values: list[str] = Field(min_length=1, max_length=50)
+
+
+class AssetsWhere(BaseModel):
+    assets: list[int]
+
+
+@router.post("/{run_id}/network/where", response_model=AssetsWhere)
+def network_where(
+    *,
+    run_id: int,
+    body: ValueTerm,
+    access: Access = Requires(scope=None),
+) -> Any:
+    """The run's assets with an annotation, of any of its schemas, whose value
+    at ``path`` matches — what the client gathers a value's nodes by, through
+    each node's annotations."""
+    access.require_in_scope("run_ids", run_id)
+    with Session(engine) as session:
+        try:
+            scope = ov.open_scope(session, access, run_id)
+            return {"assets": net.assets_where(scope, body.path, body.op, body.values)}
+        except LookupError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e

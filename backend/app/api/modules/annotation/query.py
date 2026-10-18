@@ -1529,6 +1529,15 @@ class AnnotationQuery:
     # Materialization 4: distinct_values()
     # ------------------------------------------------------------------
 
+    def asset_ids(self) -> list[int]:
+        """The distinct assets whose annotations pass the query — what a
+        condition on annotation values narrows a reading to, in the unit
+        every reading shares."""
+        clauses, params = self._base_where(include_cursor=False)
+        self._apply_conditions(clauses, params)
+        sql = f"SELECT DISTINCT a.asset_id FROM annotation a WHERE {' AND '.join(clauses)}"
+        return [int(r[0]) for r in self._session.exec(text(sql).bindparams(**params)).all()]
+
     def distinct_values(
         self,
         field_path: str,

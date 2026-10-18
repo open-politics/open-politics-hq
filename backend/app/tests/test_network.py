@@ -199,3 +199,26 @@ def test_a_selection_cannot_reach_past_the_run(world):
     page = net.assets_of(w.scope, [w.failed, w.foreign])
     assert page == {"items": [], "total": 0, "offset": 0}
     assert net.assets_of(w.scope, []) == {"items": [], "total": 0, "offset": 0}
+
+
+def test_a_value_gathers_the_assets_that_carry_it(world):
+    import dataclasses
+
+    from app.core.filters import MergeMap, MergeMapEntry
+
+    w, a = world, world.assets
+    what = "document.events[*].what"
+    assert net.assets_where(w.scope, what, "=", ["e3"]) == [a["A5"]]
+    assert sorted(net.assets_where(w.scope, what, "=", ["e2", "e3"])) == sorted([a["A1"], a["A5"]])
+    assert net.assets_where(w.scope, what, "~", ["3"]) == [a["A5"]]
+    assert sorted(net.assets_where(w.scope, "document.dated", "=", ["2026-02-01"])) == sorted(a.values())
+    # Only the run's readable rows: the failed annotation's actor is nowhere.
+    assert net.assets_where(w.scope, "document.actors[*].name", "=", ["Zed"]) == []
+    assert net.assets_where(w.scope, what, "=", ["  "]) == []
+    # A value an alias folds into finds the spellings it folds.
+    aliased = dataclasses.replace(w.scope, merge_maps=[
+        MergeMap(field_path=what, entries=[MergeMapEntry(keep="Last", names=["e3"])]),
+    ])
+    assert net.assets_where(aliased, what, "=", ["last"]) == [a["A5"]]
+    with pytest.raises(ValueError):
+        net.assets_where(w.scope, "bad path;", "=", ["x"])
