@@ -1277,7 +1277,7 @@ def process_annotation_run(ctx: TaskContext, run_ids: list[int]) -> None:
                         run = session.get(AnnotationRun, run_id)
                         if run:
                             run.status = RunStatus.FAILED
-                            run.error_message = f"Critical task error: {str(e)}"
+                            run.error_message = f"Critical task error: {_error_text(e)}"
                             run.completed_at = datetime.now(timezone.utc)
                             run.updated_at = datetime.now(timezone.utc)
                             session.add(run)
@@ -1286,7 +1286,7 @@ def process_annotation_run(ctx: TaskContext, run_ids: list[int]) -> None:
                             fail_payload = {
                                 "run_id": run_id,
                                 "status": "failed",
-                                "error": str(e),
+                                "error": _error_text(e),
                             }
                             ctx.send("annotation_run", run_id, "failed", fail_payload)
                     except Exception as db_exc:
@@ -2560,6 +2560,13 @@ async def process_assets_parallel(
 
 WATERMARK_KEY = "_watermark"  # max asset id this run has attempted; the stream cursor
 LIVE_AGGREGATE_THROTTLE_SECONDS = 120  # min gap between aggregate recomputes for a live run
+ERROR_TEXT_LIMIT = 2000
+
+
+def _error_text(e: Exception) -> str:
+    """A failure as a run stores and streams it: the driver's own error, not
+    SQLAlchemy's wrapper (whose text embeds the whole statement), capped."""
+    return str(getattr(e, "orig", None) or e)[:ERROR_TEXT_LIMIT]
 
 
 def _delta_query(session: Session, run: AnnotationRun, watermark: int, *, limit: Optional[int] = None):
@@ -3138,7 +3145,7 @@ async def _process_annotation_run_async(
                     run_to_fail = fail_session.get(AnnotationRun, run_id)
                     if run_to_fail:
                         run_to_fail.status = RunStatus.FAILED
-                        run_to_fail.error_message = f"Critical task error: {str(e_task_critical)}"
+                        run_to_fail.error_message = f"Critical task error: {_error_text(e_task_critical)}"
                         run_to_fail.updated_at = datetime.now(timezone.utc)
                         run_to_fail.completed_at = datetime.now(timezone.utc)
                         fail_session.add(run_to_fail)
@@ -3148,7 +3155,7 @@ async def _process_annotation_run_async(
                         fail_payload = {
                             "run_id": run_id,
                             "status": "failed",
-                            "error": str(e_task_critical),
+                            "error": _error_text(e_task_critical),
                         }
                         _sw = StreamWriter(stream_key(run_to_fail.infospace_id, "annotation_run", run_id))
                         _sw.send("failed", fail_payload)

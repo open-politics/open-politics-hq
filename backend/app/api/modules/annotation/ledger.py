@@ -51,7 +51,9 @@ def run_scope_clause(session: Session, run: AnnotationRun):
 
     asset_ids = cfg.get("target_asset_ids")
     if asset_ids:
-        clauses.append(Asset.id.in_(list(asset_ids)))
+        # One array parameter, not an IN list: psycopg binds each IN value as its
+        # own parameter and the protocol caps a statement at 65,535 of them.
+        clauses.append(text("asset.id = ANY(CAST(:scope_aids AS int[]))").bindparams(scope_aids=list(asset_ids)))
 
     if not clauses:
         return None

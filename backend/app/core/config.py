@@ -307,6 +307,10 @@ class AppSettings(BaseSettings):
     MAX_UPLOAD_SIZE_BYTES: int = Field(validation_alias=AliasChoices("MAX_UPLOAD_SIZE_BYTES", AliasPath("deployment", "processing", "max_upload_size_bytes")), default=1024 * 1024 * 1024, ge=1)  # 1GB default
     # PDF processing: max pages per document (0 = no limit, for 400GB+ bulk deployments)
     PDF_MAX_PAGES: int = Field(validation_alias=AliasChoices("PDF_MAX_PAGES", AliasPath("deployment", "processing", "pdf_max_pages")), default=0, ge=0, description="Max pages to process per PDF; 0 = no limit")
+    # Size of the `processing` worker pool (compose passes the same variable to its
+    # --concurrency). item_processing admits this many chains per infospace, so the
+    # pool is never left half idle behind the @task default of 4.
+    CELERY_PROCESSING_CONCURRENCY: int = Field(validation_alias=AliasChoices("CELERY_PROCESSING_CONCURRENCY"), default=4, ge=1)
     # Which containers this deployment starts, and where each provider lives.
     # Read by the coherence gate; not otherwise consulted at runtime.
     FOUNDATION_RUN: Dict[str, bool] = Field(

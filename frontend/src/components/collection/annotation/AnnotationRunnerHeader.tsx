@@ -424,8 +424,8 @@ function Failures({
               )}
             </div>
             {run.error_message && (
-              <p className="max-h-20 overflow-y-auto text-xs leading-relaxed text-hud-dimmer [overflow-wrap:anywhere]">
-                {run.error_message}
+              <p className="line-clamp-3 text-xs leading-relaxed text-hud-dimmer break-words" title={run.error_message.slice(0, 2000)}>
+                {run.error_message.slice(0, 500)}
               </p>
             )}
           </div>

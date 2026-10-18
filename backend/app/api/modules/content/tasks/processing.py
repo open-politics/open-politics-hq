@@ -24,6 +24,7 @@ from sqlmodel import Session, select
 from app.api.modules.content.contexts import ProcessingContext
 from app.api.modules.content.models import Asset, ProcessingStatus
 from app.api.modules.foundation_service_providers import StorageProvider, ScrapingProvider
+from app.core.config import settings
 from app.core.tasks import TaskContext, task
 from app.core.task_utils import run_async_in_celery
 
@@ -127,6 +128,7 @@ def _pending_with_ready_parent(iid: int):
       self_chain=True,
       batch=50,
       queue="processing",
+      max_concurrency=settings.CELERY_PROCESSING_CONCURRENCY,
       # A container type's `process` does real work inside this task: a PDF
       # splits into pages, an archive unrolls (nested, in-process), a feed
       # document runs the whole acquire spine over its entries — which now

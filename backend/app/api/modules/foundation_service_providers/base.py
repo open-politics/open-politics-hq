@@ -30,6 +30,10 @@ import httpx
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_SECONDS = 900.0
+# Under the 5s idle cutoff of llama.cpp (cpp-httplib) and most proxies. At equal
+# values a request sent at ~5s idle lands on a socket the server is closing:
+# "Server disconnected without sending a response".
+KEEPALIVE_EXPIRY_SECONDS = 2.0
 
 
 class Adapter:
@@ -68,7 +72,11 @@ class Adapter:
     def client(self) -> httpx.AsyncClient:
         """Lazily-created async client, one per adapter instance."""
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self.timeout, headers=self.headers())
+            self._client = httpx.AsyncClient(
+                timeout=self.timeout,
+                headers=self.headers(),
+                limits=httpx.Limits(keepalive_expiry=KEEPALIVE_EXPIRY_SECONDS),
+            )
         return self._client
 
     def headers(self) -> dict:
