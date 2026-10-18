@@ -326,7 +326,7 @@ describe('merge', () => {
 
 describe('time deck', () => {
   test('the present is lit, what is ahead fades, what is behind goes', async () => {
-    const { sliceAlpha } = await import('./TimeDeck');
+    const { sliceAlpha } = await import('./deck');
     expect(sliceAlpha(3, 3, 0)).toBe(1);
     expect(sliceAlpha(4, 3, 1)).toBe(1);                       // inside a two-slice present
     const ahead = [5, 6, 9].map((k) => sliceAlpha(k, 3, 1));
@@ -337,19 +337,108 @@ describe('time deck', () => {
     expect(sliceAlpha(2.6, 3, 0)).toBeGreaterThan(0);          // … but fades on the way
   });
 
-  test('a link belongs to the slice of its nearer end', async () => {
-    const { deckSlices } = await import('./TimeDeck');
-    // ann, bob, meet, acme, rome — rome undated.
-    const slice = Int32Array.from([0, 2, 1, 2, -1]);
-    const { nodes, links, named } = deckSlices(net, slice, 3, null);
-    expect(nodes).toEqual([[0], [2], [1, 3]]);
-    for (let k = 0; k < 3; k++) {
-      for (const j of links[k]) expect(Math.min(slice[net.source[j]], slice[net.target[j]])).toBe(k);
-    }
-    expect(links.flat().length).toBe(net.links);               // every link has dated ends here
-    expect(named[1]).toEqual([]);                             // occurrences are not named
-    const hidden = deckSlices(net, slice, 3, Uint8Array.from([1, 0, 1, 1, 1]));
-    expect(hidden.nodes[2]).toEqual([3]);
+  test('with a cut, its slice is lit, the window steps back, the past stays a trace', async () => {
+    const { cutAlpha } = await import('./deck');
+    // A window over slices 3–5, cut at 4.
+    expect(cutAlpha(4, 3, 2, 4)).toBe(1);
+    expect(cutAlpha(3, 3, 2, 4)).toBe(0.5);
+    expect(cutAlpha(5, 3, 2, 4)).toBe(0.5);
+    const past = [2, 1].map((k) => cutAlpha(k, 3, 2, 4));
+    expect(past[0]).toBeGreaterThan(0);
+    expect(past[0]).toBeLessThan(0.3);
+    expect(past[1]).toBeLessThan(past[0]);
+    expect(cutAlpha(7, 3, 2, 4)).toBeLessThan(0.5);
+    expect(cutAlpha(4.5, 3, 2, 4.5)).toBe(1);                 // the cut glides
+  });
+});
+
+describe('presence', () => {
+  test('as published, a node is wherever its documents are — once per document', async () => {
+    const { presenceOf } = await import('./presence');
+    // Asset 101 is 2020, asset 100 is 2023.
+    const p = presenceOf(net, 'published', 'year');
+    expect(p.cells).toEqual([Date.UTC(2020, 0, 1), Date.UTC(2023, 0, 1)]);
+    const at = (i: number) => [...p.slice.slice(p.offsets[i], p.offsets[i + 1])];
+    expect(at(0)).toEqual([0, 1]);                             // Ann: both years
+    expect(at(3)).toEqual([1]);                                // Acme: 2023
+    expect(at(4)).toEqual([0]);                                // Rome: two annotations, one document
+    expect(p.count[p.offsets[4]]).toBe(1);
+    expect(p.bins.map((b) => b.n)).toEqual([4, 2]);
+    expect(p.present).toBe(5);
+  });
+
+  test('as stated, an actor is there when what it takes part in happens', async () => {
+    const { presenceOf } = await import('./presence');
+    // Only the meeting states a time (2026); Ann and Bob take part in it.
+    const p = presenceOf(net, 'stated', 'year');
+    expect(p.cells).toEqual([Date.UTC(2026, 0, 1)]);
+    const present = [0, 1, 2, 3, 4].filter((i) => p.offsets[i + 1] > p.offsets[i]);
+    expect(present).toEqual([0, 1, 2]);
+  });
+
+  test('a window holds whoever is there in it, loudest first', async () => {
+    const { presenceOf, presentIn, sliceSpan } = await import('./presence');
+    const p = presenceOf(net, 'published', 'year');
+    expect(sliceSpan(p.cells, [Date.UTC(2023, 0, 1), Date.UTC(2023, 0, 1)], 'year')).toEqual([1, 1]);
+    expect(sliceSpan(p.cells, [Date.UTC(2021, 0, 1), Date.UTC(2022, 0, 1)], 'year')).toEqual([-1, -1]);
+    expect(presentIn(p, 1, 1, null).sort()).toEqual([0, 3]);
+    expect(presentIn(p, 0, 1, Uint8Array.from([1, 1, 1, 0, 1])).includes(3)).toBe(false);
+  });
+});
+
+describe('space-time cube', () => {
+  // ann (entity) at 0, 1, 2 · bob (entity) at 2 · meet (occurrence) at 1 ·
+  // acme (entity) at 0, 1 · rome never. Links: ann–meet, bob–meet, ann–acme.
+  const presence = (() => {
+    const lists: Array<Array<[number, number]>> = [[[0, 1], [1, 3], [2, 1]], [[2, 1]], [[1, 1]], [[0, 2], [1, 1]], []];
+    const offsets = new Uint32Array(6);
+    lists.forEach((l, i) => { offsets[i + 1] = offsets[i] + l.length; });
+    const flat = lists.flat();
+    return {
+      cells: [0, 1, 2], bins: [], offsets, present: 4,
+      slice: Int32Array.from(flat.map(([k]) => k)), count: Uint32Array.from(flat.map(([, m]) => m)),
+      peak: Uint32Array.from(lists.map((l) => Math.max(0, ...l.map(([, m]) => m)))),
+    };
+  })();
+
+  test('actors are threads, relations lie flat where both ends are there, the rest stream', async () => {
+    const { deckSlices } = await import('./deck');
+    const d = deckSlices(net, presence, null);
+    expect(d.nodes).toEqual([[0, 3], [0, 2, 3], [0, 1]]);
+    expect(d.loud[1]).toEqual([3, 1, 1]);
+    expect(d.threads).toEqual([[0, 3], [0], []]);              // the meeting is a point
+    expect(d.flat[0]).toEqual([2]);                            // ann–acme, at 0 and 1
+    expect(d.flat[1].sort()).toEqual([0, 2]);                  // ann–meet at 1
+    expect(d.streams[1]).toEqual([1]);                         // bob (2) and the meeting (1) never meet
+    expect([d.span[2], d.span[3]]).toEqual([2, 1]);
+    expect(d.named[1]).toEqual([0, 3]);                        // loudest first; occurrences unnamed
+    expect([...d.first]).toEqual([0, 2, 1, 0, -1]);
+    expect(d.drawn).toEqual([0, 1, 2, 3]);
+    const hidden = deckSlices(net, presence, Uint8Array.from([1, 1, 1, 0, 1]));
+    expect(hidden.flat[0]).toEqual([]);
+    expect(hidden.threads[0]).toEqual([0]);
+  });
+
+  test('change at the present: threads that begin, threads gone quiet', async () => {
+    const { deckSlices, deckChange } = await import('./deck');
+    const d = deckSlices(net, presence, null);
+    expect(deckChange(d, 0).onset.sort()).toEqual([0, 3]);
+    expect(deckChange(d, 2)).toEqual({ onset: [], quiet: [3] });   // acme ran 0–1, not at 2
+    expect(deckChange(d, 1).quiet).toEqual([]);
+    expect(deckChange(d, 5)).toEqual({ onset: [], quiet: [] });
+  });
+
+  test('the cut marks where streams pass through it; the plate holds everything drawn', async () => {
+    const { deckSlices, deckCrossings, deckExtent } = await import('./deck');
+    const d = deckSlices(net, presence, null);
+    const pos = Float32Array.from([0, 0, 10, 10, 4, 4, 20, 0, 0, 0]);
+    const at = deckCrossings(net, d, pos, 1.5);
+    // bob (10, 10) at 2 → meeting (4, 4) at 1: halfway at 1.5.
+    expect([...at]).toEqual([7, 7, 1]);
+    expect(deckCrossings(net, d, pos, 1).length).toBe(0);      // on a slice is in it, not through it
+    const box = deckExtent(pos, d.drawn)!;
+    expect(box[0]).toBeLessThan(0);
+    expect(box[2]).toBeGreaterThan(20);
   });
 });
 
@@ -387,35 +476,135 @@ describe('gain', () => {
   });
 });
 
-describe('anchors', () => {
-  test('words gather the named and what they link to; type: keeps a type', async () => {
-    const { anchorMatches } = await import('./anchoring');
-    const m = anchorMatches(net, 'ANN');
-    expect(m.direct.map((i) => net.id[i])).toEqual(['ann']);
-    expect(new Set(m.related.map((i) => net.id[i]))).toEqual(new Set(['meet', 'acme']));
-    const typed = anchorMatches(net, `type:${net.types[net.type[net.index.get('rome')!]]}`);
-    expect(typed.direct.map((i) => net.id[i])).toEqual(['rome']);
-    expect(anchorMatches(net, 'ann', (i) => net.id[i] !== 'acme').related.map((i) => net.id[i])).toEqual(['meet']);
+describe('sets', () => {
+  const ids = (xs: readonly number[]) => xs.map((i) => net.id[i]).sort();
+  const world = async (assets: Record<string, number[]> = {}) => {
+    const { evaluateSets } = await import('./sets');
+    return (sets: import('./sets').NodeSet[]) => evaluateSets(sets, {
+      net,
+      groupMembers: (key) => (key === 'g' ? [0, 1] : undefined),
+      valueAssets: (t) => (t.values[0] in assets ? new Set(assets[t.values[0]]) : undefined),
+    });
+  };
+
+  test('values are alternatives, terms narrow, ≠ takes away', async () => {
+    const run = await world();
+    const r = run([
+      { id: 'a', terms: [{ kind: 'type', op: '=', values: ['person', 'Organization'] }] },
+      { id: 'b', terms: [{ kind: 'type', op: '=', values: ['Person'] }, { kind: 'name', op: '~', values: ['an'] }] },
+      { id: 'c', terms: [{ kind: 'type', op: '!', values: ['Person'] }] },
+      { id: 'd', terms: [] },
+    ]);
+    expect(ids(r.get('a')!.members)).toEqual(['acme', 'ann', 'bob']);
+    expect(ids(r.get('b')!.members)).toEqual(['ann']);
+    expect(ids(r.get('c')!.members)).toEqual(['acme', 'meet', 'rome']);
+    expect(r.get('d')!.members).toEqual([]);
+    // Most frequent first.
+    expect(r.get('a')!.members.map((i) => net.id[i])).toEqual(['ann', 'acme', 'bob']);
   });
 
+  test('~ on a node, a group or a set takes in what it links to', async () => {
+    const run = await world();
+    const r = run([
+      { id: 'near', terms: [{ kind: 'entity', op: '~', values: ['ann'] }] },
+      { id: 'group', terms: [{ kind: 'group', op: '=', values: ['g'] }] },
+      { id: 'both', terms: [{ kind: 'set', op: '=', values: ['near'] }, { kind: 'set', op: '=', values: ['group'] }] },
+      { id: 'either', terms: [{ kind: 'set', op: '=', values: ['near', 'group'] }] },
+      { id: 'loop', terms: [{ kind: 'set', op: '=', values: ['loop'] }] },
+    ]);
+    expect(ids(r.get('near')!.members)).toEqual(['acme', 'ann', 'meet']);
+    expect(ids(r.get('both')!.members)).toEqual(['ann']);
+    expect(ids(r.get('either')!.members)).toEqual(['acme', 'ann', 'bob', 'meet']);
+    expect(r.get('loop')!.members).toEqual([]);
+  });
+
+  test('a place gathers the nodes claimed there; a value the nodes its documents produced', async () => {
+    const run = await world({ negative: [100] });
+    const r = run([
+      { id: 'paris', terms: [{ kind: 'place', op: '=', values: ['paris'] }] },
+      { id: 'value', terms: [{ kind: 'value', field: 'sentiment', op: '=', values: ['negative'] }] },
+      { id: 'loading', terms: [{ kind: 'value', field: 'sentiment', op: '=', values: ['positive'] }] },
+    ]);
+    expect(ids(r.get('paris')!.members)).toEqual(['acme']);
+    expect(ids(r.get('value')!.members)).toEqual(['acme', 'ann']);
+    expect(r.get('value')!.pending).toBe(false);
+    expect(r.get('loading')!).toEqual({ members: [], pending: true });
+  });
+
+  test('adding joins a facet, or narrows apart; an emptied term goes', async () => {
+    const { addTerm, dropValue, fromWords } = await import('./sets');
+    let s: import('./sets').NodeSet = { id: 'x', terms: [] };
+    s = addTerm(s, { kind: 'type', op: '=', values: ['Person'] });
+    s = addTerm(s, { kind: 'type', op: '=', values: ['Organization'] });
+    expect(s.terms).toEqual([{ kind: 'type', op: '=', values: ['Person', 'Organization'] }]);
+    s = addTerm(s, { kind: 'entity', op: '~', values: ['ann'] });
+    s = addTerm(s, { kind: 'entity', op: '~', values: ['bob'] }, true);
+    expect(s.terms.length).toBe(3);
+    expect(dropValue(s, 1, 'ann').terms.length).toBe(2);
+    expect(fromWords({ id: 'a', q: 'type:Person sanctions', space: 'free', x: 1, y: 2 })).toEqual({
+      id: 'a', gain: undefined, at: { free: [1, 2] },
+      terms: [{ kind: 'type', op: '=', values: ['Person'] }, { kind: 'name', op: '~', values: ['sanctions'] }],
+    });
+  });
+});
+
+describe('anchors', () => {
   test('an anchor is a cluster at its point; a lane keeps the node\'s time', async () => {
-    const { anchorMatches, withAnchors } = await import('./anchoring');
+    const { withAnchors } = await import('./anchoring');
     const { byGroups, byTime } = await import('./arrange');
     const { identity } = await import('./collapse');
     const view = identity(net);
-    const m = [anchorMatches(net, 'ann')];
-    const free = withAnchors(byGroups(net, () => -1), view, [{ id: 'a', q: 'ann', space: 'free', x: 100, y: 200 }], m);
-    const ann = net.index.get('ann')!;
+    const ann = net.index.get('ann')!, meet = net.index.get('meet')!;
+    const pull = { gain: 0, direct: [ann], related: [meet] };
+    const free = withAnchors(byGroups(net, () => -1), view, [{ ...pull, space: 'free', x: 100, y: 200 }]);
     const c = free.clusters[ann]!;
     expect([free.clusterPositions[2 * c], free.clusterPositions[2 * c + 1]]).toEqual([100, 200]);
-    expect(free.strength[ann]).toBeGreaterThan(free.strength[net.index.get('meet')!]);
+    expect(free.strength[ann]).toBeGreaterThan(free.strength[meet]);
     expect(free.forces.simulationCluster).toBeGreaterThanOrEqual(0.4);
 
     const times = Float64Array.from(net.id.map((_, i) => Date.UTC(2026, i, 1)));
     const tl = byTime(net, times, 4096, 'month');
-    const lane = withAnchors(tl.arrangement, view, [{ id: 'l', q: 'ann', space: 'time', x: 0, y: 300 }], m);
+    const lane = withAnchors(tl.arrangement, view, [{ ...pull, space: 'time', x: 0, y: 300 }]);
     const k = lane.clusters[ann]!, own = tl.arrangement.clusters[ann]!;
     expect(lane.clusterPositions[2 * k]).toBe(tl.arrangement.clusterPositions[2 * own]);   // its time
     expect(lane.clusterPositions[2 * k + 1]).toBe(300);                                    // the lane's height
+  });
+});
+
+describe('light', () => {
+  test('a lit node lights its direct links and their far ends, and nothing past them', async () => {
+    const { lightOf, joinLight, toggleLight } = await import('./light');
+    const { identity } = await import('./collapse');
+    const view = identity(net);
+    const lit = lightOf(view, [net.index.get('acme')!]);
+    expect(lit.seeds.map((i) => net.id[i])).toEqual(['acme']);
+    expect(lit.points.map((i) => net.id[i]).sort()).toEqual(['acme', 'ann']);
+    expect(lit.links).toEqual([2]);
+    const both = joinLight([lit, lightOf(view, [net.index.get('bob')!])])!;
+    expect(both.points.map((i) => net.id[i]).sort()).toEqual(['acme', 'ann', 'bob', 'meet']);
+    expect(joinLight([null, undefined])).toBeNull();
+    expect(toggleLight(toggleLight([], 'node', 'a'), 'node', 'a')).toEqual([]);
+  });
+});
+
+describe('declutter', () => {
+  test('names never sit on names; what must show, shows; the order is the say', async () => {
+    const { declutter } = await import('./declutter');
+    const at = (i: number, x: number, y: number) => ({ i, x, y, r: 3, w: 60, h: 14 });
+    // 1 and 2 would overlap; 3 is clear of both.
+    const kept = declutter([at(1, 0, 0), at(2, 10, 4), at(3, 0, 40)]);
+    expect(kept).toEqual([1, 3]);
+    expect(declutter([at(1, 0, 0), at(2, 10, 4)], { must: new Set([2]) })).toEqual([2]);
+    expect(declutter([at(1, NaN, 0), at(2, 10, 4)])).toEqual([2]);
+    // Side by side with room: both.
+    expect(declutter([at(1, 0, 0), at(2, 200, 0)])).toEqual([1, 2]);
+  });
+
+  test('a pile under the pointer, loudest first', async () => {
+    const { stackAt } = await import('./declutter');
+    const screen: Record<number, [number, number, number]> = { 1: [10, 10, 6], 2: [12, 11, 4], 3: [40, 40, 4] };
+    const under = stackAt([11, 10], [1, 2, 3], (i) => screen[i], (i) => -i);
+    expect(under).toEqual([2, 1]);
+    expect(stackAt([40, 40], [1, 2, 3], (i) => screen[i], (i) => -i)).toEqual([3]);
   });
 });

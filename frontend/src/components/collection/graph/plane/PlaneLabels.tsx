@@ -10,8 +10,11 @@
  * them. Zooming in shrinks each cell's share of the graph, so more names
  * appear exactly where there is room for them.
  *
- * `pinned` nodes — the focus, its neighbours, the hovered one — are always
- * named, wherever they are.
+ * Names never sit on names (`declutter`): the hovered or focused node always
+ * shows, then the pinned — the focus's neighbours, a window's loudest, what
+ * is lit — then the sample's most frequent, each kept only where it overlaps
+ * none already kept. Where the graph is dense the loudest speak; zoom in and
+ * the rest find room.
  *
  * Two clocks. *Which* nodes are named is re-decided at most every
  * `RESAMPLE_MS` (a sample is a GPU read-back); *where* the names sit follows
@@ -21,6 +24,7 @@
  */
 import { useEffect, useRef } from 'react';
 import { usePlane } from './CosmosPlane';
+import { declutter, labelWidth, type LabelCandidate } from './declutter';
 
 const OCCURRENCE = 1;
 const RESAMPLE_MS = 250;
@@ -28,13 +32,13 @@ const RESAMPLE_MS = 250;
 export function PlaneLabels({
   pinned = [],
   emphasis = null,
-  max = 48,
+  max = 96,
 }: {
-  /** Always named, wherever they are. */
+  /** Named first, where they fit. */
   pinned?: number[];
-  /** Named larger — the focused or hovered node. */
+  /** Named larger, and always — the focused or hovered node. */
   emphasis?: number | null;
-  /** Names drawn from the sample, beyond the pinned ones. */
+  /** Names drawn from the sample at most, beyond the pinned ones. */
   max?: number;
 }) {
   const plane = usePlane();
@@ -62,18 +66,37 @@ export function PlaneLabels({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plane]);
 
-  /** Decide which nodes carry a name: the pinned ones, then the most
-   *  frequent entities in an even sample of the screen. */
+  /** Decide which nodes carry a name: the emphasised, the pinned, then the
+   *  most frequent entities in an even sample of the screen — each where its
+   *  name overlaps none already chosen. */
   function resample() {
     const graph = plane.graph!;
     const net = plane.network;
-    const { pinned, max } = props.current;
-    const taken = new Set(pinned);
-    const sample = [...graph.getSampledPointPositionsMap().keys()]
+    const { pinned, max, emphasis } = props.current;
+    const sampled = graph.getSampledPointPositionsMap();
+    const tracked = graph.getTrackedPointPositionsMap();
+    const first = [...new Set(emphasis != null ? [emphasis, ...pinned] : pinned)];
+    const taken = new Set(first);
+    const sample = [...sampled.keys()]
       .filter((i) => !taken.has(i) && net.kind[i] !== OCCURRENCE)
-      .sort((a, b) => net.frequency[b] - net.frequency[a])
-      .slice(0, max);
-    named.current = [...pinned, ...sample];
+      .sort((a, b) => net.frequency[b] - net.frequency[a]);
+    const candidates: LabelCandidate[] = [];
+    // Pinned the plane is not tracking yet have no position this frame: they
+    // are named now and take their turn at the next decision.
+    const unplaced: number[] = [];
+    const add = (i: number, p: [number, number]) => {
+      const [x, y] = graph.spaceToScreenPosition(p);
+      const r = graph.spaceToScreenRadius(graph.getPointRadiusByIndex(i) ?? 2);
+      candidates.push({ i, x, y, r, w: labelWidth(net.name[i], i === emphasis ? 12.5 : 11), h: 14 });
+    };
+    for (const i of first) {
+      const p = tracked.get(i) ?? sampled.get(i);
+      if (p) add(i, p as [number, number]); else unplaced.push(i);
+    }
+    for (const i of sample) add(i, sampled.get(i) as [number, number]);
+    const kept = declutter(candidates, { must: emphasis != null ? new Set([emphasis]) : undefined });
+    const fromSample = kept.filter((i) => !taken.has(i)).slice(0, max);
+    named.current = [...unplaced, ...kept.filter((i) => taken.has(i)), ...fromSample];
     plane.track('labels', named.current);
     sampledAt.current = performance.now();
   }

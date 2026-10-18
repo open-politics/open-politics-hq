@@ -24,6 +24,7 @@ import React, {
 } from 'react';
 import { Graph, type GraphConfig } from '@cosmos.gl/graph';
 import { cn } from '@/lib/utils';
+import { stackAt } from './declutter';
 import type { Network } from './network';
 import { positionsById, seedPositions } from './channels';
 import type { Arrangement } from './arrange';
@@ -63,6 +64,9 @@ export interface PlaneHandle {
   zoomBy(factor: number, duration?: number): void;
   /** Live positions, `[x0, y0, x1, y1, …]` in space units. */
   positions(): ArrayLike<number>;
+  /** Every node whose disc is under a point on screen (client px), most
+   *  frequent first — more than one is a pile to choose from. */
+  stackAt(clientX: number, clientY: number): number[];
   /** Re-heat the layout. */
   reheat(alpha?: number): void;
   pause(): void;
@@ -445,6 +449,23 @@ export const CosmosPlane = forwardRef<PlaneHandle, CosmosPlaneProps>(function Co
       if (g) g.setZoomLevel(g.getZoomLevel() * f, d);
     },
     positions: () => graphRef.current?.getPointPositions() ?? [],
+    stackAt: (clientX, clientY) => {
+      const g = graphRef.current, div = host.current;
+      if (!g || !div) return [];
+      const box = div.getBoundingClientRect();
+      const at: [number, number] = [clientX - box.left, clientY - box.top];
+      // cosmos finds the centres near the point; the discs decide.
+      const reach = 40;
+      const near = g.findPointsInRect([[at[0] - reach, at[1] - reach], [at[0] + reach, at[1] + reach]]);
+      if (near.length < 2) return near;
+      const pos = g.getPointPositions();
+      return stackAt(at, near, (i) => {
+        const x = pos[2 * i], y = pos[2 * i + 1];
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+        const [sx, sy] = g.spaceToScreenPosition([x, y]);
+        return [sx, sy, g.spaceToScreenRadius(g.getPointRadiusByIndex(i) ?? 2)];
+      }, (i) => -view.network.frequency[i], 1.5);
+    },
     reheat: (alpha = 0.6) => graphRef.current?.start(alpha),
     pause: () => graphRef.current?.pause(),
     resume: () => graphRef.current?.unpause(),

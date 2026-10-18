@@ -3,7 +3,8 @@
  *
  * A reader looking for something in a run's graph wants what they are
  * following to be louder than what the run happens to mention most. Gain says
- * that per *thing*: a type, an entity, a group (a stream, in deep time). Each
+ * that per *thing*: a type, an entity, a group (a stream, in deep time), a
+ * set the reader made (`sets.ts`). Each
  * is a value from −1 (attenuate) through 0 (as is) to +1 (exaggerate), and
  * they compose — in stops, like exposure:
  *
@@ -12,6 +13,7 @@
  *   node     the entity, and its sub-network at a little less: turning up
  *            "Donald Trump" turns up what he is linked to, so with Interest
  *            turned up too, *his* interests come out loudest
+ *   set      every member of the set
  *
  * What it does to the picture (`applyGain`): a node turned up grows and keeps
  * its strength; a node turned down shrinks and fades. And once anything is
@@ -22,11 +24,11 @@
 import type { Network } from './network';
 import type { View } from './collapse';
 
-export type GainKind = 'type' | 'node' | 'group';
+export type GainKind = 'type' | 'node' | 'group' | 'set';
 
 export interface Gain {
   kind: GainKind;
-  /** A type's name, a node's id, a group's key. */
+  /** A type's name, a node's id, a group's key, a set's id. */
   key: string;
   /** −1 … +1. */
   value: number;
@@ -48,6 +50,7 @@ export function gainStops(
   base: Network,
   gains: readonly Gain[],
   groupOf: (i: number) => string | null,
+  setMembers?: (id: string) => readonly number[] | undefined,
 ): Float32Array {
   const out = new Float32Array(base.size);
   const live = gains.filter((g) => g.value !== 0);
@@ -68,6 +71,10 @@ export function gainStops(
     }
   }
   for (const g of live) {
+    if (g.kind === 'set') {
+      for (const i of setMembers?.(g.key) ?? []) out[i] += g.value * GAIN_STOPS;
+      continue;
+    }
     if (g.kind !== 'node') continue;
     const i = base.index.get(g.key);
     if (i === undefined) continue;
