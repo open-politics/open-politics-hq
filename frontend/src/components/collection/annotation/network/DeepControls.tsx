@@ -13,6 +13,7 @@ import React, { useRef, useState } from 'react';
 import { Telescope } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { VANISH_REACH as REACH } from '@/components/collection/graph/plane';
 import { HUD_LABEL, HUD_PROSE, HUD_SURFACE, HudButton, HudOverline, HudSegmented } from '@/components/ui/chrome';
 
 export interface DeepView {
@@ -34,8 +35,6 @@ const AHEADS = [
 const nearest = (v: number, options: { value: string }[]) =>
   options.reduce((best, o) => (Math.abs(Number(o.value) - v) < Math.abs(Number(best.value) - v) ? o : best)).value;
 
-/** How far off-centre the vanishing point may go, as a share of the view. */
-const REACH = 0.45;
 
 export function DeepControls({
   value, onChange, onReset,
@@ -89,7 +88,7 @@ export function DeepControls({
             <span aria-hidden className="absolute size-2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-hud-fg"
                   style={{ left: `${(0.5 + value.vanish[0]) * 100}%`, top: `${(0.5 + value.vanish[1]) * 100}%` }} />
           </div>
-          <p className={cn(HUD_PROSE, 'mt-1 text-hud-dimmer')}>Drag where the future recedes to.</p>
+          <p className={cn(HUD_PROSE, 'mt-1 text-hud-dimmer')}>Drag where the future recedes to — or ⌘-drag on the deck.</p>
         </div>
         <div className="space-y-1">
           <span className={cn(HUD_LABEL, 'text-hud-dim')}>Depth</span>

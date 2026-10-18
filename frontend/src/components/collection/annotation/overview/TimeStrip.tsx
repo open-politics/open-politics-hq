@@ -21,9 +21,12 @@ const FORMAT: Record<string, string> = {
 const H = 32;
 
 export function TimeStrip({
-  bins, grain, undated, outside, window: win, onWindow, unit, actions, className,
+  bins, total: given, grain, undated, outside, window: win, onWindow, unit, actions, className,
 }: {
   bins: TimeBin[];
+  /** How many there are, when a bin can count one twice — the network deep
+   *  in time, where a node is in every bin it is present in. */
+  total?: number;
   grain: string;
   undated: number;
   outside: number;
@@ -54,7 +57,7 @@ export function TimeStrip({
   }, [bins, width]);
 
   const fmt = (t: number) => format(new Date(t), FORMAT[grain] ?? 'MMM yy');
-  const total = bins.reduce((s, b) => s + b.n, 0);
+  const total = given ?? bins.reduce((s, b) => s + b.n, 0);
 
   const toT = useCallback((clientX: number) => {
     const r = svg.current?.getBoundingClientRect();

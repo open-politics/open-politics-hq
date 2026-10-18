@@ -1200,6 +1200,8 @@ export interface NetworkView {
   spread?: boolean;
   /** Deep time: colour by group (a topic's stream) or by type. Unset = groups. */
   color?: 'groups' | 'types';
+  /** Deep time: show where the present cuts the deck (`TimeDeck`'s slicer). */
+  slicer?: boolean;
   /** Deep time's viewpoint (`plane/TimeDeck`). */
   deep?: {
     /** Depth between slices, as a share of the view's height. */
@@ -1209,9 +1211,28 @@ export interface NetworkView {
     /** Where the depth converges, from the view's centre (right, down). */
     vanish?: [number, number];
   };
-  /** Types, entities and groups turned up or down (`plane/gain`). */
-  gains?: Array<{ kind: 'type' | 'node' | 'group'; key: string; value: number }>;
-  /** The reader's anchors (`plane/anchoring`). */
+  /** Types, entities, groups and sets turned up or down (`plane/gain`). */
+  gains?: Array<{ kind: 'type' | 'node' | 'group' | 'set'; key: string; value: number }>;
+  /** The reader's own sets — built from types, names, nodes, groups, places,
+   *  other sets and annotation values; shown alone, lit, or placed as anchors
+   *  (`plane/sets`). */
+  sets?: Array<{
+    id: string;
+    name?: string;
+    terms: Array<{
+      kind: 'type' | 'name' | 'entity' | 'group' | 'place' | 'set' | 'value';
+      op: '=' | '~' | '!';
+      values: string[];
+      field?: string;
+    }>;
+    gain?: number;
+    only?: boolean;
+    at?: Partial<Record<'free' | 'time' | 'geo', [number, number]>>;
+  }>;
+  /** What is kept lit with its direct links (`plane/light`). */
+  lights?: Array<{ kind: 'node' | 'group' | 'type' | 'set'; key: string }>;
+  /** @deprecated The first anchors, a line of words each — read as sets
+   *  (`plane/sets.fromWords`) until the panel next saves. */
   anchors?: Array<{ id: string; q: string; space: 'free' | 'time' | 'geo'; x: number; y: number; gain?: number }>;
 }
 

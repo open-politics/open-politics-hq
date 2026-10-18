@@ -17,10 +17,19 @@
  *   Geo               each node at its place, on the overview's map, which
  *                     follows the plane's camera
  *
- *   top-left      query · Time · Geo · find, then the lists: groups, places,
- *                 the window, and the labels — types, occurrences and the
- *                 unconnected as chips over the entities; shift-click marks
- *                 labels to merge by hand
+ *   top-left      query · Time · Geo · anchor, then the builder — finding a
+ *                 node, or gathering a set — then the sets, and the lists:
+ *                 groups, places, the window, and the labels — types,
+ *                 occurrences and the unconnected as chips over the entities;
+ *                 shift-click marks labels to merge by hand, or to gather
+ *
+ * Sets (`plane/sets`) are the reader's own groups, built in the builder from
+ * anything the network knows and from the documents' annotation values. A set
+ * can be picked (highlighted, its documents opened), shown alone with the
+ * other sets shown alone, lit with its direct links, turned up or down, and
+ * placed as an anchor in any view. Light (`plane/light`) is the same for any
+ * row — a node, a group, a type — and stays on for as many as the reader
+ * wants.
  *   top-right     of how many — or the documents behind what is selected
  *   bottom-left   the colour key, deep in time
  *   bottom        the time strip, in the time view
@@ -32,15 +41,15 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import {
-  Activity, Anchor as AnchorIcon, Boxes, CircleDot, Clock, Contrast, Expand, Eye, EyeOff, Flame, MapPin, Maximize2,
-  Merge, Minimize2, Minus, Pause, Play, Plus, Scan, Search, Spline, Unlink, X,
+  Activity, Anchor as AnchorIcon, Boxes, CircleDot, Clock, Contrast, Expand, Eye, EyeOff, Flame, Focus, Frame, Layers,
+  MapPin, Maximize2, Merge, Minimize2, Minus, Pause, Play, Plus, Scan, Spline, Unlink, Waypoints, X,
 } from 'lucide-react';
 import type { GraphConfig } from '@cosmos.gl/graph';
-import { NetworkService, type AnnotationSchemaRead } from '@/client';
+import { NetworkService, RunsService, type AnnotationSchemaRead } from '@/client';
 import { cn } from '@/lib/utils';
 import {
-  HUD_GLASS, HUD_INPUT, HUD_LABEL, HUD_NUM, HUD_PROSE, HUD_SURFACE, HudButton, HudGroup, HudLiveDot,
-  HudGain, HudOption, HudSegmented, HudStat,
+  HUD_GLASS, HUD_INPUT, HUD_LABEL, HUD_NUM, HUD_PROSE, HUD_SURFACE, HudButton, HudGain, HudGroup, HudLiveDot,
+  HudSegmented, HudStat,
 } from '@/components/ui/chrome';
 import { resolveEntityColor } from '@/lib/annotations/colors';
 import { resolveVarToRgba, useThemeVersion } from '@/lib/theme/cssColor';
@@ -52,14 +61,17 @@ import { useAssetPages } from '@/hooks/useAssetPages';
 import { useResolution } from '@/hooks/useResolution';
 import {
   CosmosPlane, DECK_DEFAULTS, GROUP_HUES, PlaneAnchors, PlaneLabels, PlaneLink, PlaneMap, RUNG_PRESETS, SPACE_SIZE,
-  TimeDeck, anchorMatches, anchored, annotationsOf, applyGain, byGroups, gainStops, loudest, setGain, spaceOf,
-  unitStops, withAnchors,
-  type Anchor, type DeckApi, type Gain, type GainKind, type Surface,
+  TimeDeck, addTerm, anchored, annotationsOf, applyGain, around, byGroups, describeSet, evaluateSets, fromWords,
+  gainStops, hexToRgba, joinLight, lightOf, loudest, newSetId, setGain, setHue, spaceOf, toggleLight, unitStops,
+  withAnchors,
+  type AnchorMark, type DeckApi, type Gain, type GainKind, type Light, type LightKind, type NodeSet, type Pull,
+  type Surface, type TermKind,
   byPlace, byTime, cellOf, collapse, degree, expandedKeys, expansionOf, findNodes, groupPath, headsOf,
   groupsAt, groupColors, identity, inheritFrom, keyIndex, linkArrows, linkColors, linkStrength, linkWidths, merge,
   nodeKey,
   linksOf, louvain, membersOf, neighbours, nodeTimes, pointColors, pointSizes, positionsById,
   publishedAt, topLevel, topRanks, typeCounts, visibility,
+  annotationsWhen, ownIn, presenceOf, presentIn, sliceSpan,
   type Expansion, type Grain, type Network, type Palette, type PlaneHandle, type PlacePreset,
   type Rgba,
 } from '@/components/collection/graph/plane';
@@ -70,6 +82,11 @@ import { TimeStrip } from '../overview/TimeStrip';
 import { DEFAULT_GEO, DEFAULT_TIME, GeoButton, TimeButton } from './ViewButtons';
 import { ResolverHistory, ResolverTicker } from './Resolver';
 import { DeepControls } from './DeepControls';
+import { StackPicker } from './StackPicker';
+import { SetBuilder, type TermPick } from './SetBuilder';
+import { RowTools, ToolButton } from './RowTools';
+import { fieldsOf, placesOf, type Catalog, type FieldOption } from './suggest';
+import { useValueTerms } from './useValueTerms';
 
 const DEFAULT_CONFIG: NetworkVizConfig = {
   kind: 'network', q: null, max_nodes: null, hidden_types: [], view: { occurrences: true },
@@ -91,6 +108,10 @@ const LISTED = 60;
 const STEP_MS = 900;
 /** Two clicks on one group within this open it. */
 const DOUBLE_CLICK_MS = 350;
+/** An anchor pulls its most frequent members firmly, up to this many. */
+const PULL_LIMIT = 2000;
+/** Among groups, a set shown alone is drawn node by node, up to this many. */
+const LOOSE_LIMIT = 5000;
 
 /** Where each panel's nodes last were, by id, for a remount. */
 const LAYOUTS = new Map<string, Map<string, [number, number]>>();
@@ -100,10 +121,10 @@ type Span = NonNullable<TimeWindow>;
 type Selection =
   | { kind: 'node'; id: string }
   | { kind: 'place'; coord: number }
-  | { kind: 'anchor'; id: string }
+  | { kind: 'set'; id: string }
   | null;
 const NO_GAINS: Gain[] = [];
-const NO_ANCHORS: Anchor[] = [];
+const NO_LIGHTS: Light[] = [];
 
 /** A config value edited continuously — a slider, a drag — held locally and
  *  saved once the hand rests, so a drag is one write, not sixty a second. */
@@ -136,6 +157,10 @@ function shiftWindow(w: Span, delta: number, cells: number[], grain: Grain): Spa
   const next = Math.max(0, Math.min(cells.length - width, from + delta));
   return next === from ? w : [cells[next], cells[next + width - 1]];
 }
+
+/** How a time cell reads, at the timeline's grain. */
+const cellFormat = (grain: Grain) => (grain === 'year' ? 'yyyy'
+  : grain === 'day' || grain === 'week' ? 'd MMM yy' : 'MMM yyyy');
 
 function useTheme() {
   const version = useThemeVersion();
@@ -190,6 +215,7 @@ export function NetworkPanel({
   const deep = core === 'time' && timeChoice.mode === 'deep';
   const deepColor = config.view?.color ?? 'groups';
   const spread = config.view?.spread ?? false;
+  const slicing = deep && (config.view?.slicer ?? false);
 
   // ── Groups ────────────────────────────────────────────────────────────────
   const communities = useMemo(() => (base ? louvain(base) : null), [base]);
@@ -209,21 +235,77 @@ export function NetworkPanel({
 
   const hidden = useMemo(() => new Set(config.hidden_types ?? []), [config.hidden_types]);
 
-  // ── Anchors: groups the reader makes ──────────────────────────────────────
-  // Words dropped on the canvas gather what they name; each view reads the
-  // anchors of its own space (`plane/anchoring`).
+  // A group is named by its head — its most frequent member — wherever the
+  // reader keeps it (a set, a gain, a light): community numbers mean nothing
+  // once the network is clustered again; the head is found in its new group.
+  const groupOfNode = useMemo(() => {
+    const out = new Int32Array(base?.size ?? 0).fill(-1);
+    groups.forEach((g, k) => { for (const i of g.members) out[i] = k; });
+    return out;
+  }, [base, groups]);
+  const headOf = useCallback((g: { members: number[] }) => base?.id[g.members[0]] ?? '', [base]);
+  const groupByHead = useCallback((head: string) => {
+    const i = base?.index.get(head);
+    return i === undefined ? undefined : groups[groupOfNode[i]];
+  }, [base, groups, groupOfNode]);
+
+  // ── Sets: groups the reader makes ─────────────────────────────────────────
+  // Built from anything the network knows and the documents' values
+  // (`plane/sets`); anchored in a view's space, they gather what they hold.
   const anchorSpace = spaceOf(core, deep);
-  const [anchors, setAnchors] = useDraft<Anchor[]>(
-    (config.view?.anchors as Anchor[] | undefined) ?? NO_ANCHORS, (anchors) => setView({ anchors }));
-  const shown = useMemo(() => anchors.filter((a) => a.space === anchorSpace), [anchors, anchorSpace]);
-  const anchorWords = shown.map((a) => a.q).join('\n');
-  const matches = useMemo(() => {
-    if (!base || !shown.length) return [];
+  const savedSets = useMemo<NodeSet[]>(() => (config.view?.sets as NodeSet[] | undefined)
+    ?? (config.view?.anchors ?? []).map(fromWords), [config.view?.sets, config.view?.anchors]);
+  const [sets, setSets] = useDraft<NodeSet[]>(savedSets, (sets) => setView({ sets, anchors: undefined }));
+  const editSet = (id: string, patch: Partial<NodeSet>) => setSets(sets.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  // What a set holds depends on its terms alone — not where it is anchored,
+  // so dragging an anchor does not read the network again.
+  const definitionKey = JSON.stringify(sets.map((x) => [x.id, x.terms]));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const definitions = useMemo(() => sets.map((x) => ({ id: x.id, terms: x.terms })), [definitionKey]);
+  const allTerms = useMemo(() => definitions.flatMap((d) => d.terms), [definitions]);
+  const valueTerms = useValueTerms({ infospaceId, runId, terms: allTerms, version: stream.shownKey });
+  const setResults = useMemo(() => (base ? evaluateSets(definitions, {
+    net: base,
+    groupMembers: (head) => groupByHead(head)?.members,
+    valueAssets: valueTerms.lookup,
+  }) : new Map<string, { members: number[]; pending: boolean }>()), [base, definitions, groupByHead, valueTerms.lookup]);
+  const membersOfSet = useCallback((id: string) => setResults.get(id)?.members, [setResults]);
+  const hueOf = useCallback((id: string) => setHue(Math.max(0, sets.findIndex((x) => x.id === id))), [sets]);
+
+  // Placed in this view's space: firmly its members, lightly what they link
+  // to — of the types that are drawn.
+  const reach = useMemo(() => {
+    const out = new Map<string, { direct: number[]; related: number[] }>();
+    if (!base) return out;
     const off = base.types.map((t) => hidden.has(t || 'unknown'));
-    return anchorWords.split('\n').map((q) => (q ? anchorMatches(base, q, (i) => !off[base.type[i]]) : { direct: [], related: [] }));
-  }, [base, anchorWords, hidden, shown.length]);
-  // Among groups, what an anchor pulls is drawn as itself so it can move.
-  const loose = useMemo(() => (core === 'groups' && shown.length ? anchored(matches) : undefined), [core, shown.length, matches]);
+    const drawn = (i: number) => !off[base.type[i]];
+    for (const x of definitions) {
+      const direct = (setResults.get(x.id)?.members ?? []).filter(drawn).slice(0, PULL_LIMIT);
+      out.set(x.id, { direct, related: around(base, direct).filter(drawn) });
+    }
+    return out;
+  }, [base, definitions, setResults, hidden]);
+  const pulls = useMemo<Pull[]>(() => sets.flatMap((x) => {
+    const at = x.at?.[anchorSpace];
+    const r = reach.get(x.id);
+    return at && r ? [{ space: anchorSpace, x: at[0], y: at[1], gain: x.gain ?? 0, ...r }] : [];
+  }), [sets, anchorSpace, reach]);
+  // Shown alone: the plane narrows to these sets' members, together.
+  const alone = useMemo(() => {
+    const ids = sets.filter((x) => x.only).map((x) => x.id);
+    if (!ids.length) return null;
+    const out = new Set<number>();
+    for (const id of ids) for (const i of setResults.get(id)?.members ?? []) out.add(i);
+    return out;
+  }, [sets, setResults]);
+  // Among groups, what an anchor pulls or a set shows alone is drawn as
+  // itself, so it can move and be read.
+  const loose = useMemo(() => {
+    if (core !== 'groups' || (!pulls.length && !alone)) return undefined;
+    const out = anchored(pulls);
+    if (alone && alone.size <= LOOSE_LIMIT) alone.forEach((i) => out.add(i));
+    return out;
+  }, [core, pulls, alone]);
 
   // ── What the plane draws ──────────────────────────────────────────────────
   const view = useMemo(() => {
@@ -247,6 +329,14 @@ export function NetworkPanel({
     const grain = timeChoice.grain === 'auto' ? undefined : (timeChoice.grain as Grain);
     return byTime(net, times, SPACE_SIZE, grain, `time:${timeChoice.source}`);
   }, [net, core, timeChoice.source, timeChoice.grain]);
+  // Deep time reads the run as a space-time cube: every time a node is there,
+  // not only its first (`plane/presence`). Its cells are the deck's slices and
+  // the strip's bars; the flat timeline keeps one time per node.
+  const presence = useMemo(
+    () => (deep && timeline && net ? presenceOf(net, timeChoice.source, timeline.grain) : null),
+    [deep, timeline, net, timeChoice.source]);
+  const bins = useMemo(() => presence?.bins ?? timeline?.bins ?? [], [presence, timeline]);
+  const cells = useMemo(() => bins.map((b) => b.t), [bins]);
 
   const geography = useMemo(() => (
     net && core === 'geo'
@@ -261,13 +351,15 @@ export function NetworkPanel({
     return byGroups(net, rankOf);
   }, [net, timeline, geography, rankOf, deep]);
   const arrangement = useMemo(
-    () => (viewArrangement && view ? withAnchors(viewArrangement, view, shown, matches) : viewArrangement),
-    [viewArrangement, view, shown, matches]);
-  /** Drawn units each anchor pulls — on the map, brought into the view. */
-  const anchorUnits = useMemo(() => {
-    if (!view) return [] as number[][];
-    return matches.map((m) => [...new Set([...m.direct, ...m.related].map((i) => view.unitOf[i]))]);
-  }, [view, matches]);
+    () => (viewArrangement && view ? withAnchors(viewArrangement, view, pulls) : viewArrangement),
+    [viewArrangement, view, pulls]);
+  /** Drawn units the anchors pull — on the map, brought into the view. */
+  const pulledUnits = useMemo(() => {
+    if (!view || !pulls.length) return null;
+    const out = new Set<number>();
+    for (const p of pulls) { p.direct.forEach((i) => out.add(view.unitOf[i])); p.related.forEach((i) => out.add(view.unitOf[i])); }
+    return out;
+  }, [view, pulls]);
 
   // ── Gain: types, entities and groups turned up or down ────────────────────
   const [gains, setGains] = useDraft<Gain[]>(
@@ -276,13 +368,34 @@ export function NetworkPanel({
     (kind: GainKind, key: string) => gains.find((g) => g.kind === kind && g.key === key)?.value ?? 0, [gains]);
   const setGainFor = useCallback(
     (kind: GainKind, key: string, value: number) => setGains(setGain(gains, kind, key, value)), [gains, setGains]);
-  const groupKeyOf = useMemo(() => {
-    const keys = groups.map((g) => g.key);
-    return (i: number) => (ranks && ranks[i] >= 0 ? keys[ranks[i]] ?? null : null);
-  }, [groups, ranks]);
+  const groupKeyOf = useCallback(
+    (i: number) => (groupOfNode[i] >= 0 ? headOf(groups[groupOfNode[i]]) : null), [groupOfNode, groups, headOf]);
   const stops = useMemo(
-    () => (base && view && gains.length ? unitStops(view, gainStops(base, gains, groupKeyOf)) : null),
-    [base, view, gains, groupKeyOf]);
+    () => (base && view && gains.length ? unitStops(view, gainStops(base, gains, groupKeyOf, membersOfSet)) : null),
+    [base, view, gains, groupKeyOf, membersOfSet]);
+
+  // ── Light: rows kept lit with their direct links ──────────────────────────
+  const [lights, setLights] = useDraft<Light[]>(
+    (config.view?.lights as Light[] | undefined) ?? NO_LIGHTS, (lights) => setView({ lights }));
+  const isLit = (kind: LightKind, key: string) => lights.some((l) => l.kind === kind && l.key === key);
+  const light = (kind: LightKind, key: string) => setLights(toggleLight(lights, kind, key));
+  const litParts = useMemo(() => {
+    if (!view || !base) return [];
+    return lights.map((l) => {
+      let members: readonly number[] = [];
+      if (l.kind === 'node') { const i = base.index.get(l.key); members = i === undefined ? [] : [i]; }
+      else if (l.kind === 'group') members = groupByHead(l.key)?.members ?? [];
+      else if (l.kind === 'set') members = setResults.get(l.key)?.members ?? [];
+      else {
+        const t = base.types.findIndex((x) => (x || 'unknown') === l.key);
+        const out: number[] = [];
+        for (let i = 0; i < base.size; i++) if (base.type[i] === t) out.push(i);
+        members = out;
+      }
+      return { light: l, ...lightOf(view, members) };
+    });
+  }, [view, base, lights, groupByHead, setResults]);
+  const lit = useMemo(() => joinLight(litParts), [litParts]);
 
   // Over the map, the network can bury what it sits on. Quiet: what has no
   // place of its own all but fades, links recede, and the map firms up.
@@ -302,6 +415,12 @@ export function NetworkPanel({
     }
     const sizes = pointSizes(net);
     if (stops) applyGain(net, stops, { sizes, colors, linkColors: links });
+    // A lit set wears its hue, so two lit at once can be told apart.
+    for (const part of litParts) {
+      if (part.light.kind !== 'set') continue;
+      const [r, g, b] = hexToRgba(hueOf(part.light.key));
+      for (const u of part.seeds) { colors[4 * u] = r; colors[4 * u + 1] = g; colors[4 * u + 2] = b; }
+    }
     return {
       colors,
       sizes,
@@ -310,7 +429,7 @@ export function NetworkPanel({
       linkArrows: linkArrows(net),
       linkStrength: linkStrength(net),
     };
-  }, [net, palette, core, rankOf, quiet, geography, deep, deepColor, stops]);
+  }, [net, palette, core, rankOf, quiet, geography, deep, deepColor, stops, litParts, hueOf]);
   const planeLook = useMemo(() => ({
     ...planeConfig,
     pointGreyoutOpacity: quiet ? 0.03 : 0.12,
@@ -322,21 +441,28 @@ export function NetworkPanel({
   }, [panel.id]);
 
   const showOccurrences = config.view?.occurrences !== false;
-  // The unconnected are noise among groups and the point on a map or a
-  // timeline, so the default follows the view until the reader says.
-  const showIsolated = config.view?.isolated ?? core !== 'groups';
+  // The unconnected are noise among groups — deep time is laid out by groups
+  // too — and the point on a map or a flat timeline, so the default follows
+  // the view until the reader says.
+  const showIsolated = config.view?.isolated ?? (core !== 'groups' && !deep);
+  const aloneUnits = useMemo(() => {
+    if (!alone || !view) return null;
+    const out = new Uint8Array(view.net.size);
+    alone.forEach((i) => { out[view.unitOf[i]] = 1; });
+    return out;
+  }, [alone, view]);
   const visible = useMemo(() => {
     if (!net) return null;
     const v = visibility(net, hidden);
     const include = viewArrangement?.include;
-    const pulled = include ? new Set(anchorUnits.flat()) : null;
     for (let i = 0; i < net.size; i++) {
       if (!showOccurrences && net.kind[i] === 1) v[i] = 0;
       if (!showIsolated && net.members[i] === 1 && degree(net, i) === 0) v[i] = 0;
-      if (include && !include[i] && !pulled!.has(i)) v[i] = 0;
+      if (include && !include[i] && !pulledUnits?.has(i)) v[i] = 0;
+      if (aloneUnits && !aloneUnits[i]) v[i] = 0;
     }
     return v;
-  }, [net, hidden, showOccurrences, showIsolated, viewArrangement, anchorUnits]);
+  }, [net, hidden, showOccurrences, showIsolated, viewArrangement, pulledUnits, aloneUnits]);
 
   // ── Selection: a node or group, a place — and, in time, a window ──────────
   const [selection, setSelectionState] = useState<Selection>(null);
@@ -382,6 +508,11 @@ export function NetworkPanel({
     ? geography.places.find((p) => p.coord === selection.coord) ?? null : null;
   const windowNodes = useMemo(() => {
     if (!net || !timeline || !win) return null;
+    // Deep: whoever is there in the window, loudest there first.
+    if (presence) {
+      const [from, to] = sliceSpan(cells, win, timeline.grain);
+      return from < 0 ? [] : presentIn(presence, from, to, visible);
+    }
     const lo = cellOf(win[0], timeline.grain);
     const out: number[] = [];
     for (let i = 0; i < net.size; i++) {
@@ -389,7 +520,7 @@ export function NetworkPanel({
       if (c >= lo && c <= win[1] && (!visible || visible[i])) out.push(i);
     }
     return out.sort(byFrequency(net));
-  }, [net, timeline, win, visible]);
+  }, [net, timeline, win, visible, presence, cells]);
 
   /** What the drill column and the highlight are about, in that order of say. */
   const subject = useMemo(() => {
@@ -403,15 +534,19 @@ export function NetworkPanel({
         named: [focused, ...near.sort(byFrequency(net)).slice(0, NAMED)],
       };
     }
-    if (selection?.kind === 'anchor') {
-      const k = shown.findIndex((a) => a.id === selection.id);
-      if (k < 0 || !view) return null;
-      const units = anchorUnits[k].filter((u) => !visible || visible[u]);
+    if (selection?.kind === 'set') {
+      const members = setResults.get(selection.id)?.members;
+      if (!members || !view) return null;
+      // Members are most frequent first, so their units are too.
+      const units = [...new Set(members.map((i) => view.unitOf[i]))].filter((u) => !visible || visible[u]);
       const inSet = new Set(units);
       const links: number[] = [];
       for (let j = 0; j < net.links; j++) if (inSet.has(net.source[j]) && inSet.has(net.target[j])) links.push(j);
-      const named = [...new Set(matches[k].direct.map((i) => view.unitOf[i]))].slice(0, NAMED);
-      return { key: `anchor:${selection.id}:${shown[k].q}`, nodes: units, highlight: { points: units, links }, named };
+      const terms = definitions.find((d) => d.id === selection.id)?.terms;
+      return {
+        key: `set:${selection.id}:${JSON.stringify(terms)}`, nodes: units,
+        highlight: { points: units, links }, named: units.slice(0, NAMED),
+      };
     }
     const set = place?.nodes ?? windowNodes;
     if (!set) return null;
@@ -424,7 +559,9 @@ export function NetworkPanel({
       highlight: { points: set, links },
       named: [...set].sort(byFrequency(net)).slice(0, NAMED),
     };
-  }, [net, focused, place, windowNodes, win, selection, shown, view, anchorUnits, visible, matches]);
+  }, [net, focused, place, windowNodes, win, selection, view, visible, setResults, definitions]);
+  /** What is highlighted: the selection, and everything kept lit. */
+  const highlight = useMemo(() => joinLight([subject?.highlight, lit]), [subject, lit]);
 
 
   // ── The resolver's pair, on the network ───────────────────────────────────
@@ -463,9 +600,12 @@ export function NetworkPanel({
   const pinned = useMemo(() => {
     const named = [...(subject?.named ?? [])];
     const loud = net && stops ? loudest(net, stops) : [];
-    for (const i of [hover, stageUnits?.a, stageUnits?.b, ...markUnits, ...loud]) if (i != null && !named.includes(i)) named.push(i);
+    const litNames = litParts.flatMap((p) => (net ? [...p.seeds].sort(byFrequency(net)).slice(0, 6) : []));
+    for (const i of [hover, stageUnits?.a, stageUnits?.b, ...markUnits, ...litNames, ...loud]) {
+      if (i != null && !named.includes(i)) named.push(i);
+    }
     return named;
-  }, [subject, hover, stageUnits, markUnits, net, stops]);
+  }, [subject, hover, stageUnits, markUnits, net, stops, litParts]);
   const outlined = useMemo(() => {
     const xs = [...markUnits];
     if (stageUnits) xs.push(stageUnits.a, stageUnits.b);
@@ -473,8 +613,18 @@ export function NetworkPanel({
   }, [markUnits, stageUnits]);
 
   // ── The documents behind it ───────────────────────────────────────────────
-  const annotations = useMemo(
-    () => (net && subject ? annotationsOf(net, subject.nodes) : null), [net, subject]);
+  const annotations = useMemo(() => {
+    if (!net || !subject) return null;
+    // Deep in time a window's actors are there for longer than it: its
+    // documents are the ones in it, not every one they appear in.
+    if (presence && timeline && win && subject.key.startsWith('window:')) {
+      const from = cellOf(win[0], timeline.grain);
+      return timeChoice.source === 'published'
+        ? annotationsWhen(net, subject.nodes, timeline.grain, from, win[1])
+        : annotationsOf(net, subject.nodes.filter((i) => ownIn(net, i, timeline.grain, from, win[1])));
+    }
+    return annotationsOf(net, subject.nodes);
+  }, [net, subject, presence, timeline, win, timeChoice.source]);
   const pages = useAssetPages(
     annotations && subject ? `network:${infospaceId}:${runId}:${stream.shownKey}:${core}:${subject.key}` : null,
     (offset, limit) => NetworkService.networkAssets({
@@ -529,6 +679,14 @@ export function NetworkPanel({
   }, [base, reveal, select]);
 
   const lastClick = useRef<{ i: number; at: number } | null>(null);
+  // A click on a pile — nodes drawn over one another — asks which one.
+  const [stack, setStack] = useState<{ nodes: number[]; at: [number, number] } | null>(null);
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => { setStack(null); }, [net, core, deep]);
+  const openStack = (nodes: number[], e: MouseEvent) => {
+    const r = root.current?.getBoundingClientRect();
+    if (r) setStack({ nodes, at: [e.clientX - r.left, e.clientY - r.top] });
+  };
   const onPointClick = (i: number, e?: MouseEvent) => {
     if (!net || !view) return;
     if (e?.shiftKey) {
@@ -536,6 +694,14 @@ export function NetworkPanel({
       if (!view.group[i] && net.kind[i] === 0) toggleMark(net.id[i]);
       return;
     }
+    if (e && !deep) {
+      const under = (plane.current?.stackAt(e.clientX, e.clientY) ?? []).filter((j) => !visible || visible[j]);
+      if (under.length > 1) { openStack(under, e); return; }
+    }
+    pickNode(i);
+  };
+  const pickNode = (i: number) => {
+    if (!net || !view) return;
     const now = performance.now();
     const twice = lastClick.current?.i === i && now - lastClick.current.at < DOUBLE_CLICK_MS;
     lastClick.current = { i, at: now };
@@ -551,8 +717,6 @@ export function NetworkPanel({
     const q = draft.trim() || null;
     if (q !== (config.q ?? null)) setConfig({ q });
   };
-  const [find, setFind] = useState('');
-  const found = useMemo(() => (base ? findNodes(base, find) : []), [base, find]);
 
   useSurfaceCommands('graph', {
     query: (p) => setDraft(String(p?.q ?? '')),
@@ -565,7 +729,6 @@ export function NetworkPanel({
   });
 
   // ── Time: playing a window ────────────────────────────────────────────────
-  const cells = useMemo(() => timeline?.bins.map((b) => b.t) ?? [], [timeline]);
   useEffect(() => {
     if (!playing || cells.length === 0 || !timeline) return;
     const id = setInterval(() => {
@@ -579,20 +742,10 @@ export function NetworkPanel({
   }, [playing, cells, timeline]);
   useEffect(() => { if (core !== 'time') { setPlaying(false); setWin(null); } }, [core]);
 
-  // ── Deep time: each node's slice, and the present ─────────────────────────
+  // ── Deep time: the present ────────────────────────────────────────────────
   // The present is the brushed window when there is one, else a single slice
   // the wheel moves; travelling with a window moves the window.
   const [front, setFront] = useState(0);
-  const slices = useMemo(() => {
-    if (!deep || !timeline || !net) return null;
-    const at = new Map(cells.map((c, k) => [c, k]));
-    const slice = new Int32Array(net.size).fill(-1);
-    for (let i = 0; i < net.size; i++) {
-      const c = timeline.cell[i];
-      if (!Number.isNaN(c)) slice[i] = at.get(c) ?? -1;
-    }
-    return slice;
-  }, [deep, timeline, net, cells]);
   const windowSlices = useCallback((w: Span): [number, number] => {
     if (!timeline) return [0, 0];
     const lo = Math.max(0, cells.findIndex((c) => c >= cellOf(w[0], timeline.grain)));
@@ -613,6 +766,12 @@ export function NetworkPanel({
   }, [timeline, cells, win]);
   const [deckApi, setDeckApi] = useState<DeckApi | null>(null);
   const [deckView, setDeckView] = useDraft(config.view?.deep ?? null, (deep) => setView({ deep: deep ?? undefined }));
+  /** Deep time's cut, named by its slice's time. */
+  const slicer = useMemo(() => {
+    if (!slicing || !timeline || !cells.length) return null;
+    const fmt = cellFormat(timeline.grain);
+    return { label: (k: number) => (cells[k] != null ? format(new Date(cells[k]), fmt) : '') };
+  }, [slicing, timeline, cells]);
 
   // ── Anchors: placing and editing ──────────────────────────────────────────
   /** Where anchors sit: the deck deep in time, else the plane (and its map). */
@@ -628,24 +787,100 @@ export function NetworkPanel({
       subscribe: (fn) => plane.current?.view.subscribe(fn) ?? (() => {}),
     };
   }, [deep, deckApi, net]);
-  const [placing, setPlacing] = useState(false);
-  useEffect(() => { setPlacing(false); }, [anchorSpace]);
+  /** Placing an anchor: a new set (`id` null), or one that exists. */
+  const [placing, setPlacing] = useState<{ id: string | null } | null>(null);
+  useEffect(() => { setPlacing(null); }, [anchorSpace]);
+  const builderInput = useRef<HTMLInputElement>(null);
+  const pickSet = useCallback((id: string) => {
+    select({ kind: 'set', id });
+    setTimeout(() => builderInput.current?.focus(), 0);
+  }, [select]);
   const dropAnchor = (x: number, y: number) => {
-    const id = `a${Date.now().toString(36)}${Math.round(Math.random() * 1e4).toString(36)}`;
-    setAnchors([...anchors, { id, q: '', space: anchorSpace, x, y }]);
-    setPlacing(false);
+    if (placing?.id) {
+      const id = placing.id;
+      setSets(sets.map((t) => (t.id === id ? { ...t, at: { ...t.at, [anchorSpace]: [x, y] } } : t)));
+    } else {
+      const id = newSetId();
+      setSets([...sets, { id, terms: [], at: { [anchorSpace]: [x, y] } }]);
+      pickSet(id);
+    }
+    setPlacing(null);
   };
-  const editAnchor = (id: string, patch: Partial<Anchor>) =>
-    setAnchors(anchors.map((a) => (a.id === id ? { ...a, ...patch } : a)));
-  const removeAnchor = (id: string) => {
-    setAnchors(anchors.filter((a) => a.id !== id));
-    if (selection?.kind === 'anchor' && selection.id === id) select(null);
+  const unplace = (id: string) => {
+    const t = sets.find((x) => x.id === id);
+    if (!t) return;
+    const at = { ...t.at };
+    delete at[anchorSpace];
+    editSet(id, { at });
   };
-  const anchorCounts = useMemo(() => {
-    const out = new Map<string, number>();
-    shown.forEach((a, k) => out.set(a.id, (matches[k]?.direct.length ?? 0) + (matches[k]?.related.length ?? 0)));
-    return out;
-  }, [shown, matches]);
+  /** A set gone — and with it its gain, its light, and every term naming it. */
+  const removeSet = (id: string) => {
+    setSets(sets.filter((x) => x.id !== id).map((x) => ({
+      ...x,
+      terms: x.terms
+        .map((t) => (t.kind === 'set' ? { ...t, values: t.values.filter((v) => v !== id) } : t))
+        .filter((t) => t.values.length),
+    })));
+    if (gains.some((g) => g.kind === 'set' && g.key === id)) setGains(setGain(gains, 'set', id, 0));
+    if (isLit('set', id)) light('set', id);
+    if (selection?.kind === 'set' && selection.id === id) select(null);
+  };
+  // A set with nothing in it lasts only while it is being built.
+  useEffect(() => {
+    const keep = selection?.kind === 'set' ? selection.id : null;
+    if (sets.some((x) => !x.terms.length && x.id !== keep)) setSets(sets.filter((x) => x.terms.length || x.id === keep));
+  }, [selection, sets, setSets]);
+
+  // ── The builder: finding, and gathering sets ──────────────────────────────
+  const activeSet = selection?.kind === 'set' ? sets.find((x) => x.id === selection.id) ?? null : null;
+  const nameOf = useCallback((kind: TermKind, value: string, deeper = true): string => {
+    if (kind === 'entity') { const i = base?.index.get(value); return i === undefined ? value : base!.name[i]; }
+    if (kind === 'group') return groupByHead(value)?.label ?? value;
+    if (kind === 'set') {
+      const k = sets.findIndex((x) => x.id === value);
+      if (k < 0) return 'a removed set';
+      return deeper ? describeSet(sets[k], (kk, v) => nameOf(kk, v, false)) : sets[k].name ?? `set ${k + 1}`;
+    }
+    return value;
+  }, [base, groupByHead, sets]);
+  const setLabel = useCallback((x: NodeSet) => describeSet(x, (k, v) => nameOf(k, v)), [nameOf]);
+  const newSet = () => {
+    const id = newSetId();
+    setSets([...sets, { id, terms: [] }]);
+    pickSet(id);
+  };
+  /** Into the set being built — or, with none, a new set of it. */
+  const gather = (term: TermPick['term'], apart = false) => {
+    if (activeSet) { setSets(sets.map((x) => (x.id === activeSet.id ? addTerm(x, term, apart) : x))); return; }
+    const id = newSetId();
+    setSets([...sets, { id, terms: [term] }]);
+    pickSet(id);
+  };
+  const onBuilderPick = (pick: TermPick, how: { apart: boolean; shift: boolean }) => {
+    if (pick.node != null && base) {
+      if (how.shift) { if (base.kind[pick.node] === 0) toggleMark(base.id[pick.node]); return; }
+      if (!activeSet) { goToBase(pick.node); return; }
+    }
+    gather(pick.term, how.apart);
+  };
+  const fields = useMemo(() => fieldsOf(schemas), [schemas]);
+  const placeList = useMemo(() => (base ? placesOf(base) : []), [base]);
+  const loadValues = useCallback(async (field: FieldOption, search: string) => {
+    const r = await RunsService.distinctValues({
+      infospaceId, runId,
+      requestBody: { field_path: field.path, search: search || null, limit: 40, merge_maps: (panel.merge_maps as any) ?? [] },
+    });
+    return r.items ?? [];
+  }, [infospaceId, runId, panel.merge_maps]);
+
+  const anchorMarks = useMemo<AnchorMark[]>(() => sets.flatMap((x) => {
+    const at = x.at?.[anchorSpace];
+    return at ? [{
+      id: x.id, label: setLabel(x), hue: hueOf(x.id), count: setResults.get(x.id)?.members.length ?? 0,
+      gain: x.gain ?? 0, lit: isLit('set', x.id), space: anchorSpace, x: at[0], y: at[1],
+    }] : [];
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [sets, anchorSpace, setLabel, hueOf, setResults, lights]);
   // Deep: the legend can single out one stream — a group's rank, or a type.
   const [solo, setSolo] = useState<number | null>(null);
   useEffect(() => { setSolo(null); }, [deep, deepColor]);
@@ -731,34 +966,42 @@ export function NetworkPanel({
     }
     return groups.slice(0, GROUP_HUES.length)
       .map((g, r) => ({
-        key: r, name: g.label, count: g.size, color: GROUP_HUES[r], gain: { kind: 'group' as GainKind, key: g.key },
+        key: r, name: g.label, count: g.size, color: GROUP_HUES[r], gain: { kind: 'group' as GainKind, key: headOf(g) },
       }));
-  }, [deep, deepColor, legend, hidden, groups]);
+  }, [deep, deepColor, legend, hidden, groups, headOf]);
   /** Deep: what is drawn at full strength — a focused node and its
    *  neighbours, or a stream singled out in the key. */
   const emphasis = useMemo(() => {
     if (!deep || !net) return null;
-    if (focused != null) {
+    // A window is the present itself, deep — the deck already lights it.
+    const picked = focused != null || selection?.kind === 'set' ? subject?.highlight : null;
+    const on = joinLight([picked, lit]);
+    if (on) {
       const e = new Uint8Array(net.size);
-      e[focused] = 1;
-      for (const j of neighbours(net, focused)) e[j] = 1;
-      return e;
-    }
-    if (selection?.kind === 'anchor' && subject) {
-      const e = new Uint8Array(net.size);
-      for (const i of subject.highlight.points) e[i] = 1;
+      for (const i of on.points) e[i] = 1;
       return e;
     }
     if (solo == null) return null;
     const e = new Uint8Array(net.size);
     for (let i = 0; i < net.size; i++) e[i] = (deepColor === 'types' ? net.type[i] === solo : rankOf(i) === solo) ? 1 : 0;
     return e;
-  }, [deep, net, focused, solo, deepColor, rankOf, selection, subject]);
+  }, [deep, net, focused, solo, deepColor, rankOf, selection, subject, lit]);
 
-  /** Everything picked, marked, brushed or singled out — let go at once. */
-  const anything = selection != null || marks.length > 0 || win != null || solo != null;
+  const catalog = useMemo<Catalog | null>(() => (base ? {
+    base,
+    types: legend,
+    groups: groups.map((g) => ({ key: headOf(g), label: g.label, size: g.size })),
+    places: placeList,
+    sets: sets.map((x) => ({ id: x.id, label: setLabel(x), count: setResults.get(x.id)?.members.length ?? 0 }))
+      .filter((x) => x.id !== activeSet?.id),
+    fields,
+  } : null), [base, legend, groups, headOf, placeList, sets, setLabel, setResults, activeSet?.id, fields]);
+
+  /** Everything picked, marked, brushed, lit or singled out — let go at once. */
+  const anything = selection != null || marks.length > 0 || win != null || solo != null || lights.length > 0;
   const clearAll = () => {
     select(null); setMarks([]); setKeeper(null); setWin(null); setPlaying(false); setSolo(null);
+    if (lights.length) setLights([]);
   };
   const counts = useMemo(() => {
     if (!base) return { occurrences: 0, isolated: 0 };
@@ -776,7 +1019,7 @@ export function NetworkPanel({
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     if (e.key !== 'Escape' || e.defaultPrevented) return;
-    if (placing) setPlacing(false);
+    if (placing) setPlacing(null);
     else if (openAsset != null) setOpenAsset(null);
     else if (selection) select(null);
     else if (marks.length) { setMarks([]); setKeeper(null); }
@@ -813,16 +1056,22 @@ export function NetworkPanel({
         ) : undefined,
       };
     }
-    if (selection?.kind === 'anchor') {
-      const k = shown.findIndex((a) => a.id === selection.id);
-      if (k < 0) return null;
+    if (selection?.kind === 'set') {
+      const x = sets.find((t) => t.id === selection.id);
+      const r = setResults.get(selection.id);
+      if (!x || !r) return null;
       return {
         subject: {
-          icon: AnchorIcon, name: shown[k].q || 'Anchor',
-          caption: `${matches[k].direct.length.toLocaleString()} named · ${matches[k].related.length.toLocaleString()} related`,
+          icon: x.at?.[anchorSpace] ? AnchorIcon : Layers, name: setLabel(x),
+          caption: `a set of ${r.members.length.toLocaleString()}${r.pending ? ' · reading values…' : ''}`,
           unit: 'annotations',
         },
-        context: [anchorSpace === 'time' ? 'a lane through time' : anchorSpace === 'geo' ? 'on the map' : 'an anchor'],
+        context: [x.at?.[anchorSpace] ? (anchorSpace === 'time' ? 'a lane through time' : anchorSpace === 'geo' ? 'anchored on the map' : 'anchored') : 'yours'],
+        actions: (
+          <HudButton size="sm" icon={Focus} active={!!x.only} className="-mr-1 border-transparent"
+                     title={x.only ? 'Show everything again' : 'Show it alone — with any other set shown alone'}
+                     onClick={() => editSet(x.id, { only: !x.only })} />
+        ),
       };
     }
     if (place) {
@@ -835,8 +1084,7 @@ export function NetworkPanel({
       };
     }
     if (win && timeline) {
-      const fmt = timeline.grain === 'year' ? 'yyyy'
-        : timeline.grain === 'day' || timeline.grain === 'week' ? 'd MMM yy' : 'MMM yyyy';
+      const fmt = cellFormat(timeline.grain);
       return {
         subject: {
           icon: Clock,
@@ -847,14 +1095,17 @@ export function NetworkPanel({
       };
     }
     return null;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [net, view, subject, focused, place, win, timeline, communities, expanded, expand, fold, select,
-      geoChoice.preset, timeChoice.source, selection, shown, matches, anchorSpace]);
+      geoChoice.preset, timeChoice.source, selection, sets, setResults, setLabel, anchorSpace]);
 
   const drilling = drill != null;
+  /** The canvas the panel's cards leave open. */
+  const openCanvas = { left: 288, top: 8, right: drilling ? DRILL_W + 16 : 8, bottom: timeline ? 52 : 8 };
   const building = stream.status === 'building' || stream.status === 'connecting';
 
   return (
-    <div className="@container/network relative h-full min-h-[420px] w-full overflow-hidden bg-background"
+    <div ref={root} className="@container/network relative h-full min-h-[420px] w-full overflow-hidden bg-background"
          onKeyDown={onKeyDown}>
       {net && buffers && (
         <CosmosPlane
@@ -866,7 +1117,7 @@ export function NetworkPanel({
           arrangement={arrangement}
           buffers={buffers}
           visible={visible}
-          highlight={subject?.highlight ?? null}
+          highlight={highlight}
           focused={focused}
           outlined={outlined}
           config={planeLook}
@@ -879,10 +1130,9 @@ export function NetworkPanel({
           onLayout={onLayout}
           onRunning={setRunning}
         >
-          {deep && slices ? (
+          {deep && presence ? (
             <TimeDeck
-              slice={slices}
-              slices={cells.length}
+              presence={presence}
               present={present}
               onStep={travel}
               visible={visible}
@@ -890,12 +1140,18 @@ export function NetworkPanel({
               sizes={buffers.sizes}
               emphasis={emphasis}
               pinned={pinned}
+              featured={hover ?? focused}
               onReady={setDeckApi}
               depth={deckView?.depth}
               ahead={deckView?.ahead}
               vanish={deckView?.vanish}
-              anchors={shown}
+              onVanish={(vanish) => setDeckView({ ...deckView, vanish })}
+              anchors={anchorMarks}
+              slicer={slicer}
+              onCut={(k) => { if (cells[k] != null) { setWin([cells[k], cells[k]]); setPlaying(false); } }}
+              inset={openCanvas}
               onPick={(i, e) => onPointClick(i, e)}
+              onStack={openStack}
               onHover={setHover}
               onBackground={() => select(null)}
             />
@@ -912,17 +1168,20 @@ export function NetworkPanel({
       )}
 
       {/* ── Anchors: dropping one, and the ones there are ──────────────── */}
-      {surface && shown.length > 0 && (
+      {surface && anchorMarks.length > 0 && (
         <PlaneAnchors
           surface={surface}
-          anchors={shown}
-          counts={anchorCounts}
-          selected={selection?.kind === 'anchor' ? selection.id : null}
-          onMove={(id, x, y) => editAnchor(id, { x, y })}
-          onText={(id, q) => (q ? editAnchor(id, { q }) : removeAnchor(id))}
-          onGain={(id, gain) => editAnchor(id, { gain })}
-          onRemove={removeAnchor}
-          onPick={(id) => select(selection?.kind === 'anchor' && selection.id === id ? null : { kind: 'anchor', id })}
+          anchors={anchorMarks}
+          selected={selection?.kind === 'set' ? selection.id : null}
+          inset={openCanvas}
+          onMove={(id, x, y) => {
+            const t = sets.find((z) => z.id === id);
+            if (t) editSet(id, { at: { ...t.at, [anchorSpace]: [x, y] } });
+          }}
+          onGain={(id, gain) => editSet(id, { gain })}
+          onLight={(id) => light('set', id)}
+          onRemove={unplace}
+          onPick={(id) => (selection?.kind === 'set' && selection.id === id ? select(null) : pickSet(id))}
         />
       )}
       {placing && surface && (
@@ -933,7 +1192,10 @@ export function NetworkPanel({
                if (Number.isFinite(x) && Number.isFinite(y)) dropAnchor(x, y);
              }}>
           <span className={cn(HUD_GLASS, HUD_PROSE, 'pointer-events-none absolute left-1/2 top-12 -translate-x-1/2 px-2 py-1 text-hud-dim')}>
-            Click where the anchor goes · Esc to cancel
+            {(() => {
+              const x = placing?.id ? sets.find((t) => t.id === placing.id) : null;
+              return x ? `Click where “${setLabel(x)}” gathers` : 'Click where the anchor goes, then build its set';
+            })()} · Esc to cancel
           </span>
         </div>
       )}
@@ -960,61 +1222,92 @@ export function NetworkPanel({
             <GeoButton active={core === 'geo'} value={config.view?.geo}
                        onApply={(geo) => setView({ core: 'geo', geo })}
                        onLeave={() => setView({ core: 'groups' })} />
-            <HudButton size="sm" icon={AnchorIcon} active={placing} disabled={!surface}
+            <HudButton size="sm" icon={AnchorIcon} active={placing != null} disabled={!surface}
                        title={anchorSpace === 'time'
-                         ? 'Drop an anchor — a lane: what its words name moves to its height, keeping its time'
-                         : 'Drop an anchor — type a topic or a name, and what it names gathers there'}
-                       onClick={() => setPlacing((p) => !p)} />
+                         ? 'Drop an anchor — a lane: the set you build moves to its height, keeping its time'
+                         : 'Drop an anchor — build a set in the bar below, and it gathers there'}
+                       onClick={() => setPlacing((p) => (p ? null : { id: null }))} />
           </div>
           {draft !== (config.q ?? '') && (
             <p className={cn(HUD_PROSE, 'px-1 text-hud-dimmer')}>Enter to apply · Esc to discard</p>
           )}
-          <label className="relative block">
-            <Search className="pointer-events-none absolute left-2 top-1/2 size-3 -translate-y-1/2 text-hud-dimmer" />
-            <input
-              value={find}
-              onChange={(e) => setFind(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && found[0] != null) { goToBase(found[0]); setFind(''); }
-                if (e.key === 'Escape') setFind('');
-              }}
-              placeholder="Find a node"
-              disabled={!base}
-              className={cn(HUD_INPUT, 'h-7 w-full border pl-6 pr-2 text-[11px] outline-none')}
-            />
-          </label>
-          {find && base && (
-            <div className="max-h-56 overflow-y-auto">
-              {found.length === 0 && <p className={cn(HUD_PROSE, 'px-2 py-1 text-hud-dimmer')}>No node by that name.</p>}
-              {found.map((i) => (
-                <HudOption
-                  key={i}
-                  label={base.name[i]}
-                  hint={`${base.types[base.type[i]] || 'unknown'} · ${degree(base, i).toLocaleString()} links`}
-                  trailing={<span className={cn(HUD_NUM, 'text-hud-dimmer')}>{base.frequency[i].toLocaleString()}</span>}
-                  onClick={(e) => {
-                    if (e.shiftKey && base.kind[i] === 0) toggleMark(base.id[i]);
-                    else { goToBase(i); setFind(''); }
-                  }}
-                />
-              ))}
-            </div>
-          )}
+          <SetBuilder
+            active={activeSet}
+            hue={activeSet ? hueOf(activeSet.id) : undefined}
+            catalog={catalog}
+            nameOf={nameOf}
+            loadValues={loadValues}
+            onTerms={(terms) => { if (activeSet) editSet(activeSet.id, { terms }); }}
+            onPick={onBuilderPick}
+            onEscape={() => { if (activeSet) select(null); }}
+            inputRef={builderInput}
+            disabled={!base}
+          />
+          {valueTerms.error && <p className={cn(HUD_PROSE, 'px-1 text-rose-600 dark:text-rose-400')}>{valueTerms.error}</p>}
         </div>
+
+        {sets.length > 0 && (
+          <section className={cn(HUD_GLASS, 'pointer-events-auto max-h-[30%] shrink-0 overflow-y-auto p-1 [scrollbar-width:thin]')}>
+            <div className="flex items-center gap-1 px-1 pb-0.5">
+              <span className={cn(HUD_LABEL, 'flex-1 text-hud-dim')}>Sets</span>
+              {alone && (
+                <button type="button" onClick={() => setSets(sets.map((x) => (x.only ? { ...x, only: false } : x)))}
+                        title="Show everything again"
+                        className={cn(HUD_NUM, 'inline-flex items-center gap-0.5 text-hud-dim hover:text-hud-fg')}>
+                  <X className="size-3" /> alone
+                </button>
+              )}
+              <ToolButton title="A new set — build it in the bar above" onClick={newSet}>
+                <Plus className="size-3" />
+              </ToolButton>
+            </div>
+            {sets.map((x) => (
+              <SetRow
+                key={x.id}
+                set={x}
+                label={setLabel(x)}
+                hue={hueOf(x.id)}
+                result={setResults.get(x.id)}
+                picked={selection?.kind === 'set' && selection.id === x.id}
+                placed={!!x.at?.[anchorSpace]}
+                placing={placing?.id === x.id}
+                canPlace={!!surface}
+                lit={isLit('set', x.id)}
+                onPick={() => (selection?.kind === 'set' && selection.id === x.id ? select(null) : pickSet(x.id))}
+                onName={(name) => editSet(x.id, { name: name || undefined })}
+                onAlone={() => editSet(x.id, { only: !x.only })}
+                onPlace={() => (x.at?.[anchorSpace] ? unplace(x.id) : setPlacing({ id: x.id }))}
+                onLight={() => light('set', x.id)}
+                onGain={(v) => editSet(x.id, { gain: v || undefined })}
+                onRemove={() => removeSet(x.id)}
+              />
+            ))}
+          </section>
+        )}
 
         {base && core === 'groups' && (
           <RankCard className="pointer-events-auto max-h-[38%] @max-[640px]/network:hidden" title="Groups"
                     total={groups.length} unit="groups" items={groupItems} onPick={pickGroup}
                     highlighted={focused != null && view?.group[focused] ? view.group[focused] : null}
-                    trailing={(item, active) => (
-                      <GainSlot value={gainOf('group', item.id)} active={active}
-                                onChange={(v) => setGainFor('group', item.id, v)} />
-                    )} />
+                    trailing={(item, active) => {
+                      const g = groups.find((x) => x.key === item.id);
+                      const head = g ? headOf(g) : item.id;
+                      return (
+                        <RowTools active={active}
+                                  onAdd={() => gather({ kind: 'group', op: '=', values: [head] })}
+                                  lit={isLit('group', head)} onLight={() => light('group', head)}
+                                  gain={gainOf('group', head)} onGain={(v) => setGainFor('group', head, v)} />
+                      );
+                    }} />
         )}
         {geography && (
           <RankCard className="pointer-events-auto max-h-[38%] @max-[640px]/network:hidden" title="Places"
                     total={geography.places.length} unit="places" items={placeItems} onPick={pickPlace}
-                    highlighted={place ? String(place.coord) : null} />
+                    highlighted={place ? String(place.coord) : null}
+                    trailing={(item, active) => (
+                      <RowTools active={active} addTitle="Gather what is placed here — into the set being built, or a new one"
+                                onAdd={() => gather({ kind: 'place', op: '=', values: [item.name] })} />
+                    )} />
         )}
         {timeline && windowNodes && (
           <RankCard className="pointer-events-auto max-h-[38%] @max-[640px]/network:hidden" title="In this window"
@@ -1023,8 +1316,10 @@ export function NetworkPanel({
                     marked={markSet}
                     highlighted={selection?.kind === 'node' ? selection.id : null}
                     trailing={(item, active) => (
-                      <GainSlot value={gainOf('node', item.id)} active={active}
-                                onChange={(v) => setGainFor('node', item.id, v)} />
+                      <RowTools active={active}
+                                onAdd={() => gather({ kind: 'entity', op: '=', values: [item.id] })}
+                                lit={isLit('node', item.id)} onLight={() => light('node', item.id)}
+                                gain={gainOf('node', item.id)} onGain={(v) => setGainFor('node', item.id, v)} />
                     )} />
         )}
         {base && (
@@ -1035,8 +1330,10 @@ export function NetworkPanel({
             marked={markSet}
             highlighted={selection?.kind === 'node' ? selection.id : null}
             trailing={(item, active) => (
-              <GainSlot value={gainOf('node', item.id)} active={active}
-                        onChange={(v) => setGainFor('node', item.id, v)} />
+              <RowTools active={active}
+                        onAdd={() => gather({ kind: 'entity', op: '=', values: [item.id] })}
+                        lit={isLit('node', item.id)} onLight={() => light('node', item.id)}
+                        gain={gainOf('node', item.id)} onGain={(v) => setGainFor('node', item.id, v)} />
             )}
             actions={anything ? (
               <button type="button" onClick={clearAll} title="Let go of everything picked, marked or brushed (Esc)"
@@ -1066,11 +1363,23 @@ export function NetworkPanel({
                       <span className="truncate">{t.name}</span>
                       <span className={cn(HUD_NUM, 'text-hud-dimmer')}>{compact(t.count)}</span>
                     </button>
+                    {!off && (g !== 0 || isLit('type', t.name)) && (
+                      <span className="inline-flex items-center gap-px pr-0.5">
+                        {isLit('type', t.name) && (
+                          <ToolButton title="Let its links go dark" on onClick={() => light('type', t.name)}>
+                            <Waypoints className="size-3" />
+                          </ToolButton>
+                        )}
+                        {g !== 0 && <HudGain value={g} onChange={(v) => setGainFor('type', t.name, v)} className="w-8" />}
+                      </span>
+                    )}
                     {!off && (
-                      <HudGain value={g} onChange={(v) => setGainFor('type', t.name, v)}
-                               title={`Turn ${t.name} up or down`}
-                               className={cn('w-8', g === 0 && cn(HUD_GLASS,
-                                 'absolute left-1 top-full z-10 hidden px-1 group-hover/chip:inline-flex focus-visible:inline-flex'))} />
+                      <span className={cn(HUD_GLASS, 'absolute left-0 top-full z-10 hidden px-1 py-0.5 group-hover/chip:flex group-focus-within/chip:flex')}>
+                        <RowTools active addTitle={`Gather every ${t.name} — into the set being built, or a new one`}
+                                  onAdd={() => gather({ kind: 'type', op: '=', values: [t.name] })}
+                                  lit={isLit('type', t.name)} onLight={() => light('type', t.name)}
+                                  gain={g} onGain={(v) => setGainFor('type', t.name, v)} />
+                      </span>
                     )}
                     </span>
                   );
@@ -1115,6 +1424,11 @@ export function NetworkPanel({
                   </span>
                   <HudButton size="sm" icon={X} title="Unmark all" className="h-6 border-transparent px-1"
                              onClick={() => { setMarks([]); setKeeper(null); }} />
+                  <HudButton size="sm" icon={Layers} className="h-6 px-1.5"
+                             title="Gather them as a set — into the set being built, or a new one"
+                             onClick={() => { gather({ kind: 'entity', op: '=', values: marks }); setMarks([]); setKeeper(null); }}>
+                    Set
+                  </HudButton>
                   <HudButton size="sm" icon={Merge} active disabled={marks.length < 2} className="h-6 px-1.5"
                              title="Merge them — a decision like the resolver's, in its history and undone the same way"
                              onClick={() => { void mergeMarks(); }}>
@@ -1233,8 +1547,10 @@ export function NetworkPanel({
                     <span className="min-w-0 flex-1 truncate text-[11px] leading-[18px] text-hud-fg">{t.name}</span>
                     <span className={cn(HUD_NUM, 'text-hud-dimmer')}>{compact(t.count)}</span>
                   </button>
-                  <GainSlot value={gainOf(t.gain.kind, t.gain.key)} active={solo === t.key}
-                            onChange={(v) => setGainFor(t.gain.kind, t.gain.key, v)} />
+                  <RowTools active={solo === t.key}
+                            lit={isLit(t.gain.kind as LightKind, t.gain.key)}
+                            onLight={() => light(t.gain.kind as LightKind, t.gain.key)}
+                            gain={gainOf(t.gain.kind, t.gain.key)} onGain={(v) => setGainFor(t.gain.kind, t.gain.key, v)} />
                 </div>
               );
             })}
@@ -1248,13 +1564,14 @@ export function NetworkPanel({
       )}
 
       {/* ── Bottom: when, in the time view ─────────────────────────────── */}
-      {timeline && timeline.bins.length > 0 && (
+      {timeline && bins.length > 0 && (
         <TimeStrip
           className={cn(
             'absolute bottom-2 left-1/2 w-[min(560px,calc(100%-1rem))] -translate-x-1/2',
             drilling && '@min-[900px]/network:left-[calc(50%-80px)] @min-[900px]/network:w-[min(520px,calc(100%-760px))]',
           )}
-          bins={timeline.bins}
+          bins={bins}
+          total={presence?.present}
           grain={timeline.grain}
           undated={timeline.undated}
           outside={timeline.outside}
@@ -1294,6 +1611,12 @@ export function NetworkPanel({
                 onReset={() => setDeckView(null)}
               />
             )}
+            {deep && (
+              <HudButton icon={Frame} active={slicing}
+                         title={slicing ? 'Take the cut away'
+                           : 'Cut the deck at one instant — the streams passing through it; ⇧-scroll moves the cut through the window'}
+                         onClick={() => setView({ slicer: !slicing })} />
+            )}
             <HudButton icon={Expand} active={spread}
                        title={spread ? 'Let the layout draw back together' : 'Spread — pull nodes and hubs apart so their names can be read'}
                        onClick={() => setView({ spread: !spread })} />
@@ -1307,6 +1630,26 @@ export function NetworkPanel({
             )}
           </HudGroup>
         </div>
+      )}
+
+      {/* ── A pile, asked about ─────────────────────────────────────────── */}
+      {stack && net && buffers && (
+        <StackPicker
+          net={net}
+          nodes={stack.nodes}
+          at={stack.at}
+          colorOf={(i) => {
+            const c = buffers.colors;
+            return `rgb(${Math.round(c[4 * i] * 255)} ${Math.round(c[4 * i + 1] * 255)} ${Math.round(c[4 * i + 2] * 255)})`;
+          }}
+          onPick={(i, { shift }) => {
+            setStack(null);
+            if (shift) { if (!view?.group[i] && net.kind[i] === 0) toggleMark(net.id[i]); }
+            else pickNode(i);
+          }}
+          onHover={setHover}
+          onClose={() => setStack(null)}
+        />
       )}
 
       {/* ── States ─────────────────────────────────────────────────────── */}
@@ -1373,14 +1716,76 @@ function Chip({
   );
 }
 
-/** A gain beside a list row: out of the way until the row is hovered, picked,
- *  or already turned. */
-function GainSlot({ value, active, onChange }: { value: number; active: boolean; onChange: (v: number) => void }) {
+/**
+ * A set in the Sets card: its hue, its terms in a few words (double-click to
+ * name it), how many it holds — and what it can do: shown alone, anchored in
+ * this view, lit, turned up or down, removed.
+ */
+function SetRow({
+  set, label, hue, result, picked, placed, placing, canPlace, lit,
+  onPick, onName, onAlone, onPlace, onLight, onGain, onRemove,
+}: {
+  set: NodeSet;
+  label: string;
+  hue: string;
+  result?: { members: number[]; pending: boolean };
+  picked: boolean;
+  placed: boolean;
+  placing: boolean;
+  canPlace: boolean;
+  lit: boolean;
+  onPick: () => void;
+  onName: (name: string) => void;
+  onAlone: () => void;
+  onPlace: () => void;
+  onLight: () => void;
+  onGain: (v: number) => void;
+  onRemove: () => void;
+}) {
+  const [naming, setNaming] = useState(false);
+  const reveal = (on: boolean) => (on || picked ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100');
   return (
-    <HudGain value={value} onChange={onChange}
-             className={cn('transition-[width,opacity] duration-150',
-                           value !== 0 || active
-                             ? 'w-10 opacity-100'
-                             : 'w-0 opacity-0 group-hover/row:w-10 group-hover/row:opacity-100 focus-visible:w-10 focus-visible:opacity-100')} />
+    <div className={cn('group/row flex items-center gap-0.5 rounded px-1', picked ? 'bg-hud-sunken' : 'hover:bg-hud-sunken')}>
+      <span aria-hidden className="h-2.5 w-1 shrink-0 rounded-full" style={{ background: hue }} />
+      {naming ? (
+        <input
+          autoFocus
+          defaultValue={set.name ?? ''}
+          placeholder={label}
+          onBlur={(e) => { onName(e.target.value.trim()); setNaming(false); }}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+            if (e.key === 'Escape') setNaming(false);
+          }}
+          className="h-[18px] min-w-0 flex-1 bg-transparent px-1 text-[11px] text-hud-fg outline-none placeholder:text-hud-dimmer"
+        />
+      ) : (
+        <button type="button" onClick={onPick} onDoubleClick={() => setNaming(true)}
+                title={`${label} — click to pick and edit, double-click to name`}
+                className="flex min-w-0 flex-1 items-center gap-1 px-1 text-left">
+          <span className={cn('min-w-0 flex-1 truncate text-[11px] leading-[18px]', picked ? 'font-medium text-hud-fg' : 'text-hud-fg/85')}>
+            {label}
+          </span>
+          <span className={cn(HUD_NUM, 'text-hud-dimmer')}>
+            {result?.pending ? '…' : (result?.members.length ?? 0).toLocaleString()}
+          </span>
+        </button>
+      )}
+      <ToolButton title={set.only ? 'Show everything again' : 'Show it alone — with any other set shown alone'}
+                  on={!!set.only} onClick={onAlone} className={reveal(!!set.only)}>
+        <Focus className="size-3" />
+      </ToolButton>
+      {canPlace && (
+        <ToolButton title={placed ? 'Take its anchor off this view' : placing ? 'Click the canvas to place it' : 'Anchor it in this view — what it holds gathers there'}
+                    on={placed || placing} onClick={onPlace} className={reveal(placed || placing)}>
+          <AnchorIcon className="size-3" />
+        </ToolButton>
+      )}
+      <RowTools active={picked} lit={lit} onLight={onLight} gain={set.gain ?? 0} onGain={onGain} />
+      <ToolButton title="Remove the set" onClick={onRemove} className={reveal(false)}>
+        <X className="size-3" />
+      </ToolButton>
+    </div>
   );
 }
