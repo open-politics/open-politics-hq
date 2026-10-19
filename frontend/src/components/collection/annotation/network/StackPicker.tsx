@@ -31,6 +31,11 @@ export function StackPicker({
   const box = useRef<HTMLDivElement>(null);
   const [cursor, setCursor] = useState(0);
   const [place, setPlace] = useState<[number, number]>(at);
+  // The panel hands fresh callbacks each render: listen once, call the latest.
+  const fns = useRef({ onPick, onHover, onClose });
+  fns.current = { onPick, onHover, onClose };
+  const cur = useRef(0);
+  cur.current = cursor;
 
   // Beside the pointer, kept inside the panel.
   useLayoutEffect(() => {
@@ -42,12 +47,12 @@ export function StackPicker({
   }, [at, nodes]);
 
   useEffect(() => {
-    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) onClose(); };
+    const away = (e: PointerEvent) => { if (!box.current?.contains(e.target as Node)) fns.current.onClose(); };
     const keys = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); onClose(); }
+      if (e.key === 'Escape') { e.preventDefault(); fns.current.onClose(); }
       else if (e.key === 'ArrowDown') { e.preventDefault(); setCursor((c) => Math.min(nodes.length - 1, c + 1)); }
       else if (e.key === 'ArrowUp') { e.preventDefault(); setCursor((c) => Math.max(0, c - 1)); }
-      else if (e.key === 'Enter') { e.preventDefault(); onPick(nodes[cursor], { shift: e.shiftKey }); }
+      else if (e.key === 'Enter') { e.preventDefault(); fns.current.onPick(nodes[cur.current], { shift: e.shiftKey }); }
     };
     // The click that opened it is still on its way: listen from the next one.
     const t = setTimeout(() => window.addEventListener('pointerdown', away, true), 0);
@@ -57,15 +62,16 @@ export function StackPicker({
       window.removeEventListener('pointerdown', away, true);
       window.removeEventListener('keydown', keys);
     };
-  }, [nodes, cursor, onPick, onClose]);
-  useEffect(() => { onHover(nodes[cursor] ?? null); }, [cursor, nodes, onHover]);
-  useEffect(() => () => onHover(null), [onHover]);
+  }, [nodes]);
+  useEffect(() => { setCursor(0); }, [nodes]);
+  useEffect(() => { fns.current.onHover(nodes[cursor] ?? null); }, [cursor, nodes]);
+  useEffect(() => () => fns.current.onHover(null), []);
 
   return (
     <div ref={box} role="listbox" aria-label="Nodes here"
          className={cn(HUD_GLASS, 'absolute z-30 py-1')}
          style={{ left: place[0], top: place[1], width: W }}
-         onPointerLeave={() => onHover(null)}>
+         onPointerLeave={() => fns.current.onHover(null)}>
       <div className="flex items-baseline justify-between px-3 pb-0.5 pt-0.5">
         <span className={cn(HUD_LABEL, 'text-hud-dim')}>Here</span>
         <span className={cn(HUD_NUM, 'text-hud-dimmer')}>{nodes.length}</span>
