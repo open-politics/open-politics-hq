@@ -683,9 +683,20 @@ export function NetworkPanel({
   const [stack, setStack] = useState<{ nodes: number[]; at: [number, number] } | null>(null);
   const root = useRef<HTMLDivElement>(null);
   useEffect(() => { setStack(null); }, [net, core, deep]);
-  const openStack = (nodes: number[], e: MouseEvent) => {
+  // The pile reads loudest first. A second click on it soon after acts on the
+  // node on top, as a double-click would — a group still opens where it is.
+  const openStack = (nodes: number[], e: MouseEvent, top: number) => {
+    const now = performance.now();
+    if (lastClick.current?.i === top && now - lastClick.current.at < DOUBLE_CLICK_MS) {
+      setStack(null);
+      pickNode(top);
+      return;
+    }
+    lastClick.current = { i: top, at: now };
     const r = root.current?.getBoundingClientRect();
-    if (r) setStack({ nodes, at: [e.clientX - r.left, e.clientY - r.top] });
+    if (!r || !net) return;
+    const loud = [...nodes].sort((a, b) => net.frequency[b] - net.frequency[a]);
+    setStack({ nodes: loud, at: [e.clientX - r.left, e.clientY - r.top] });
   };
   const onPointClick = (i: number, e?: MouseEvent) => {
     if (!net || !view) return;
@@ -696,7 +707,7 @@ export function NetworkPanel({
     }
     if (e && !deep) {
       const under = (plane.current?.stackAt(e.clientX, e.clientY) ?? []).filter((j) => !visible || visible[j]);
-      if (under.length > 1) { openStack(under, e); return; }
+      if (under.length > 1) { openStack(under, e, i); return; }
     }
     pickNode(i);
   };

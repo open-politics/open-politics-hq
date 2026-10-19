@@ -96,8 +96,9 @@ export interface TimeDeckProps {
   /** Asked once the deck is up. */
   onReady?: (api: DeckApi) => void;
   onPick: (index: number, event: MouseEvent) => void;
-  /** A click on a pile: every node under the pointer, nearest first. */
-  onStack?: (nodes: number[], event: MouseEvent) => void;
+  /** A click on a pile: every node under the pointer on the page hit, and
+   *  the one drawn on top. */
+  onStack?: (nodes: number[], event: MouseEvent, top: number) => void;
   onHover: (index: number | null) => void;
   onBackground: () => void;
 }
@@ -712,10 +713,12 @@ export function TimeDeck(props: TimeDeckProps) {
           if (info?.layer?.id === 'slicer-label') {
             latest.current.onCut?.(Math.round(focus()));
           } else if (info?.layer?.id?.startsWith('n-') && info.index >= 0) {
-            // A pile — nodes drawn over one another — is asked about, not guessed.
+            // A pile — nodes drawn over one another on the page that was hit —
+            // is asked about, not guessed. Dots on other pages that merely
+            // line up behind it are another time, not the same pile.
             const under: any[] = src?.shiftKey ? [] : deck.current?.pickMultipleObjects({ x: info.x, y: info.y, radius: 2, depth: 40 }) ?? [];
-            const nodes = [...new Set(under.filter((h) => h?.layer?.id?.startsWith('n-')).map((h) => h.object as number))];
-            if (nodes.length > 1 && latest.current.onStack) latest.current.onStack(nodes, src);
+            const nodes = [...new Set(under.filter((h) => h?.layer?.id === info.layer.id).map((h) => h.object as number))];
+            if (nodes.length > 1 && latest.current.onStack) latest.current.onStack(nodes, src, info.object as number);
             else latest.current.onPick(info.object as number, src);
           } else latest.current.onBackground();
         },
