@@ -253,8 +253,11 @@ class AnnotationGraphSource:
         ``object_name`` roles that its rows do not have.
 
         Schemas come from the query's own scope when the panel declared one
-        (``formula.schema_id`` → ``AnnotationQuery.schemas``); otherwise we ask
-        which schemas the scoped annotations actually use. Maps from several
+        (``formula.schema_id`` → ``AnnotationQuery.schemas``); then from the
+        runs in scope, whose schemas are declared before a single annotation
+        lands; otherwise we ask which schemas the scoped annotations actually
+        use. Asking the annotations first made a run with no successes yet read
+        as a schema with nothing to graph. Maps from several
         schemas **merge**: ``SchemaMap.get`` and ``in_container`` search a flat
         field tuple, so concatenating is exactly right for a run whose
         annotations span more than one contract, and a path resolves against
@@ -267,6 +270,11 @@ class AnnotationGraphSource:
         )
 
         schema_ids = list(getattr(self.query, "_schema_ids", None) or [])
+        run_ids = list(getattr(self.query, "_run_ids", None) or [])
+        if not schema_ids and run_ids:
+            schema_ids = [r[0] for r in self.query._session.exec(text(
+                "SELECT DISTINCT schema_id FROM runschemalink WHERE run_id = ANY(:run_ids)"
+            ).bindparams(run_ids=run_ids)).all()]
         if not schema_ids:
             try:
                 clauses, params = self.query._base_where(include_cursor=False)

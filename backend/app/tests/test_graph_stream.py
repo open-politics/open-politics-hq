@@ -889,3 +889,24 @@ def test_node_kind_entity_keeps_kind_meaning_what_it_says(db):
     ev = next(n for n in result.nodes if n.type == "Evidence")
     assert ev.kind == "entity"
     assert ev.name == "Exhibit C"
+
+
+def test_run_schema_maps_before_any_annotation_lands(db):
+    """A run's schemas are declared on the run, so its graph resolves them with
+    no annotations yet. Discovering them from annotation rows alone reported a
+    run with no successes as "schema declares no graphable section"."""
+    from app.api.modules.annotation.panel_config import derive_projections
+
+    uid = _user(db, "runschema")
+    iid = _infospace(db, uid, "runschema")
+    sid = _schema_with(db, iid, uid, {
+        "type": "object",
+        "properties": {"document": {"type": "object", "properties": {
+            "actors": {"type": "array", "items": _entity_prop("Person")},
+        }}},
+    })
+    r = _run(db, iid, uid, "no annotations yet")
+    db.execute(text("INSERT INTO runschemalink (run_id, schema_id) VALUES (:r, :s)"), {"r": r, "s": sid})
+
+    aq = AnnotationQuery(db, iid).scope(None).runs([r])
+    assert derive_projections(AnnotationGraphSource(query=aq)._schema_map())
