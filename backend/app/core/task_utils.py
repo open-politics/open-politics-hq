@@ -201,7 +201,14 @@ def create_pydantic_model_from_json_schema(
     bool``. The run-level ``justifications_enabled`` master switch defaults to
     True; passing False suppresses all justification fields regardless of the
     per-field flag.
+
+    At the root, ``document`` is the annotation envelope, not a field: it is
+    always required and never null, whatever the contract's ``required`` says
+    (most stored contracts list none). A nullable envelope lets a grammar-
+    constrained model answer ``{"document": null}``, a valid reply that
+    carries nothing and discards every field around it.
     """
+    is_root = processed_models is None
     if processed_models is None:
         processed_models = {}
 
@@ -223,6 +230,8 @@ def create_pydantic_model_from_json_schema(
     fields: Dict[str, Any] = {}
     schema_properties = json_schema.get("properties", {})
     required_fields = set(json_schema.get("required", []))
+    if is_root and "document" in schema_properties:
+        required_fields.add("document")
 
     if is_per_modality_item_schema and json_schema.get("type") == "object":
         system_uuid_field_name = "system_asset_source_uuid"

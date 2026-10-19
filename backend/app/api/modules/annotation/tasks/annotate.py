@@ -1910,23 +1910,27 @@ async def _run_phase_b_loop(
 def _merge_phase_a_b(
     phase_a_data: Optional[Dict[str, Any]],
     phase_b_accumulator: Dict[str, list],
+    list_fields: List[Dict[str, Any]],
 ) -> Dict[str, Any]:
     """Merge Phase A's scalar dict + Phase B's per-field list accumulators
     into one dict matching the original schema's value shape.
 
-    Hierarchical schemas have a ``document`` wrapper; flat schemas don't.
-    The merge mirrors whichever shape Phase A produced.
+    Each list lands at the path the split recorded for it (``document.actors``
+    on a hierarchical schema, ``actors`` on a flat one), so the shape comes
+    from the contract, never from what Phase A returned. Reading it off Phase
+    A's reply meant a ``{"document": null}`` there filed every Phase B list
+    beside a null envelope, and demultiplex dropped the whole extraction.
     """
-    if not isinstance(phase_a_data, dict):
-        phase_a_data = {}
-    if "document" in phase_a_data and isinstance(phase_a_data["document"], dict):
-        merged = {"document": dict(phase_a_data["document"])}
-        for field_name, items in phase_b_accumulator.items():
-            merged["document"][field_name] = items
-    else:
-        merged = dict(phase_a_data)
-        for field_name, items in phase_b_accumulator.items():
-            merged[field_name] = items
+    merged = json.loads(json.dumps(phase_a_data)) if isinstance(phase_a_data, dict) else {}
+    paths = {f["name"]: f["path"] for f in list_fields}
+    for field_name, items in phase_b_accumulator.items():
+        *parents, leaf = paths.get(field_name, field_name).split(".")
+        node = merged
+        for key in parents:
+            if not isinstance(node.get(key), dict):
+                node[key] = {}
+            node = node[key]
+        node[leaf] = items
     return merged
 
 
@@ -2178,7 +2182,7 @@ async def process_single_asset_schema(
 
                 # Merge phase results into a single envelope so downstream
                 # demultiplex sees the same shape as a single-shot call.
-                merged_data = _merge_phase_a_b(phase_a_data, phase_b_result["accumulator"])
+                merged_data = _merge_phase_a_b(phase_a_data, phase_b_result["accumulator"], list_fields)
                 # Synthesize a provider_response stand-in for the rest of the
                 # function. Combine thinking traces if both phases produced them.
                 phase_a_thinking = phase_a_response.thinking_trace
