@@ -1,17 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useEffect, useMemo, useState } from 'react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ButtonGroup } from "@/components/ui/button-group"
 import { useProvidersStore } from '@/zustand_stores/storeProviders';
-import { ProvidersService } from '@/client';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { toast } from 'sonner';
-
-interface Provider {
-  name: string;
-  models: string[];
-}
+import ModelSelect from './ModelSelect';
 
 interface ProviderSelectorProps {
   showModels?: boolean;
@@ -29,6 +24,8 @@ export default function ProviderSelector({ showModels = true, className = '', ca
   const {
     selections,
     setSelection,
+    providers: catalog,
+    loadCatalog,
   } = useProvidersStore();
 
   const { activeInfospace } = useInfospaceStore();
@@ -46,46 +43,29 @@ export default function ProviderSelector({ showModels = true, className = '', ca
     }
   };
   
-  const [providers, setProviders] = useState<Provider[]>([]);
   const [availableModels, setAvailableModels] = useState<string[]>([]);
+  const providers = useMemo(
+    () => catalog.llm.map(p => ({ name: p.id, models: (p.models || []).map(m => m.name) })),
+    [catalog.llm],
+  );
 
   useEffect(() => {
-    const fetchProviders = async () => {
-      try {
-        if (!activeInfospace?.id) return;
-        // One call. This used to be two — the unified listing for the provider
-        // names and a second legacy route for their models — which is exactly
-        // what the catalog collapses.
-        const data = await ProvidersService.providerCatalog({
-          infospaceId: activeInfospace.id,
-        });
-        const providerList: Provider[] = (data.domains?.language || []).map(p => ({
-          name: p.id,
-          models: (p.models || []).map(m => m.name),
-        }));
-        
-        setProviders(providerList);
-        
-        // If no provider is selected, or if the selected provider is no longer valid, set a default.
-        if (!selectedProvider || !providerList.some(p => p.name === selectedProvider)) {
-          // Whatever the backend actually offers, first entry wins. The old
-          // fallback chain named 'gemini' second, a provider that no longer
-          // exists — so it never matched and only ever cost a lookup.
-          const defaultProvider = providerList[0];
-          if (defaultProvider) {
-            setSelectedProvider(defaultProvider.name);
-            // The model will be set by the other useEffect hook.
-          }
-        }
-      } catch (error: any) {
-        console.error('Error fetching providers:', error);
-        toast.error('Failed to fetch AI providers. Please check the connection.');
-      }
-    };
+    if (!activeInfospace?.id) return;
+    loadCatalog(activeInfospace.id).catch((error) => {
+      console.error('Error fetching providers:', error);
+      toast.error('Failed to fetch AI providers. Please check the connection.');
+    });
+  }, [activeInfospace?.id, loadCatalog]);
 
-    fetchProviders();
+  // If no provider is selected, or the selected one is gone, the first the
+  // backend offers wins. The model is then set by the effect below.
+  useEffect(() => {
+    if (providers.length === 0) return;
+    if (!selectedProvider || !providers.some(p => p.name === selectedProvider)) {
+      setSelectedProvider(providers[0].name);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [capability, activeInfospace?.id]); // Re-run when capability or infospace changes
+  }, [capability, providers]);
 
   useEffect(() => {
     // Update available models when the selectedProvider or the list of providers changes.
@@ -125,38 +105,17 @@ export default function ProviderSelector({ showModels = true, className = '', ca
     setSelection(capability, { providerId: providerName, modelId: undefined });
   };
 
-  // Merged: one select, models grouped by provider. The value carries both
-  // (`provider::model`) so picking a model sets the provider too.
+  // Merged: one select, models grouped by provider, so picking a model sets the provider too.
   if (merged && showModels) {
-    const value = selectedProvider && selectedModel ? `${selectedProvider}::${selectedModel}` : '';
-    const handleMergedChange = (v: string) => {
-      const sep = v.indexOf('::');
-      if (sep < 0) return;
-      setSelection(capability, { providerId: v.slice(0, sep), modelId: v.slice(sep + 2) });
-    };
-    const providersWithModels = providers.filter((p) => p.models.length > 0);
     return (
       <div className={`flex w-full min-w-0 ${className}`}>
-        <Select value={value} onValueChange={handleMergedChange}>
-          <SelectTrigger className="h-8 w-full min-w-0">
-            <SelectValue placeholder="Select model" />
-          </SelectTrigger>
-          <SelectContent>
-            {providersWithModels.map((provider) => (
-              <SelectGroup key={provider.name}>
-                <SelectLabel className="text-[11px] capitalize text-muted-foreground">{provider.name}</SelectLabel>
-                {provider.models.map((model) => (
-                  <SelectItem key={`${provider.name}::${model}`} value={`${provider.name}::${model}`}>
-                    {model}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            ))}
-            {providersWithModels.length === 0 && (
-              <div className="p-2 text-center text-xs text-muted-foreground">No models available.</div>
-            )}
-          </SelectContent>
-        </Select>
+        <ModelSelect
+          providers={catalog.llm}
+          value={selections[capability]}
+          onChange={(sel) => setSelection(capability, sel)}
+          className="h-8 w-full min-w-0"
+          empty="No models available."
+        />
       </div>
     );
   }

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { UsersService } from '@/client';
+import { ProvidersService, UsersService } from '@/client';
 import type { ProviderDefaults, ProviderSelection as BackendProviderSelection } from '@/client';
 
 // Provider types match backend capabilities
@@ -57,6 +57,13 @@ export const DOMAIN_TO_CAPABILITY: Record<string, ProviderCapability> = {
   language: 'llm',
 };
 
+/** The backend domain a capability key reads. 'annotation' is a language context. */
+export const domainOf = (capability: ProviderCapability): string =>
+  capability === 'llm' || capability === 'annotation' ? 'language' : capability;
+
+// One request in flight per infospace, however many pickers mount at once.
+const catalogRequests = new Map<number, Promise<void>>();
+
 export interface ProviderSelection {
   providerId: string;
   modelId?: string; // For LLM and embedding providers
@@ -71,9 +78,16 @@ interface ProvidersState {
   
   // Active selections per capability
   selections: Record<ProviderCapability, ProviderSelection>;
-  
+
+  /** Infospace the catalog was last loaded for; null until the first load lands. */
+  catalogFor: number | null;
+  catalogLoading: boolean;
+
   // Actions
-  setProviders: (capability: ProviderCapability, providers: ProviderMetadata[]) => void;
+  /** Fill `providers` from GET /providers/{id}/catalog — curated models, plus
+   *  live ones for endpoints that declare none. Cached per infospace; `force`
+   *  re-asks the endpoints, which is what "refresh" means after a pull. */
+  loadCatalog: (infospaceId: number, opts?: { force?: boolean }) => Promise<void>;
   setApiKey: (providerId: string, key: string) => void;
   removeApiKey: (providerId: string) => void;
   setSelection: (capability: ProviderCapability, selection: ProviderSelection) => void;
@@ -105,6 +119,32 @@ export const useProvidersStore = create<ProvidersState>()(
 
       apiKeys: {},
 
+      catalogFor: null,
+      catalogLoading: false,
+
+      loadCatalog: (infospaceId, { force = false } = {}) => {
+        if (!force && get().catalogFor === infospaceId) return Promise.resolve();
+        const pending = catalogRequests.get(infospaceId);
+        if (pending) return pending;
+
+        set({ catalogLoading: true });
+        const request = ProvidersService.providerCatalog({ infospaceId })
+          .then((data) => {
+            const providers = { ...get().providers };
+            for (const [domain, list] of Object.entries(data.domains || {})) {
+              providers[(DOMAIN_TO_CAPABILITY[domain] ?? domain) as ProviderCapability] =
+                list as unknown as ProviderMetadata[];
+            }
+            set({ providers, catalogFor: infospaceId });
+          })
+          .finally(() => {
+            catalogRequests.delete(infospaceId);
+            set({ catalogLoading: false });
+          });
+        catalogRequests.set(infospaceId, request);
+        return request;
+      },
+
       // Seeded empty on purpose. Hardcoding provider ids here is what rotted:
       // 'gemini' no longer exists at all, 'ollama_embeddings' and
       // 'nominatim_local' are ids the backend has never emitted. A selection is
@@ -119,14 +159,6 @@ export const useProvidersStore = create<ProvidersState>()(
         ocr: {} as ProviderSelection,
         annotation: {} as ProviderSelection,
       },
-      
-      setProviders: (capability, providers) =>
-        set((state) => ({
-          providers: {
-            ...state.providers,
-            [capability]: providers,
-          },
-        })),
       
       setApiKey: (providerId, key) =>
         set((state) => ({

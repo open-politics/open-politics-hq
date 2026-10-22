@@ -6,17 +6,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
-import { Loader2, Sparkles, Database, RefreshCw, Play, Info, Trash2, Settings, Key, Eye, EyeOff, ExternalLink } from "lucide-react";
+import { Loader2, Sparkles, RefreshCw, Play, Trash2, Settings, Key, Eye, EyeOff, ExternalLink } from "lucide-react";
 import { InfospaceRead, InfospacesService, EmbeddingsService } from '@/client';
 import { toast } from 'sonner';
-import { useProvidersStore, ProviderMetadata } from '@/zustand_stores/storeProviders';
+import { useProvidersStore, ProviderSelection } from '@/zustand_stores/storeProviders';
+import ModelSelect from './ModelSelect';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
@@ -32,15 +32,6 @@ import {
   AlertDescription,
   AlertTitle,
 } from "@/components/ui/alert";
-import { Separator } from '@/components/ui/separator';
-
-interface EmbeddingModel {
-  name: string;
-  provider: string;
-  dimension: number;
-  description?: string;
-  max_sequence_length?: number;
-}
 
 interface EmbeddingStats {
   total_assets: number;
@@ -58,11 +49,16 @@ interface EmbeddingManagerProps {
 }
 
 export default function EmbeddingManager({ infospace, onInfospaceUpdate }: EmbeddingManagerProps) {
-  const { apiKeys, setApiKey, providers: storeProviders } = useProvidersStore();
-  const [availableModels, setAvailableModels] = useState<EmbeddingModel[]>([]);
+  const {
+    apiKeys, setApiKey, providers, selections, loadCatalog, catalogLoading, needsApiKey, hasApiKey,
+  } = useProvidersStore();
+  const embeddingProviders = providers.embedding;
   const embeddingSel = (infospace.enrichment_config as any)?.embedding;
-  const [selectedModel, setSelectedModel] = useState<string>(embeddingSel?.model_name || '');
-  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const pinned: ProviderSelection | null = embeddingSel?.model_name
+    ? { providerId: embeddingSel.provider_key, modelId: embeddingSel.model_name } : null;
+  // Start from the pin, else from the default chosen under Foundation Service Providers.
+  const [selectedModel, setSelectedModel] = useState<ProviderSelection | null>(
+    pinned ?? (selections.embedding?.modelId ? selections.embedding : null));
   const [isEnabling, setIsEnabling] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [stats, setStats] = useState<EmbeddingStats | null>(null);
@@ -70,17 +66,16 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
   const [showConfigDialog, setShowConfigDialog] = useState(false);
   const [showChangeModelDialog, setShowChangeModelDialog] = useState(false);
   const [showApiKeysDialog, setShowApiKeysDialog] = useState(false);
-  const [newModel, setNewModel] = useState<string>('');
+  const [newModel, setNewModel] = useState<ProviderSelection | null>(null);
   const [isUpdatingRelatedAssets, setIsUpdatingRelatedAssets] = useState(false);
   const [keyVisibility, setKeyVisibility] = useState<Record<string, boolean>>({});
 
   const isEnabled = !!embeddingSel?.model_name;
 
-  const modelsByProvider = availableModels.reduce((acc, model) => {
-    if (!acc[model.provider]) acc[model.provider] = [];
-    acc[model.provider].push(model);
-    return acc;
-  }, {} as Record<string, EmbeddingModel[]>);
+  const findModel = (sel: ProviderSelection | null) =>
+    sel ? embeddingProviders.find(p => p.id === sel.providerId)?.models?.find(m => m.name === sel.modelId) : undefined;
+  const modelCount = embeddingProviders.reduce((n, p) => n + (p.models?.length ?? 0), 0);
+  const toConfig = (sel: ProviderSelection) => ({ provider_key: sel.providerId, model_name: sel.modelId });
 
   useEffect(() => {
     loadAvailableModels();
@@ -89,29 +84,16 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
 
   const loadAvailableModels = async (forceRefresh = false) => {
     if (!infospace?.id) return;
-    setIsLoadingModels(true);
     try {
-      // Bulk discover — no provider_key, no runtime_key. The backend returns the
-      // static model catalog across all embedding providers.
-      const response = await EmbeddingsService.discoverEmbeddingModels({
-        infospaceId: infospace.id,
-        requestBody: {},
-      });
-      const models: EmbeddingModel[] = (response.models || []).map(m => ({
-        name: m.name, provider: m.provider, dimension: m.dimension,
-        description: m.description || undefined, max_sequence_length: m.max_sequence_length ?? undefined
-      }));
-      setAvailableModels(models);
+      // The catalog every picker reads; forcing re-asks the live endpoints.
+      await loadCatalog(infospace.id, { force: forceRefresh });
       if (forceRefresh) {
-        const providerCounts = models.reduce((acc, m) => { acc[m.provider] = (acc[m.provider] || 0) + 1; return acc; }, {} as Record<string, number>);
-        const summary = Object.entries(providerCounts).map(([p, c]) => `${p}: ${c}`).join(', ');
-        toast.success(`Discovered ${models.length} models (${summary})`);
+        const n = useProvidersStore.getState().providers.embedding.reduce((k, p) => k + (p.models?.length ?? 0), 0);
+        toast.success(`Discovered ${n} embedding models`);
       }
     } catch (error: any) {
       console.error('Failed to load embedding models:', error);
       toast.error('Failed to load available embedding models');
-    } finally {
-      setIsLoadingModels(false);
     }
   };
 
@@ -135,27 +117,8 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
     }
   };
 
-  const FALLBACK_PROVIDERS: { id: string; name: string; api_key_url?: string }[] = [
-    { id: 'openai', name: 'OpenAI', api_key_url: 'https://platform.openai.com/api-keys' },
-    { id: 'voyage', name: 'Voyage AI', api_key_url: 'https://dash.voyageai.com/' },
-    { id: 'jina', name: 'Jina AI', api_key_url: 'https://jina.ai/embeddings/#apiform' },
-  ];
-
-  const cloudEmbeddingProviders: ProviderMetadata[] = storeProviders.embedding.length > 0
-    ? storeProviders.embedding.filter(p => p.requires_api_key)
-    : FALLBACK_PROVIDERS.map(f => ({
-        id: f.id, name: f.name, description: '', requires_api_key: true,
-        api_key_name: `${f.name} API Key`, api_key_url: f.api_key_url,
-        is_local: false, is_oss: false, is_free: false, has_env_fallback: false, features: [],
-      }));
-
-  const getProviderInfo = (provider: string) => {
-    const storeEntry = storeProviders.embedding.find(p => p.id === provider);
-    if (storeEntry) {
-      return { name: storeEntry.name, requiresKey: storeEntry.requires_api_key, docUrl: storeEntry.api_key_url, badge: storeEntry.is_local ? 'Local' : 'Cloud' };
-    }
-    return { name: provider, requiresKey: false };
-  };
+  const cloudEmbeddingProviders = embeddingProviders.filter(p => p.requires_api_key);
+  const lacksKey = (sel: ProviderSelection | null) => !!sel && needsApiKey(sel.providerId) && !hasApiKey(sel.providerId);
 
   const buildValidApiKeys = (): Record<string, string> => {
     const keys: Record<string, string> = {};
@@ -167,11 +130,10 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
     if (!selectedModel) { toast.error('Please select an embedding model first'); return; }
     setIsEnabling(true);
     try {
-      const model = availableModels.find(m => m.name === selectedModel);
       const currentConfig = (infospace.enrichment_config || {}) as Record<string, any>;
       await InfospacesService.updateInfospace({
         infospaceId: infospace.id,
-        requestBody: { enrichment_config: { ...currentConfig, embedding: model ? { provider_key: model.provider, model_name: selectedModel } : undefined } },
+        requestBody: { enrichment_config: { ...currentConfig, embedding: toConfig(selectedModel) } },
       });
       toast.success('Embeddings enabled! New assets will be automatically embedded.');
       const validApiKeys = buildValidApiKeys();
@@ -251,14 +213,12 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
     if (!newModel) { toast.error('Please select a new embedding model'); return; }
     setIsEnabling(true);
     try {
-      const model = availableModels.find(m => m.name === newModel);
-      if (!model) { toast.error('Selected model not found'); return; }
       const currentConfig = (infospace.enrichment_config || {}) as Record<string, any>;
       await InfospacesService.updateInfospace({
         infospaceId: infospace.id,
-        requestBody: { enrichment_config: { ...currentConfig, embedding: { provider_key: model.provider, model_name: newModel } } },
+        requestBody: { enrichment_config: { ...currentConfig, embedding: toConfig(newModel) } },
       });
-      toast.success(`Model changed to ${newModel}. Clear and regenerate to apply.`);
+      toast.success(`Model changed to ${newModel.modelId}. Clear and regenerate to apply.`);
       setShowChangeModelDialog(false);
       if (onInfospaceUpdate) {
         const updated = await InfospacesService.getInfospace({ infospaceId: infospace.id });
@@ -288,7 +248,7 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
   };
 
   // --- Dimension selector logic ---
-  const activeModel = availableModels.find(m => m.name === embeddingSel?.model_name);
+  const activeModel = findModel(pinned);
   const nativeDim = activeModel?.dimension;
   const currentDim = embeddingSel?.dimension || nativeDim;
   const SUPPORTED_DIMS = [384, 512, 768, 1024, 1536, 2048];
@@ -312,41 +272,15 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
     }
   };
 
-  // --- Model selector shared between dialogs ---
-  const renderModelSelector = (value: string, onChange: (v: string) => void, id?: string) => (
-    <Select value={value} onValueChange={onChange}>
-      <SelectTrigger id={id}>
-        <SelectValue placeholder="Select a model" />
-      </SelectTrigger>
-      <SelectContent className="max-h-72">
-        {isLoadingModels ? (
-          <div className="flex items-center justify-center p-4"><Loader2 className="h-4 w-4 animate-spin" /></div>
-        ) : availableModels.length === 0 ? (
-          <div className="p-4 text-sm text-muted-foreground text-center">No models available. Pull a model or add API keys.</div>
-        ) : (
-          Object.entries(modelsByProvider).map(([provider, models]) => {
-            const pi = getProviderInfo(provider);
-            return (
-              <div key={provider}>
-                <div className="px-2 py-1.5 text-xs font-semibold text-muted-foreground flex items-center gap-2">
-                  {pi.name}
-                  {pi.badge && <Badge variant="outline" className="text-[10px] h-4">{pi.badge}</Badge>}
-                  {pi.requiresKey && !apiKeys[provider] && <Badge variant="destructive" className="text-[10px] h-4">Needs Key</Badge>}
-                </div>
-                {models.map(m => (
-                  <SelectItem key={m.name} value={m.name}>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{m.name}</span>
-                      <Badge variant="secondary" className="ml-auto">{m.dimension}d</Badge>
-                    </div>
-                  </SelectItem>
-                ))}
-              </div>
-            );
-          })
-        )}
-      </SelectContent>
-    </Select>
+  const renderModelSelector = (value: ProviderSelection | null, onChange: (v: ProviderSelection) => void, id?: string) => (
+    <ModelSelect
+      id={id}
+      className="h-9 text-sm"
+      providers={embeddingProviders}
+      value={value}
+      onChange={onChange}
+      empty="No models available. Pull one under Foundation Service Providers, or add an API key."
+    />
   );
 
   return (
@@ -480,8 +414,8 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
                   </div>
                 ))}
                 <div className="flex justify-end">
-                  <Button variant="outline" size="sm" onClick={() => loadAvailableModels(true)} disabled={isLoadingModels}>
-                    {isLoadingModels ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Discovering...</> : <><RefreshCw className="h-4 w-4 mr-2" /> Discover Models</>}
+                  <Button variant="outline" size="sm" onClick={() => loadAvailableModels(true)} disabled={catalogLoading}>
+                    {catalogLoading ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" /> Discovering...</> : <><RefreshCw className="h-4 w-4 mr-2" /> Discover Models</>}
                   </Button>
                 </div>
               </AlertDescription>
@@ -492,21 +426,17 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="embedding-model">Embedding Model</Label>
-                {availableModels.length > 0 && (
-                  <span className="text-xs text-muted-foreground">{availableModels.length} models from {Object.keys(modelsByProvider).length} providers</span>
+                {modelCount > 0 && (
+                  <span className="text-xs text-muted-foreground">{modelCount} models</span>
                 )}
               </div>
               {renderModelSelector(selectedModel, setSelectedModel, "embedding-model")}
               {selectedModel && (
                 <div className="space-y-1">
-                  <p className="text-xs text-muted-foreground">{availableModels.find(m => m.name === selectedModel)?.description || 'Embedding model'}</p>
-                  {(() => {
-                    const model = availableModels.find(m => m.name === selectedModel);
-                    const pi = model ? getProviderInfo(model.provider) : null;
-                    return pi?.requiresKey && !apiKeys[model!.provider] && (
-                      <p className="text-xs text-amber-600">This provider requires an API key. Add it above.</p>
-                    );
-                  })()}
+                  <p className="text-xs text-muted-foreground">{findModel(selectedModel)?.description || 'Embedding model'}</p>
+                  {lacksKey(selectedModel) && (
+                    <p className="text-xs text-amber-600">This provider requires an API key. Add it above.</p>
+                  )}
                 </div>
               )}
             </div>
@@ -530,8 +460,8 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
                 <DialogTitle>Change Embedding Model</DialogTitle>
                 <DialogDescription>You'll need to clear and regenerate after changing.</DialogDescription>
               </div>
-              <Button variant="outline" size="sm" onClick={() => loadAvailableModels(true)} disabled={isLoadingModels}>
-                {isLoadingModels ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Discovering...</> : <><RefreshCw className="h-4 w-4 mr-2" />Discover</>}
+              <Button variant="outline" size="sm" onClick={() => loadAvailableModels(true)} disabled={catalogLoading}>
+                {catalogLoading ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Discovering...</> : <><RefreshCw className="h-4 w-4 mr-2" />Discover</>}
               </Button>
             </div>
           </DialogHeader>
@@ -547,12 +477,12 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <Label htmlFor="new-embedding-model">New Model</Label>
-                {availableModels.length > 0 && (
-                  <span className="text-xs text-muted-foreground">{availableModels.length} models</span>
+                {modelCount > 0 && (
+                  <span className="text-xs text-muted-foreground">{modelCount} models</span>
                 )}
               </div>
               {renderModelSelector(newModel, setNewModel, "new-embedding-model")}
-              {newModel && <p className="text-xs text-muted-foreground">{availableModels.find(m => m.name === newModel)?.description || ''}</p>}
+              {newModel && <p className="text-xs text-muted-foreground">{findModel(newModel)?.description || ''}</p>}
             </div>
           </div>
 

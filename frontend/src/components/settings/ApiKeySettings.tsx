@@ -1,8 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { ProvidersService } from '@/client';
-import { useProvidersStore, DOMAIN_TO_CAPABILITY, type ProviderCapability, type ProviderMetadata } from '@/zustand_stores/storeProviders';
+import { useProvidersStore, type ProviderMetadata } from '@/zustand_stores/storeProviders';
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -40,7 +39,7 @@ const KEY_PLACEHOLDERS: Record<string, string> = {
 };
 
 export default function ApiKeySettings({ className = '' }: ApiKeySettingsProps) {
-  const { providers: byCapability, setProviders } = useProvidersStore();
+  const { providers: byCapability, loadCatalog } = useProvidersStore();
   const { activeInfospace } = useInfospaceStore();
 
   // Every endpoint that actually takes a key, deduplicated across the domains
@@ -65,20 +64,13 @@ export default function ApiKeySettings({ className = '' }: ApiKeySettingsProps) 
     return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
   }, [byCapability]);
 
-  // The store is shared, so this only fetches when nothing has filled it yet.
+  // The store is shared and caches per infospace, so this fetches at most once.
   useEffect(() => {
-    if (PROVIDERS.length > 0) return;
-    (async () => {
-      try {
-        if (!activeInfospace?.id) return;
-        const data = await ProvidersService.providerCatalog({ infospaceId: activeInfospace.id });
-        for (const [domain, list] of Object.entries(data.domains || {})) {
-          const cap = (DOMAIN_TO_CAPABILITY[domain] ?? domain) as ProviderCapability;
-          if (Array.isArray(list)) setProviders(cap, list as unknown as ProviderMetadata[]);
-        }
-      } catch { /* the cards stay empty; nothing here can be configured blind */ }
-    })();
-  }, []);
+    if (!activeInfospace?.id) return;
+    loadCatalog(activeInfospace.id).catch(() => {
+      /* the cards stay empty; nothing here can be configured blind */
+    });
+  }, [activeInfospace?.id, loadCatalog]);
 
   const [savedProviders, setSavedProviders] = useState<string[]>([]);
   const [tempApiKeys, setTempApiKeys] = useState<Record<string, string>>({});
