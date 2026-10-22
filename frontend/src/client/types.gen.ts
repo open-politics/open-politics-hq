@@ -160,6 +160,7 @@ export type AnnotationRunRead = {
     completed_at: (string | null);
     error_message: (string | null);
     annotation_count?: (number | null);
+    asset_count?: (number | null);
     schema_ids?: (Array<(number)> | null);
     is_favorite?: boolean;
     trigger_type?: string;
@@ -612,13 +613,6 @@ export type AssetUpdate = {
 } | null);
     event_timestamp?: (string | null);
     tags?: (Array<(string)> | null);
-};
-
-/**
- * Response listing available embedding models.
- */
-export type AvailableModelsResponse = {
-    models: Array<EmbeddingModelInfo>;
 };
 
 export type BackupRestoreRequest = {
@@ -1601,20 +1595,6 @@ export type DirectoryImportRequest = {
 };
 
 /**
- * Request for discovering embedding models with an optional BYOK key.
- */
-export type DiscoverModelsRequest = {
-    /**
-     * Probe this specific provider (required for runtime probe)
-     */
-    provider_key?: (string | null);
-    /**
-     * BYOK key for the provider being probed
-     */
-    runtime_key?: (string | null);
-};
-
-/**
  * One (value, count) row in a distinct-values result.
  */
 export type DistinctValueEntry = {
@@ -1661,17 +1641,6 @@ export type DraftResponse = {
     questions: {
         [key: string]: QuestionIn;
     };
-};
-
-/**
- * Information about an embedding model.
- */
-export type EmbeddingModelInfo = {
-    name: string;
-    provider: string;
-    dimension: number;
-    description?: (string | null);
-    max_sequence_length?: (number | null);
 };
 
 /**
@@ -1726,9 +1695,17 @@ export type EntityDecisionOut = {
     status: string;
     reason: string;
     priority: number;
+    /**
+     * The group it was asked in; `a` is the group's head.
+     */
+    group?: (string | null);
     a: Side;
     b: Side;
     keep?: (string | null);
+    /**
+     * The group's chosen label; null = keep's.
+     */
+    name?: (string | null);
     type?: (string | null);
     p_same?: (number | null);
     p_type?: ({
@@ -5780,15 +5757,6 @@ export type ClearInfospaceEmbeddingsData = {
 };
 
 export type ClearInfospaceEmbeddingsResponse = (Message);
-
-export type DiscoverEmbeddingModelsData = {
-    infospaceId: number;
-    packageToken?: (string | null);
-    requestBody: DiscoverModelsRequest;
-    xPackageToken?: (string | null);
-};
-
-export type DiscoverEmbeddingModelsResponse = (AvailableModelsResponse);
 
 export type ListEntitiesData = {
     canonId?: (number | null);
