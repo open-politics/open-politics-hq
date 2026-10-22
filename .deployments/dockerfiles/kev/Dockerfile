@@ -13,10 +13,11 @@ ARG PYTHON_VERSION=3.13
 FROM python:${PYTHON_VERSION}-slim
 
 # curl serves the healthcheck and fetches the source. No git in the build.
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt \
-    apt-get update && apt-get install -y --no-install-recommends curl \
-    && rm -rf /var/lib/apt/lists/*
+# The apt caches are shared with the backend's build (see there), so locked,
+# and the lists are left alone: they live in the cache, not the layer.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends curl
 
 # A pinned static binary, the same one backend/Dockerfile uses.
 COPY --from=ghcr.io/astral-sh/uv:0.12.17 /uv /bin/

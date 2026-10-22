@@ -5,8 +5,10 @@
 FROM python:3.13-slim AS base
 
 # curl is here for container healthchecks (probing /readiness), not for the app.
-RUN --mount=type=cache,target=/var/cache/apt \
-    --mount=type=cache,target=/var/lib/apt \
+# The apt caches are shared with kev's build, which bake runs in parallel:
+# locked, so one waits for the other instead of losing apt's lock.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends curl
 
 WORKDIR /app/
