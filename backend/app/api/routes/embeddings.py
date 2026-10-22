@@ -48,20 +48,6 @@ class EmbeddingStatsResponse(BaseModel):
     models_used: dict
 
 
-class EmbeddingModelInfo(BaseModel):
-    """Information about an embedding model."""
-    name: str
-    provider: str
-    dimension: int
-    description: Optional[str] = None
-    max_sequence_length: Optional[int] = None
-
-
-class AvailableModelsResponse(BaseModel):
-    """Response listing available embedding models."""
-    models: List[EmbeddingModelInfo]
-
-
 # ======================== HELPERS ========================
 
 
@@ -167,62 +153,3 @@ async def clear_infospace_embeddings(
     if count == 0:
         return Message(message="No embeddings found to clear")
     return Message(message=f"Cleared embeddings for {count} chunks")
-
-
-class DiscoverModelsRequest(BaseModel):
-    """Request for discovering embedding models with an optional BYOK key."""
-    provider_key: Optional[str] = Field(default=None, description="Probe this specific provider (required for runtime probe)")
-    runtime_key: Optional[str] = Field(default=None, description="BYOK key for the provider being probed")
-
-
-@router.post("/infospaces/{infospace_id}/embeddings/models/discover", response_model=AvailableModelsResponse)
-async def discover_embedding_models(
-    request: DiscoverModelsRequest,
-    session: SessionDep,
-    access: Access = Requires(Capability.SETUP, scope=None),
-):
-    """
-    Discover available embedding models.
-
-    Default: enumerate statically-declared models across all embedding providers.
-    With ``provider_key``: probe that provider's runtime models (uses infospace
-    owner's stored credentials or the supplied BYOK runtime_key).
-    """
-    from app.api.modules.foundation_service_providers import (
-        list_providers, list_models, ProviderError, EmbeddingModelSpec,
-    )
-
-    def entry(spec, provider_key: str) -> EmbeddingModelInfo:
-        return EmbeddingModelInfo(
-            name=spec.name,
-            provider=provider_key,
-            dimension=spec.dimension,
-            description=spec.description or None,
-            max_sequence_length=spec.max_sequence_length,
-        )
-
-    # One endpoint: its curated models, then whatever it reports live. For a
-    # local endpoint the live half is the only half that exists — nothing can
-    # declare ahead of time which models an operator happens to have pulled.
-    if request.provider_key:
-        try:
-            specs = await list_models(
-                "embedding", request.provider_key,
-                infospace_id=access.infospace_id,
-                runtime_key=request.runtime_key,
-                session=session,
-            )
-        except ProviderError as e:
-            raise HTTPException(status_code=400, detail=str(e))
-        return AvailableModelsResponse(models=[
-            entry(s, request.provider_key)
-            for s in specs if isinstance(s, EmbeddingModelSpec)
-        ])
-
-    # Every provider's curated models.
-    return AvailableModelsResponse(models=[
-        entry(spec, provider_key)
-        for provider_key, desc in list_providers("embedding")
-        for spec in desc.models
-        if isinstance(spec, EmbeddingModelSpec)
-    ])

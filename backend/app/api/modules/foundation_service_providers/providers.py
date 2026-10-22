@@ -223,7 +223,8 @@ class Ollama:
 
     embedding = Embedding(
         dialect=Embedding.dialects.flat,
-        features=[Embedding.features.probe_model, Embedding.features.list_models],
+        features=[Embedding.features.probe_model, Embedding.features.list_models,
+                  Embedding.features.model_pull],
         quirks=EmbeddingQuirks(server_truncate=True, char_budget_ratio=3.2),
     )
 
