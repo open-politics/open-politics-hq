@@ -378,6 +378,13 @@ class EntityDecision(SQLModel, table=True):
     ``trail`` is every earlier state of the row, oldest first, so the history a
     reader opens is the whole of it and nothing is rewritten.
 
+    The model is asked in groups: a head (always ``a``) and every label that
+    might be it, in one request (``candidates.candidate_groups``). ``group_key``
+    ties the rows asked together; each row still carries its own verdict, so a
+    group takes effect, rolls back and is overruled pair by pair. ``name`` is
+    the label the group chose — the head's, a member's, or for a row whose two
+    sides it is neither, a third label in the same group.
+
     ``scope`` is where a decision took effect: ``run`` (the network reads it,
     promote may fold it into a canon later) or ``canon`` (written into the run's
     canon at once; ``canon_effect`` records exactly what, so rollback can undo
@@ -394,6 +401,8 @@ class EntityDecision(SQLModel, table=True):
     b_type: str
     #: Normalized, order-independent pair — the dedup key.
     pair_key: str
+    #: The group this pair was asked in; null for rows filed before groups.
+    group_key: Optional[str] = None
     #: Why the pair was asked: type · acronym · contains · spelling.
     reason: str
     #: Asked in descending order: how much of the network the pair touches.
@@ -404,6 +413,7 @@ class EntityDecision(SQLModel, table=True):
     state: str = Field(default="", sa_column=Column(Text))
     status: str = Field(default="pending")
     keep: Optional[str] = None                     # "a" | "b" — whose name survives
+    name: Optional[str] = None                     # the group's chosen label; null = keep's
     type: Optional[str] = None                     # the merged entity's type
     p_same: Optional[float] = None
     p_type: Optional[Dict[str, float]] = Field(default=None, sa_column=Column(JSONB))
@@ -426,4 +436,5 @@ class EntityDecision(SQLModel, table=True):
         UniqueConstraint("run_id", "pair_key", name="uq_entity_decision_pair"),
         Index("ix_entity_decision_run_status", "run_id", "status"),
         Index("ix_entity_decision_run_priority", "run_id", "priority"),
+        Index("ix_entity_decision_run_group", "run_id", "group_key"),
     )

@@ -1,9 +1,11 @@
 """The live resolver — merge and type decisions on a run's graph entities.
 
-    seed(run, graph)        candidate pairs (`candidates.py`) → pending rows,
-                            each with the state the model will be shown
-    ask(row, types)         the three questions about one pair
-    decide(row, answers)    answers → merged · separate · unsure, applied
+    seed(run, graph)        candidate groups (`candidates.py`) → pending rows,
+                            a head and its members, with the state the model
+                            will be shown
+    questions_for(rows)     one request per group: each member, the head? —
+                            then the group's label and its type
+    decide(rows, answers)   answers → merged · separate · unsure per member, applied
     rollback(row) · change(row, verdict)     a person's word, over the model's
     merge_by_hand(keep, others)              a person's merge of labels they picked
 
@@ -18,16 +20,20 @@ Settings live on the run, beside the other graph hints:
 
     run.graph_config["resolution"] = {running, scope, threshold, seeded_watermark}
 
-Three questions, one state, one request (the logic domain's unit):
+A group's questions, one state, one request (the logic domain's unit):
 
-    same   Noul    are A and B one real-world entity?
-    name   Choice  which label should it carry?          → keep
-    type   Choice  what is it? (both types, and the run's commonest)
+    same:{id}  Noul    is this member the head's entity?     one per member
+    name       Choice  which label should it carry?          → name, keep
+    type       Choice  what is it? (every type in the group, and the run's commonest)
+
+Asked together, every member is weighed beside the others and against one head,
+so a merge is never a chain of pairs nobody saw side by side. Answered apart, a
+member the model is unsure of is parked alone and does not hold back the rest.
 """
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -37,7 +43,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from sqlmodel import Session, select
 
 from app.api.modules.foundation_service_providers.logic import Answer, Choice, Noul
-from app.api.modules.graph.candidates import Candidate, Entity, candidate_pairs, pair_key
+from app.api.modules.graph.candidates import Candidate, Entity, Group, candidate_groups, fold, pair_key
 from app.api.modules.graph.models import CanonEntry, EntityDecision
 from app.api.modules.graph.resolution import find_by_alias, norm_type
 
@@ -49,6 +55,8 @@ IN_EFFECT = ("merged", "separate")
 EXTRA_TYPES = 4
 #: Co-mentioned names shown per label.
 COMPANY = 5
+#: Options a choice may carry — the logic wire's ceiling.
+MAX_OPTIONS = 16
 
 
 # ─── Settings ────────────────────────────────────────────────────────────────
@@ -83,40 +91,51 @@ def save_settings(session: Session, run: Any, **patch: Any) -> ResolverSettings:
 # ─── Seeding ─────────────────────────────────────────────────────────────────
 
 
-def _state(c: Candidate, company: Mapping[str, list[str]], shared: int, documents: int) -> str:
+def _state(g: Group, company: Mapping[str, list[str]], shared: Mapping[str, int], documents: int) -> str:
     def line(tag: str, e: Entity) -> str:
         with_ = company.get(f"{e.name}|{e.type}") or []
         tail = f" Appears with: {', '.join(with_)}." if with_ else ""
-        return f'{tag}: "{e.name}" — {e.type}, mentioned {e.frequency} times.{tail}'
-    together = f"They appear in the same document {shared} times." if shared else "They never appear in the same document."
+        return f'{tag} "{e.name}" — {e.type}, mentioned {e.frequency} times.{tail}'
+
+    def together(e: Entity) -> str:
+        n = shared.get(f"{e.name}|{e.type}", 0)
+        return f" In the same document as the head {n} times." if n else " Never in the same document as the head."
+
     return "\n".join([
-        f"Two labels extracted from the same collection of {documents} documents.",
-        line("A", c.a), line("B", c.b), together,
+        f"Labels extracted from the same collection of {documents} documents.",
+        line("Head:", g.head),
+        *(line(f"{k}.", c.b) + together(c.b) for k, c in enumerate(g.members, 1)),
     ])
+
+
+def _file(row: EntityDecision, g: Group, c: Candidate, state: str) -> None:
+    """A pair as its group asks it: the head on ``a``, the group's rank and state."""
+    row.a_name, row.a_type, row.b_name, row.b_type = c.a.name, c.a.type, c.b.name, c.b.type
+    row.group_key, row.priority, row.state, row.reason = g.key, g.priority, state, c.reason
 
 
 def seed(
     session: Session, run: Any, graph: Any, *, limit: int = 5000,
     first: int = 200, on_first: Callable[[int], None] | None = None,
 ) -> int:
-    """Find candidate pairs in *graph* (the run's ``GraphResultData``) and add
-    the new ones as pending decisions, each with the state the model will see.
-    A pair is filed once; one already decided is never asked again. Returns
-    how many were added.
+    """Find candidate groups in *graph* (the run's ``GraphResultData``) and add
+    their new pairs as pending decisions, each with the state the model will
+    see. A pair is filed once; one already decided is never asked again.
+    Returns how many were added.
 
-    Pending pairs are re-ranked by their labels' current mentions.
+    Waiting pairs are regrouped and re-ranked by their labels' current mentions.
 
     The most prominent ``first`` are committed on their own and ``on_first`` is
     told, so judging starts on them while the long tail is still being written —
     the reader sees decisions in seconds, not after every pair is filed."""
     nodes = [n for n in graph.nodes if getattr(n, "kind", "entity") == "entity"]
     by_key = {f"{n.name}|{n.type}": n for n in nodes}
-    cands = candidate_pairs(
+    groups = candidate_groups(
         (Entity(n.name, n.type, n.frequency) for n in nodes), limit=limit,
     )
-    if not cands:
+    if not groups:
         return 0
-    wanted = {f"{c.a.name}|{c.a.type}" for c in cands} | {f"{c.b.name}|{c.b.type}" for c in cands}
+    wanted = {f"{e.name}|{e.type}" for g in groups for c in g.members for e in (c.a, c.b)}
 
     # Who each label keeps company with — its most frequent linked entities.
     at = {n.id: n for n in nodes}
@@ -132,43 +151,46 @@ def seed(
     }
     documents = len({a for n in graph.nodes for a in n.source_annotation_ids})
 
-    def state_of(c: Candidate) -> str:
-        na, nb = by_key.get(f"{c.a.name}|{c.a.type}"), by_key.get(f"{c.b.name}|{c.b.type}")
-        shared = len(set(na.source_annotation_ids) & set(nb.source_annotation_ids)) if na and nb else 0
-        return _state(c, company, shared, documents)
+    def state_of(g: Group) -> str:
+        head = by_key.get(f"{g.head.name}|{g.head.type}")
+        anns = set(head.source_annotation_ids) if head else set()
+        shared = {}
+        for c in g.members:
+            n = by_key.get(f"{c.b.name}|{c.b.type}")
+            shared[f"{c.b.name}|{c.b.type}"] = len(anns & set(n.source_annotation_ids)) if n else 0
+        return _state(g, company, shared, documents)
 
     # A live run's labels keep gathering mentions: a pair still waiting moves
-    # up (or down) the queue with them, and is shown its current counts.
+    # with them — into the group it belongs to now, up (or down) the queue, and
+    # shown its current counts.
     pending = {
         r.pair_key: r for r in session.exec(
             select(EntityDecision)
             .where(EntityDecision.run_id == run.id, EntityDecision.status == "pending")
         ).all()
     }
-    for c in cands:
-        row = pending.get(c.key)
-        if row is not None and row.priority != c.priority:
-            row.priority = c.priority
-            row.state = state_of(c)
-            session.add(row)
-
     existing = set(session.exec(
         select(EntityDecision.pair_key).where(EntityDecision.run_id == run.id)
     ).all())
     added = 0
-    for c in cands:
-        if c.key in existing:
-            continue
-        session.add(EntityDecision(
-            infospace_id=run.infospace_id, run_id=run.id,
-            a_name=c.a.name, a_type=c.a.type, b_name=c.b.name, b_type=c.b.type,
-            pair_key=c.key, reason=c.reason, priority=c.priority, state=state_of(c),
-        ))
-        existing.add(c.key)
-        added += 1
-        if added == first and on_first is not None:
-            session.commit()
-            on_first(added)
+    for g in groups:
+        state = state_of(g)
+        for c in g.members:
+            row = pending.get(c.key)
+            if row is not None:
+                _file(row, g, c, state)
+                session.add(row)
+                continue
+            if c.key in existing:
+                continue
+            row = EntityDecision(infospace_id=run.infospace_id, run_id=run.id, pair_key=c.key)
+            _file(row, g, c, state)
+            session.add(row)
+            existing.add(c.key)
+            added += 1
+            if added == first and on_first is not None:
+                session.commit()
+                on_first(added)
     return added
 
 
@@ -187,25 +209,34 @@ def run_types(session: Session, run_id: int, n: int = EXTRA_TYPES) -> list[str]:
 # ─── Asking ──────────────────────────────────────────────────────────────────
 
 
-def questions_for(row: EntityDecision, common_types: Iterable[str]) -> dict[str, Any]:
-    """The three questions about one pair. Option keys are the caller's; the
-    model only ever reads the descriptions."""
+def questions_for(rows: Sequence[EntityDecision], common_types: Iterable[str]) -> dict[str, Any]:
+    """The questions about one group, in one request: each member against the
+    head, then the label and the type the entity carries. A choice with a single
+    option is no question and is left out — a group of one name under several
+    types asks no name. Option keys are the caller's; the model only ever reads
+    the descriptions."""
+    head = rows[0]
+    names: dict[str, str] = {}
+    for n in (head.a_name, *(r.b_name for r in rows)):
+        if fold(n) not in {fold(k) for k in names}:
+            names[n] = f'"{n}"'
     types: dict[str, str] = {}
-    for t in (row.a_type, row.b_type, *common_types):
+    for t in (head.a_type, *(r.b_type for r in rows), *common_types):
         if t and norm_type(t) not in {norm_type(k) for k in types}:
             types[t] = t
-    return {
-        "same": Noul(
-            "Do A and B name the same real-world entity?",
+    questions: dict[str, Any] = {
+        f"same:{r.id}": Noul(
+            f'Do "{r.a_name}" ({r.a_type}) and "{r.b_name}" ({r.b_type}) name the same real-world entity?',
             true="One entity, written two ways or typed two ways.",
             false="Two different entities that happen to look alike.",
-        ),
-        "name": Choice(
-            "If they are one entity, which label should it carry?",
-            {"a": f'"{row.a_name}"', "b": f'"{row.b_name}"'},
-        ),
-        "type": Choice("What kind of thing is it?", types),
+        )
+        for r in rows
     }
+    if len(names) > 1:
+        questions["name"] = Choice(f'If they are one entity with "{head.a_name}", which label should it carry?', names)
+    if len(types) > 1:
+        questions["type"] = Choice(f'What kind of thing is "{head.a_name}"?', dict(list(types.items())[:MAX_OPTIONS]))
+    return questions
 
 
 # ─── Deciding ────────────────────────────────────────────────────────────────
@@ -228,32 +259,38 @@ def _record(row: EntityDecision) -> None:
 
 def decide(
     session: Session,
-    row: EntityDecision,
+    rows: Sequence[EntityDecision],
     answers: Mapping[str, Answer],
     settings: ResolverSettings,
     canon_id: int | None,
-) -> EntityDecision:
-    """Turn the model's answers into a verdict and put it in effect."""
-    same = answers["same"]
-    p = float(same.value)
-    row.p_same = p
-    row.keep = answers["name"].pick
-    row.type = answers["type"].pick
-    row.p_type = dict(answers["type"].probabilities)
-    row.model, row.wire = same.model, same.wire
-    if p >= settings.threshold:
-        row.status, row.confidence = "merged", p
-    elif p <= 1 - settings.threshold:
-        row.status, row.confidence = "separate", 1 - p
-    else:
-        row.status, row.confidence = "unsure", max(p, 1 - p)
-    row.decided_by = None
-    row.decided_at = datetime.now(UTC)
-    row.scope = settings.scope
-    if row.status == "merged" and settings.scope == "canon" and canon_id:
-        row.canon_effect = _canon_merge(session, canon_id, row)
-    session.add(row)
-    return row
+) -> Sequence[EntityDecision]:
+    """Turn the model's answers about a group into a verdict per member, and
+    put each in effect. The label and the type are the group's, on every row;
+    whether a member joins is its own answer against the run's threshold."""
+    head = rows[0]
+    name = answers["name"].pick if "name" in answers else head.a_name
+    kind = answers["type"].pick if "type" in answers else head.a_type
+    p_type = dict(answers["type"].probabilities) if "type" in answers else None
+    now = datetime.now(UTC)
+    for row in rows:
+        same = answers[f"same:{row.id}"]
+        p = float(same.value)
+        row.p_same, row.name, row.type, row.p_type = p, name, kind, p_type
+        row.keep = "b" if fold(name) == fold(row.b_name) else "a"
+        row.model, row.wire = same.model, same.wire
+        if p >= settings.threshold:
+            row.status, row.confidence = "merged", p
+        elif p <= 1 - settings.threshold:
+            row.status, row.confidence = "separate", 1 - p
+        else:
+            row.status, row.confidence = "unsure", max(p, 1 - p)
+        row.decided_by = None
+        row.decided_at = now
+        row.scope = settings.scope
+        if row.status == "merged" and settings.scope == "canon" and canon_id:
+            row.canon_effect = _canon_merge(session, canon_id, row)
+        session.add(row)
+    return rows
 
 
 def rollback(session: Session, row: EntityDecision, user_id: int) -> EntityDecision:
@@ -278,11 +315,13 @@ def change(
     scope: Literal["run", "canon"] = "run",
     canon_id: int | None = None,
 ) -> EntityDecision:
-    """A person decides the pair — over whatever the model said."""
+    """A person decides the pair — over whatever the model said. Their ``keep``
+    names it; the group's label no longer does."""
     _record(row)
     _undo_canon(session, row)
     row.status = verdict
     row.keep = keep or row.keep or "a"
+    row.name = None
     row.type = type or row.type or row.a_type
     row.confidence = 1.0
     row.decided_by = user_id
@@ -342,9 +381,12 @@ def merge_by_hand(
 
 
 def _names(row: EntityDecision) -> tuple[str, str, str]:
+    """(the label the merge carries, the label it takes in, the kept side's
+    type). A group may carry a third label of its own; the row's other side is
+    then still the one taken in, and the head joins it through its own row."""
     kept, other = (row.a_name, row.b_name) if row.keep != "b" else (row.b_name, row.a_name)
     kept_type = row.a_type if row.keep != "b" else row.b_type
-    return kept, other, kept_type
+    return row.name or kept, other, kept_type
 
 
 def _canon_merge(session: Session, canon_id: int, row: EntityDecision) -> dict[str, Any]:
@@ -409,9 +451,10 @@ def canon_for(run: Any, session: Session) -> int | None:
 def to_wire(row: EntityDecision) -> dict[str, Any]:
     return {
         "id": row.id, "status": row.status, "reason": row.reason, "priority": row.priority,
+        "group": row.group_key,
         "a": {"name": row.a_name, "type": row.a_type},
         "b": {"name": row.b_name, "type": row.b_type},
-        "keep": row.keep, "type": row.type, "p_same": row.p_same, "p_type": row.p_type,
+        "keep": row.keep, "name": row.name, "type": row.type, "p_same": row.p_same, "p_type": row.p_type,
         "confidence": row.confidence, "model": row.model, "scope": row.scope,
         "canon_effect": row.canon_effect, "by": row.decided_by,
         "at": row.decided_at.isoformat() if row.decided_at else None,

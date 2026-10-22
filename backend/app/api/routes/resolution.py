@@ -60,9 +60,11 @@ class EntityDecisionOut(BaseModel):
     status: str
     reason: str
     priority: float
+    group: str | None = Field(default=None, description="The group it was asked in; `a` is the group's head.")
     a: Side
     b: Side
     keep: str | None = None
+    name: str | None = Field(default=None, description="The group's chosen label; null = keep's.")
     type: str | None = None
     p_same: float | None = None
     p_type: dict[str, float] | None = None
