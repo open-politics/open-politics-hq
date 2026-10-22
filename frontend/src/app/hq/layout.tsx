@@ -3,6 +3,8 @@
 import { SidebarInset, useSidebar } from "@/components/ui/sidebar"
 import { AppSidebar } from "@/components/collection/_unsorted_legacy/AppSidebar"
 import { BottomRail } from "@/components/layout/BottomRail"
+import { CommandBar } from "@/components/layout/CommandBar"
+import { useCommandBar } from "@/lib/commandBar"
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable"
 import LottiePlaceholder from "@/components/ui/lottie-placeholder"
@@ -117,18 +119,23 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
   // never leaks onto other routes.
   const focusMode = useAnnotationRunStore((s) => s.focusMode);
 
-  // The shell is a vertical sequence — navigation bar, content, chat drawer —
-  // and scrolling moves along it, past the content's own scroll:
-  //  - push down anywhere and the bar slides away;
+  // The shell is a vertical sequence — navigation bar, content, command bar,
+  // chat — and scrolling moves along it, past the content's own scroll:
+  //  - push down anywhere and the navigation bar slides away;
   //  - push up past the top of the content, against some resistance, and it
   //    comes back from its own place;
-  //  - keep pushing down past the end of the content — the same swipe can
-  //    carry on once the bar has gone — and the chat comes up with the hand,
-  //    the page moving up with it, and settles at whichever end is nearer
-  //    when you let go (`useChatStrip`).
-  // The bar snaps; it is a few pixels of chrome. The chat is a place, so it
-  // is moved to rather than summoned. A new route brings the bar back,
-  // because arriving somewhere is exactly when you want to see where you are.
+  //  - push down past the end of the content — the same swipe can carry on
+  //    once the navigation bar has gone — and the command bar comes in on
+  //    the canvas below the page card, between it and the chat
+  //    (`CommandBar`); push up and it goes, unless it is in use;
+  //  - the command bar is a stop: the swipe that brought it ends there. Push
+  //    again and the chat comes up with the hand, the page moving up with
+  //    it, and settles at whichever end is nearer when you let go
+  //    (`useChatStrip`).
+  // The bars snap; they are a few pixels of chrome. The chat is a place, so
+  // it is moved to rather than summoned. A new route brings the navigation
+  // bar back, because arriving somewhere is exactly when you want to see
+  // where you are.
   const insetRef = useRef<HTMLDivElement>(null);
   const [barAway, setBarAway] = useState(false);
   const pathname = usePathname();
@@ -146,13 +153,32 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
     enabled: barAway,
     onPush: () => setBarAway(false),
   });
+  // The command bar: next after the navigation bar going down, first to go
+  // coming back up. The chat page is the chat already, so it has none.
+  const onChatPage = pathname === "/hq/chat";
+  const commandBarIn = useCommandBar((s) => s.present);
+  const commandBarEngaged = useCommandBar((s) => s.engaged);
+  usePushIntent(insetRef, {
+    direction: "down",
+    travel: 72,
+    pastEdge: true,
+    continuing: true,
+    enabled: (barAway || focusMode) && !commandBarIn && !onChatPage,
+    onPush: () => useCommandBar.getState().show(),
+  });
+  usePushIntent(insetRef, {
+    direction: "up",
+    travel: 48,
+    enabled: commandBarIn && !commandBarEngaged,
+    onPush: () => useCommandBar.getState().hide(),
+  });
   // Past the end of the page, the chat — followed by hand, not triggered.
-  // The bar goes first: the chat is the far end of the sequence. Focus mode
-  // has no bar, the chat page is the chat already, and the small window has
-  // the chat in hand.
+  // Both bars move first: the chat is the far end of the sequence. Focus
+  // mode has no navigation bar, the chat page is the chat already, and the
+  // small window has the chat in hand.
   const chatPlacement = useChatStore((s) => s.placement);
   useChatStrip(insetRef, {
-    canOpen: (barAway || focusMode) && chatPlacement !== "open" && pathname !== "/hq/chat",
+    canOpen: (barAway || focusMode) && commandBarIn && chatPlacement !== "open" && !onChatPage,
     // However a pull starts, the bar is behind you once it has.
     onPull: () => setBarAway(true),
   });
@@ -291,6 +317,9 @@ function SidebarContent({ children, user }: { children: React.ReactNode, user: a
             to know the rail is there. */}
         {!focusMode && <BottomRail />}
       </SidebarInset>
+      {/* On the canvas below the page card, in the gap the chat comes up
+          through — the top bar's mirror. In, the card gives up the height. */}
+      {!onChatPage && <CommandBar />}
     </>
   );
 }

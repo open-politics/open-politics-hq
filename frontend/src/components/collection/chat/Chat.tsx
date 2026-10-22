@@ -563,8 +563,8 @@ export function IntelligenceChat({ className, agent, runId, onAgentMutation, emb
         return
       }
       
-      // "/" to focus input
-      if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // "/" to focus input — unless the command bar took it first
+      if (e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.defaultPrevented) {
         // Only if not already focused on an input/textarea
         const activeElement = document.activeElement
         if (activeElement?.tagName !== 'INPUT' && activeElement?.tagName !== 'TEXTAREA') {

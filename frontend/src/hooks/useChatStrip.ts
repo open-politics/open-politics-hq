@@ -20,7 +20,7 @@ const RELEASE_MS = 160;
 const SLOP = 8;
 
 const strip = () => document.querySelectorAll<HTMLElement>('[data-chat-strip]');
-const part = (name: 'page' | 'window' | 'peek') =>
+const part = (name: 'page' | 'bar' | 'window' | 'peek') =>
   document.querySelector<HTMLElement>(`[data-chat-strip="${name}"]`);
 
 /** Hold the strip at `pull`, under the hand: no transition. */
@@ -117,8 +117,9 @@ export function useChatStrip(
       if (dir !== 1) return false;
       // Anything on the chat card itself — the handle's neighbour, mid-move.
       if (win?.contains(node)) return true;
-      const el = page.current;
-      return !!el?.contains(node) && canOpenRef.current && atEdge(target, el, 1);
+      // The page, or the command bar below it — the last stop before the chat.
+      const el = page.current?.contains(node) ? page.current : part('bar')?.contains(node) ? part('bar') : null;
+      return !!el && canOpenRef.current && atEdge(target, el, 1);
     };
 
     const begin = (dir: 1 | -1) => {
@@ -157,8 +158,9 @@ export function useChatStrip(
     // ── Wheel ──────────────────────────────────────────────────────────────
     // A wheel gesture is a run of events without a pause. It may start the
     // strip only at its beginning — momentum coasting into the end of the page
-    // started in the page — with one exception: the push that took the
-    // navigation bar away may carry on into the chat, as scrolling would.
+    // started in the page. Nor may a push carry on into it from the bars
+    // before it: the command bar is a stop, so the swipe that brought it in
+    // ends there, and the chat takes a push of its own.
     let last = -Infinity;
     let lastSign = 0;
     let pending = false;
@@ -177,10 +179,7 @@ export function useChatStrip(
       if (!drag) {
         if (!pending) return;
         if (!takes(e.target, sign)) {
-          // Refused only because the bar is still there: ask again on the
-          // next event of this push, which may be after it has gone.
-          const waitingOnBar = !canOpenRef.current && !!page.current?.contains(e.target as Node);
-          if (!waitingOnBar) pending = false;
+          pending = false;
           return;
         }
         pending = false;

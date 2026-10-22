@@ -59,6 +59,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { useInfospaceStore } from '@/zustand_stores/storeInfospace';
 import { useAnnotationRunStore, PanelViewConfig } from '@/zustand_stores/useAnnotationRunStore';
 import { useSurfaceCommands } from '@/hooks/useSurfaceCommands';
+import { PAGE_TARGET, useBarTarget, useCommandBar } from '@/lib/commandBar';
 import AnnotationRunnerHeader from './AnnotationRunnerHeader';
 import { PanelRenderer } from './PanelRenderer';
 import { PanelTypePicker } from './panels/PanelTypePicker';
@@ -516,6 +517,28 @@ export default function AnnotationRunner({
     };
   }, []);
 
+  // ── The command bar ───────────────────────────────────────────────────────
+  // With no panel aimed at, the bar is aimed at the run, and the run's
+  // commands are the page's: they stand under any panel's own.
+  const toggleRunColumnPinned = useAnnotationRunStore((s) => s.toggleRunColumnPinned);
+  useBarTarget(activeRun ? PAGE_TARGET : null, {
+    label: activeRun?.name ?? 'Run',
+    commands: [
+      { name: 'focus', title: focusMode ? 'Leave focus' : 'Focus', hint: 'All chrome away, the panels alone', run: toggleFocusMode },
+      { name: 'compact', title: 'Compact', hint: 'Pack the panels into the room they leave', run: compactLayout },
+      { name: 'pin', title: isRunColumnPinned ? 'Unpin the run column' : 'Pin the run column',
+        hint: 'Keep it at the left edge while the panels pass under it', run: toggleRunColumnPinned },
+      // Opening, the strip glides to them by itself (`RunStrip`).
+      { name: 'sources', title: sourcesOpen ? 'Close sources' : 'Sources',
+        hint: 'Where the material comes from, left of the assets', run: () => setSourcesOpen(!sourcesOpen) },
+      { name: 'assets', title: 'Assets', hint: 'What the run reads, and has read', run: showAssets },
+      { name: 'end', title: 'Last panel', hint: 'To the end of the strip', run: jumpToEnd },
+      { name: 'save', title: 'Save dashboard', run: () => { void saveDashboard(); } },
+    ],
+  });
+  // Another run is another page: nothing aimed at.
+  useEffect(() => { useCommandBar.getState().setAim(null); }, [activeRun?.id]);
+
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isSchemasDialogOpen, setIsSchemasDialogOpen] = useState(false);
   // Extension flow — adding assets / schemas to the active run.
@@ -814,6 +837,8 @@ export default function AnnotationRunner({
                           <div
                             key={panel.id}
                             data-panel-id={panel.id}
+                            // What the command bar aims at, once the panel offers it a target.
+                            data-bar-target={panel.id}
                             className="relative min-h-0 overflow-hidden"
                             // Shrinkable by the hairline gaps, so three thirds
                             // fill the column exactly instead of overflowing it.

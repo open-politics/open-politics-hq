@@ -900,7 +900,8 @@ html:has([data-app-shell]) body {
   --drawer-peek: calc(100dvh / 6);
   --drawer-overlap: 15%;
   --strip-gap: 0.5rem;
-  --strip-radius: 0.75rem;
+  /* `--radius`, the top bar's corners (`rounded-lg`): bar, page and chat are one family. */
+  --strip-radius: var(--radius);
   /* The page's margin and corners: zero where it is not a card. */
   --card-gap: 0px;
   --card-radius: 0px;
@@ -954,6 +955,9 @@ html:has([data-app-shell]) body {
   border-radius: var(--strip-radius) var(--strip-radius) var(--card-radius) var(--card-radius);
   translate: 0 calc((1 - var(--chat-pull)) * (100% + 2 * var(--card-gap)));
 }
+/* The command bar, on the canvas between the page and the chat, gives way
+   early: the chat comes up through the gap it sits in. */
+[data-chat-strip="bar"] { opacity: max(0, 1 - 3 * var(--chat-pull)); }
 /* Over the peek, the page steps back a little as the chat comes forward. */
 [data-chat-strip="peek"] { opacity: min(1, var(--chat-pull)); }
 

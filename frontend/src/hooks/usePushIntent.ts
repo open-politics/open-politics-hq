@@ -59,8 +59,9 @@ export interface PushIntentOptions {
   /**
    * Let a push already under way when this becomes enabled carry on into it,
    * counting travel from that moment. One continuous swipe can then move
-   * through the sequence — the bar leaves, and the same swipe, pushed a little
-   * further, arrives at the drawer — the way scrolling would.
+   * through the sequence — the navigation bar leaves, and the same swipe,
+   * pushed a little further, brings the command bar in — the way scrolling
+   * would.
    */
   continuing?: boolean;
   onPush: () => void;
