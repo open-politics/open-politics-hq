@@ -39,6 +39,8 @@ from typing import Any, Iterable, Sequence
 from sqlalchemy import text
 from sqlmodel import Session
 
+from app.core.db import tolerated
+
 logger = logging.getLogger(__name__)
 
 __all__ = ["Place", "coord_pair", "name_key", "resolve_places", "spellings_of"]
@@ -144,7 +146,7 @@ def resolve_places(
     # two entries claiming one spelling in the same canon is a curation gap,
     # and the one that can be drawn is the more useful answer.
     if chain:
-        try:
+        with tolerated(session, "places: canon identity lookup"):
             rows = session.execute(
                 text(_ENTRY_KEYS_SQL.format(scope="AND e.canon_id = ANY(:chain)")),
                 {"iid": infospace_id, "keys": keys, "chain": chain},
@@ -158,8 +160,6 @@ def resolve_places(
                         "coords": coord_pair(coords),
                         "in_geo": canon_id == geo_canon_id,
                     })
-        except Exception:  # noqa: BLE001
-            logger.warning("places: canon identity lookup failed", exc_info=True)
 
     coords: dict[str, tuple[tuple[float, float], str]] = {
         k: (c["coords"], "canon") for k, (_, c) in claimed.items() if c["coords"]
@@ -178,7 +178,7 @@ def resolve_places(
     # not, so any located entry may lend its point.
     found: dict[str, tuple[tuple[float, float], str]] = {}
     if wanted:
-        try:
+        with tolerated(session, "places: located-entry lookup"):
             rows = session.execute(
                 text(_ENTRY_KEYS_SQL.format(scope="AND e.coords IS NOT NULL")),
                 {"iid": infospace_id, "keys": wanted},
@@ -187,13 +187,11 @@ def resolve_places(
                 pair = coord_pair(raw)
                 if pair and key not in found:
                     found[key] = (pair, "canon")
-        except Exception:  # noqa: BLE001
-            logger.warning("places: located-entry lookup failed", exc_info=True)
 
         # Rung 4: the enricher's cache — canon-free, and the weakest claim.
         missing = [n for n in wanted if n not in found]
         if missing:
-            try:
+            with tolerated(session, "places: facet cache lookup"):
                 rows = session.execute(text("""
                     SELECT DISTINCT ON (LOWER(TRIM(a.metadata->>'location')))
                            LOWER(TRIM(a.metadata->>'location')) AS key,
@@ -208,8 +206,6 @@ def resolve_places(
                     pair = coord_pair({"lat": lat, "lon": lon})
                     if pair:
                         found[key] = (pair, "facet")
-            except Exception:  # noqa: BLE001
-                logger.warning("places: facet cache lookup failed", exc_info=True)
 
     for k, candidates in lookups.items():
         # The name as asked outranks its identity's other names.

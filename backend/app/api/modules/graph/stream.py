@@ -47,6 +47,7 @@ from app.api.modules.graph.schemas import (
     GraphResultData as GraphResult,
     NodePlace,
 )
+from app.core.db import tolerated
 from app.core.filters import (
     jsonb_accessor, jsonb_value_accessor, parse_explosion, safe_array_elements,
     scalar_of,
@@ -276,16 +277,16 @@ class AnnotationGraphSource:
                 "SELECT DISTINCT schema_id FROM runschemalink WHERE run_id = ANY(:run_ids)"
             ).bindparams(run_ids=run_ids)).all()]
         if not schema_ids:
-            try:
+            rows = None
+            with tolerated(self.query._session, "graph source: schema discovery"):
                 clauses, params = self.query._base_where(include_cursor=False)
                 rows = self.query._session.exec(text(
                     f"SELECT DISTINCT a.schema_id FROM annotation a "
                     f"WHERE {' AND '.join(clauses)} LIMIT 50"
                 ).bindparams(**params)).all()
-                schema_ids = [r[0] for r in rows if r[0] is not None]
-            except Exception as e:  # noqa: BLE001
-                logger.warning("graph source: schema discovery failed: %s", e)
+            if rows is None:
                 return SchemaMap()
+            schema_ids = [r[0] for r in rows if r[0] is not None]
 
         from app.api.modules.annotation.models import AnnotationSchema
 
@@ -806,8 +807,9 @@ class AnnotationGraphSource:
         # `{}` means the census RAN and found nothing; `None` means it did not
         # run. The difference is the whole point of reporting coverage — "no
         # row filled this" and "we did not look" must not render alike.
-        census: dict[str, dict[str, Any]] | None = {}
-        try:
+        census: dict[str, dict[str, Any]] | None = None
+        # A census must never cost the table.
+        with tolerated(session, "section rows: census"):
             crows = session.exec(text(f"""
                 SELECT e.k AS key,
                        count(*) FILTER (WHERE {filled_sql}) AS filled,
@@ -820,14 +822,13 @@ class AnnotationGraphSource:
                 WHERE {' AND '.join(clauses)}
                 GROUP BY e.k
             """).bindparams(**params)).all()
-            for r in crows:
-                census[r.key] = {
+            census = {
+                r.key: {
                     "filled": int(r.filled or 0),
                     "examples": [x for x in (r.examples or []) if x],
                 }
-        except Exception:  # noqa: BLE001 — a census must never cost the table
-            logger.warning("section rows: census failed", exc_info=True)
-            census = None
+                for r in crows
+            }
 
         return items, nxt, total, census
 
@@ -2906,11 +2907,9 @@ def _attach_coords(
 
     from app.api.modules.graph.places import resolve_places
 
-    try:
+    resolved = {}
+    with tolerated(session, "graph coords: place resolution"):
         resolved = resolve_places(session, infospace_id, keys)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("graph coords: place resolution failed: %s", e)
-        resolved = {}
     for key, place in resolved.items():
         if place.located:
             _apply(key, (place.lat, place.lon))

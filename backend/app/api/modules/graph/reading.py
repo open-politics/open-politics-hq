@@ -26,6 +26,7 @@ from typing import Any
 
 from app.api.modules.annotation.query import AnnotationQuery
 from app.api.modules.graph.schemas import GraphResultData
+from app.core.db import tolerated
 
 logger = logging.getLogger(__name__)
 
@@ -65,10 +66,9 @@ def configure(
     derive_doc = doc_place is None and doc_time is None and not projections
     smap = None
     if not configured or derive_doc:
-        try:
+        # A probe must not sink the graph.
+        with tolerated(aq._session, "graph: schema probe"):
             smap = AnnotationGraphSource(query=aq)._schema_map()
-        except Exception:  # noqa: BLE001 — a probe must not sink the graph
-            smap = None
     if not configured and not derive_projections(smap):
         raise ValueError(
             "this run's schema declares no graphable section, and no projection "
@@ -109,14 +109,13 @@ def configure(
     # is that the analyst names the section and the engine finds the path.
     # Folded into the same parsed query, so a skipped projection is a scan that
     # never happens.
-    try:
+    # An alias must not break a graph.
+    with tolerated(aq._session, "SECTION: resolving to a projection"):
         source._resolve()
         fields = resolve_sections(chans, list(source.projections or []))
         if fields:
             parsed.fields.extend(f for f in fields if f not in parsed.fields)
             source.gql = parsed
-    except Exception:  # noqa: BLE001 — an alias must not break a graph
-        logger.warning("SECTION: could not resolve to a projection", exc_info=True)
 
     return source, parsed
 
