@@ -582,6 +582,9 @@ class AnnotationRunRead(AnnotationRunBase):
     completed_at: Optional[datetime]
     error_message: Optional[str]
     annotation_count: Optional[int] = None
+    # Root assets in the run's scope — the ledger's ``in_scope``. None when the
+    # run has no scope of its own, or counts were not asked for.
+    asset_count: Optional[int] = None
     schema_ids: Optional[List[int]] = None
     is_favorite: bool = False
     # ═══ TRIGGER TRACKING ═══

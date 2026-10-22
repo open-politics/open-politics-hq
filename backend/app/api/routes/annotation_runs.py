@@ -95,12 +95,37 @@ class RunsCountPhase(BaseModel):
     count: int
 
 
+def _run_reads(session, runs: list[AnnotationRun], include_counts: bool) -> list[AnnotationRunRead]:
+    """Runs as read models — with their schema ids, and, when asked, how many
+    annotations they hold and how many assets their scope does. Counted for
+    all of them at once, so a page of runs costs two counts, not two per run."""
+    annotations: dict[int, int] = {}
+    in_scope: dict[int, int] = {}
+    if include_counts and runs:
+        annotations = dict(session.exec(
+            select(Annotation.run_id, func.count(Annotation.id))
+            .where(Annotation.run_id.in_([r.id for r in runs]))
+            .group_by(Annotation.run_id)
+        ).all())
+        in_scope = ledger.in_scope_counts(session, runs)
+
+    reads = []
+    for run in runs:
+        run_read = AnnotationRunRead.model_validate(run.model_dump(exclude_none=False))
+        run_read.schema_ids = [s.id for s in run.target_schemas] if run.target_schemas else []
+        if include_counts:
+            run_read.annotation_count = annotations.get(run.id, 0)
+            run_read.asset_count = in_scope.get(run.id)
+        reads.append(run_read)
+    return reads
+
+
 def _fetch_runs(
     session, access, infospace_id: int, skip: int, limit: int,
     include_counts: bool, live: Optional[bool] = None,
     status: Optional[RunStatus] = None,
 ):
-    """Fetch runs + per-run annotation counts.
+    """Fetch a page of runs, counted when asked (see ``_run_reads``).
 
     One row per run — there is no family tier. A run is a single durable object;
     extension grows it in place and a live run's annotations accumulate on the
@@ -125,26 +150,7 @@ def _fetch_runs(
     query = query.offset(skip).limit(limit)
     runs = list(session.exec(query).all())
 
-    run_ids = [r.id for r in runs]
-
-    counts_by_run: dict[int, int] = {}
-    if include_counts and run_ids:
-        count_rows = session.exec(
-            select(Annotation.run_id, func.count(Annotation.id))
-            .where(Annotation.run_id.in_(run_ids))
-            .group_by(Annotation.run_id)
-        ).all()
-        counts_by_run = dict(count_rows)
-
-    result_runs = []
-    for run in runs:
-        run_read = AnnotationRunRead.model_validate(run.model_dump(exclude_none=False))
-        run_read.schema_ids = [s.id for s in run.target_schemas] if run.target_schemas else []
-        if include_counts:
-            run_read.annotation_count = counts_by_run.get(run.id, 0)
-        result_runs.append(run_read)
-
-    return result_runs
+    return _run_reads(session, runs, include_counts)
 
 
 @router.get("", response_model=AnnotationRunsOut)
@@ -260,17 +266,7 @@ def get_run(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
         access.require_in_scope("run_ids", run_id)
 
-        run_read = AnnotationRunRead.model_validate(run.model_dump(exclude_none=False))
-        run_read.schema_ids = [schema.id for schema in run.target_schemas] if run.target_schemas else []
-
-        if include_counts:
-            run_read.annotation_count = session.exec(
-                select(func.count(Annotation.id)).where(Annotation.run_id == run.id)
-            ).one() or 0
-        else:
-            run_read.annotation_count = None
-
-        return run_read
+        return _run_reads(session, [run], include_counts)[0]
 
     except HTTPException as he:
         raise he
@@ -491,12 +487,7 @@ def extend_run(
             schema_ids=body.schema_ids,
             configuration_overrides=body.configuration_overrides,
         )
-        run_read = AnnotationRunRead.model_validate(run.model_dump(exclude_none=False))
-        run_read.schema_ids = [s.id for s in run.target_schemas] if run.target_schemas else []
-        run_read.annotation_count = session.exec(
-            select(func.count(Annotation.id)).where(Annotation.run_id == run.id)
-        ).one() or 0
-        return run_read
+        return _run_reads(session, [run], include_counts=True)[0]
     except ValueError as e:
         logger.warning(f"Route: Extension rejected for run {run_id}: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

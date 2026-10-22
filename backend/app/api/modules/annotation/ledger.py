@@ -24,40 +24,96 @@ from app.schemas import RunLedgerAsset, RunLedgerAssets, RunLedgerSummary
 LedgerState = Literal["queued", "annotated"]
 
 
-def run_scope_clause(session: Session, run: AnnotationRun):
-    """SQL predicate selecting the assets in a run's scope, or None if unscoped.
+def run_scope(run: AnnotationRun) -> tuple[set[int], list[int]]:
+    """What a run's scope is made of: the bundles whose subtrees it reads, and
+    the assets it names outright.
 
     A run can watch one or more bundles: ``source_bundle_id`` (single, legacy),
     ``configuration["source_bundle_ids"]`` (a list — the canonical multi-bundle
-    form), and ``target_bundle_id`` (one-off). Each resolves to its **subtree**
-    (folders are bundles; ``bundle_ids`` is direct membership). An explicit
-    ``target_asset_ids`` list scopes by id. The scope is the **union** of all of
-    these — so adding an explicit asset to a bundle-watching run actually widens
-    the scope rather than being silently shadowed by the bundle.
+    form), and ``target_bundle_id`` (one-off). An explicit ``target_asset_ids``
+    list adds assets by id. The scope is the **union** of all of these — so
+    adding an explicit asset to a bundle-watching run actually widens the scope
+    rather than being silently shadowed by the bundle. Both empty: the run has
+    no scope of its own.
     """
     cfg = run.configuration or {}
-    clauses = []
-
     roots: set[int] = set()
     if run.source_bundle_id:
         roots.add(run.source_bundle_id)
     roots.update(cfg.get("source_bundle_ids") or [])
     if cfg.get("target_bundle_id"):
         roots.add(cfg["target_bundle_id"])
+    return roots, list(cfg.get("target_asset_ids") or [])
+
+
+def run_scope_clause(session: Session, run: AnnotationRun):
+    """SQL predicate selecting the assets in a run's scope, or None if unscoped.
+
+    Each bundle of the scope resolves to its **subtree** (folders are bundles;
+    ``bundle_ids`` is direct membership).
+    """
+    roots, asset_ids = run_scope(run)
+    clauses = []
+
     if roots:
         from app.api.modules.content.tree import subtree_ids
         bids = list(subtree_ids(session, roots))
         clauses.append(text("asset.bundle_ids && CAST(:scope_bids AS int[])").bindparams(scope_bids=bids))
 
-    asset_ids = cfg.get("target_asset_ids")
     if asset_ids:
         # One array parameter, not an IN list: psycopg binds each IN value as its
         # own parameter and the protocol caps a statement at 65,535 of them.
-        clauses.append(text("asset.id = ANY(CAST(:scope_aids AS int[]))").bindparams(scope_aids=list(asset_ids)))
+        clauses.append(text("asset.id = ANY(CAST(:scope_aids AS int[]))").bindparams(scope_aids=asset_ids))
 
     if not clauses:
         return None
     return clauses[0] if len(clauses) == 1 else or_(*clauses)
+
+
+def in_scope_counts(session: Session, runs: list[AnnotationRun]) -> dict[int, int]:
+    """How many root assets each run's scope holds — the summary's ``in_scope``
+    for a whole page of runs, in one statement rather than two per run.
+
+    The scope is spelled as rows, ``(run, bundle)`` and ``(run, asset)``; the
+    recursive walk expands every run's bundles to their subtrees at once, and
+    each run then counts its roots against its own bundles and ids. Runs with
+    no scope of their own are absent from the result.
+    """
+    scopes = {run.id: (run.infospace_id, *run_scope(run)) for run in runs}
+    scopes = {rid: s for rid, s in scopes.items() if s[1] or s[2]}
+    if not scopes:
+        return {}
+
+    by_bundle = [(rid, b) for rid, (_, roots, _) in scopes.items() for b in roots]
+    by_asset = [(rid, a) for rid, (_, _, aids) in scopes.items() for a in aids]
+    rows = session.execute(
+        text("""
+            WITH RECURSIVE tree(run_id, bid) AS (
+                SELECT * FROM unnest(CAST(:b_runs AS int[]), CAST(:b_ids AS int[]))
+                UNION
+                SELECT tree.run_id, b.id FROM bundle b JOIN tree ON b.parent_bundle_id = tree.bid
+            ),
+            named(run_id, aid) AS (
+                SELECT * FROM unnest(CAST(:a_runs AS int[]), CAST(:a_ids AS int[]))
+            )
+            SELECT r.run_id, (
+                SELECT count(*) FROM asset
+                WHERE asset.infospace_id = r.infospace_id
+                  AND asset.parent_asset_id IS NULL
+                  AND (
+                    asset.bundle_ids && ARRAY(SELECT bid FROM tree WHERE tree.run_id = r.run_id)
+                    OR asset.id = ANY(ARRAY(SELECT aid FROM named WHERE named.run_id = r.run_id))
+                  )
+            )
+            FROM unnest(CAST(:runs AS int[]), CAST(:infospaces AS int[])) AS r(run_id, infospace_id)
+        """),
+        {
+            "b_runs": [rid for rid, _ in by_bundle], "b_ids": [b for _, b in by_bundle],
+            "a_runs": [rid for rid, _ in by_asset], "a_ids": [a for _, a in by_asset],
+            "runs": list(scopes), "infospaces": [s[0] for s in scopes.values()],
+        },
+    ).all()
+    return dict(rows)
 
 
 def _rollup(run: AnnotationRun):
