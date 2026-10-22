@@ -28,8 +28,8 @@ export interface LabelCandidate {
 
 /** A name's width at a font size, px — Inter's average advance, near enough
  *  to keep names from touching without measuring each one. */
-export function labelWidth(text: string, fontPx: number): number {
-  return text.length * fontPx * 0.56 + 2;
+export function labelWidth(text: string | undefined, fontPx: number): number {
+  return (text?.length ?? 0) * fontPx * 0.56 + 2;
 }
 
 /** The candidates whose names fit, in the order given (the order is the say:

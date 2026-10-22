@@ -12,6 +12,8 @@
  * "United States" ↔ "USA" leave one node. Each merged node keeps the id of the
  * node it is named after, so it stays where that node was on the plane, and
  * carries everything its members carried: mentions, documents, places, links.
+ * A decision asked as part of a group carries the group's chosen label
+ * (`name`), which may be neither side of that one pair; it names the node.
  *
  * The result is a `View` (`collapse.ts`) — what grouping, layout and the drill
  * column already read — so nothing downstream knows merges exist.
@@ -24,6 +26,7 @@ export interface MergeDecision {
   a: { name: string; type: string };
   b: { name: string; type: string };
   keep?: string | null;          // "a" | "b"
+  name?: string | null;          // the group's chosen label, over keep's
   type?: string | null;
 }
 
@@ -49,6 +52,7 @@ export function merge(base: Network, decisions: readonly MergeDecision[]): View 
   };
   // What each decision says about the group it touches, latest last.
   const named = new Map<number, number>();      // a member → the node the group is named after
+  const labelled = new Map<number, string | null>();  // a member → the group's chosen label
   const typed = new Map<number, string>();      // a member → the group's type
   let any = false;
   for (const d of decisions) {
@@ -59,6 +63,7 @@ export function merge(base: Network, decisions: readonly MergeDecision[]): View 
     const ra = find(a), rb = find(b);
     if (ra !== rb) parent[rb] = ra;
     named.set(a, d.keep === 'b' ? b : a);
+    labelled.set(a, d.name ?? null);
     if (d.type) typed.set(a, d.type);
   }
   if (!any) return identity(base);
@@ -75,8 +80,10 @@ export function merge(base: Network, decisions: readonly MergeDecision[]): View 
     unitOf[i] = u;
   }
   const head = new Map<number, number>();
+  const label = new Map<number, string | null>();
   const type = new Map<number, string>();
   named.forEach((h, member) => head.set(unitOf[member], h));
+  labelled.forEach((l, member) => label.set(unitOf[member], l));
   typed.forEach((t, member) => type.set(unitOf[member], t));
 
   const types = [...base.types];
@@ -103,7 +110,7 @@ export function merge(base: Network, decisions: readonly MergeDecision[]): View 
     memberIds.push(...list);
     memberOffsets[u + 1] = memberIds.length;
     id.push(base.id[h]);
-    name.push(base.name[h]);
+    name.push(label.get(u) ?? base.name[h]);
     const t = type.get(u);
     typeOut[u] = t ? typeIndex(t) : base.type[h];
     kind[u] = base.kind[h];

@@ -5,15 +5,17 @@
  *
  *   state     running · scope · threshold · counts       GET, and on `state`
  *   effect    every merge in effect — what the network folds
- *   current   the pair on stage: being judged, or just decided
+ *   current   the group on stage: being judged, or just decided
  *   seeding   the run's graph is being read for pairs
  *   history   the log, newest first, paged on demand
  *
  * Live over the run's `resolution` stream (`graph/tasks/decide.py`):
- * `judging` puts a pair on stage, `decided` lands its verdict — into the
- * effect when it merged, out of it when it did not — and the counts follow. A
- * person's change (`rollback`, `change`, `merge`) goes through the same stream, so every
- * open panel sees the same thing happen.
+ * `judging` puts a group on stage — a head and the labels that might be it —
+ * and each member's `decided` lands its verdict — into the effect when it
+ * merged, out of it when it did not — and the counts follow; the group is
+ * decided once every member is. A person's change (`rollback`, `change`,
+ * `merge`) goes through the same stream and takes the stage on its own, so
+ * every open panel sees the same thing happen.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -25,7 +27,8 @@ import { useStream } from './useStream';
 export type Phase = 'judging' | 'decided';
 
 export interface OnStage {
-  decision: EntityDecisionOut;
+  /** The group's rows; the head is every row's `a`. */
+  decisions: EntityDecisionOut[];
   phase: Phase;
   /** When it entered this phase — what an animation keys on. */
   at: number;
@@ -110,11 +113,17 @@ export function useResolution({
       if (e.type === 'seeding') setSeeding(true);
       else if (e.type === 'judging') {
         setSeeding(false);
-        setCurrent({ decision: e.data as EntityDecisionOut, phase: 'judging', at: Date.now() });
+        setCurrent({ decisions: (e.data as { decisions: EntityDecisionOut[] }).decisions, phase: 'judging', at: Date.now() });
       }
       else if (e.type === 'decided') {
         const d = e.data as EntityDecisionOut;
-        setCurrent({ decision: d, phase: 'decided', at: Date.now() });
+        setCurrent((cur) => {
+          if (!cur?.decisions.some((x) => x.id === d.id)) return { decisions: [d], phase: 'decided', at: Date.now() };
+          const decisions = cur.decisions.map((x) => (x.id === d.id ? d : x));
+          return decisions.some((x) => x.status === 'pending')
+            ? { ...cur, decisions }
+            : { decisions, phase: 'decided', at: Date.now() };
+        });
         land(d);
       } else if (e.type === 'state') setState(e.data as ResolverState);
       else if (e.type === 'seeded') { setSeeding(false); refreshState(); }

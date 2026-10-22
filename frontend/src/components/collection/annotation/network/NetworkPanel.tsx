@@ -56,6 +56,7 @@ import { resolveVarToRgba, useThemeVersion } from '@/lib/theme/cssColor';
 import type { NetworkView, NetworkVizConfig, PanelConfig } from '@/lib/annotations/types';
 import type { TimeWindow } from '@/lib/overview/derive';
 import { useSurfaceCommands } from '@/hooks/useSurfaceCommands';
+import { useBarTarget } from '@/lib/commandBar';
 import { useNetwork } from '@/hooks/useNetwork';
 import { useAssetPages } from '@/hooks/useAssetPages';
 import { useResolution } from '@/hooks/useResolution';
@@ -87,6 +88,7 @@ import { SetBuilder, type TermPick } from './SetBuilder';
 import { RowTools, ToolButton } from './RowTools';
 import { fieldsOf, placesOf, type Catalog, type FieldOption } from './suggest';
 import { useValueTerms } from './useValueTerms';
+import { networkTarget } from './barTarget';
 
 const DEFAULT_CONFIG: NetworkVizConfig = {
   kind: 'network', q: null, max_nodes: null, hidden_types: [], view: { occurrences: true },
@@ -564,9 +566,10 @@ export function NetworkPanel({
   const highlight = useMemo(() => joinLight([subject?.highlight, lit]), [subject, lit]);
 
 
-  // ── The resolver's pair, on the network ───────────────────────────────────
-  // Ringed, named and linked while it is judged and for a moment after; a
-  // merge then folds the two into one node, and the link has nothing to join.
+  // ── The resolver's group, on the network ──────────────────────────────────
+  // The head linked to each member, ringed and named while it is judged and
+  // for a moment after; a merge then folds a member into the head, and its
+  // link has nothing to join.
   const [stage, setStage] = useState(resolution.current);
   useEffect(() => {
     setStage(resolution.current);
@@ -580,16 +583,20 @@ export function NetworkPanel({
     if (r === undefined || !merged || !view) return null;
     return view.unitOf[merged.unitOf[r]];
   }, [rawIndex, merged, view]);
-  const stageUnits = useMemo(() => {
-    if (!stage) return null;
-    const a = drawnAt(stage.decision.a), b = drawnAt(stage.decision.b);
-    return a == null || b == null ? null : { a, b };
-  }, [stage, drawnAt]);
-  const focusPair = useCallback((d: { a: { name: string; type: string }; b: { name: string; type: string } }) => {
+  const stageLinks = useMemo(() => (stage?.decisions ?? []).flatMap((d) => {
     const a = drawnAt(d.a), b = drawnAt(d.b);
-    if (a == null || !net) return;
-    select({ kind: 'node', id: net.id[a] });
-    plane.current?.frame(b == null || b === a ? [a] : [a, b]);
+    if (a == null || b == null || a === b) return [];
+    const tone = d.status === 'pending' ? 'pending' as const : d.status === 'merged' ? 'joined' as const : 'apart' as const;
+    return [{ id: d.id, a, b, tone }];
+  }), [stage, drawnAt]);
+  const stageUnits = useMemo(() => [...new Set(stageLinks.flatMap((l) => [l.a, l.b]))], [stageLinks]);
+  /** Select a decision's head and frame every label it weighed. */
+  const focusDecisions = useCallback((ds: Array<{ a: { name: string; type: string }; b: { name: string; type: string } }>) => {
+    const head = ds[0] ? drawnAt(ds[0].a) : null;
+    if (head == null || !net) return;
+    select({ kind: 'node', id: net.id[head] });
+    const units = ds.flatMap((d) => [drawnAt(d.a), drawnAt(d.b)]).filter((i): i is number => i != null);
+    plane.current?.frame([...new Set([head, ...units])]);
   }, [drawnAt, net, select]);
 
   const markSet = useMemo(() => new Set(marks), [marks]);
@@ -601,14 +608,13 @@ export function NetworkPanel({
     const named = [...(subject?.named ?? [])];
     const loud = net && stops ? loudest(net, stops) : [];
     const litNames = litParts.flatMap((p) => (net ? [...p.seeds].sort(byFrequency(net)).slice(0, 6) : []));
-    for (const i of [hover, stageUnits?.a, stageUnits?.b, ...markUnits, ...litNames, ...loud]) {
+    for (const i of [hover, ...stageUnits, ...markUnits, ...litNames, ...loud]) {
       if (i != null && !named.includes(i)) named.push(i);
     }
     return named;
   }, [subject, hover, stageUnits, markUnits, net, stops, litParts]);
   const outlined = useMemo(() => {
-    const xs = [...markUnits];
-    if (stageUnits) xs.push(stageUnits.a, stageUnits.b);
+    const xs = [...markUnits, ...stageUnits];
     return xs.length ? xs : null;
   }, [markUnits, stageUnits]);
 
@@ -1008,6 +1014,18 @@ export function NetworkPanel({
     fields,
   } : null), [base, legend, groups, headOf, placeList, sets, setLabel, setResults, activeSet?.id, fields]);
 
+  // The command bar, aimed here: the builder's search, and the views as
+  // commands that take what it finds (`barTarget.ts`).
+  useBarTarget(panel.id, networkTarget({
+    label: panel.name || 'Network',
+    catalog,
+    loadValues,
+    goTo: goToBase,
+    addSet: (set) => { setSets([...sets, set]); select({ kind: 'set', id: set.id }); },
+    setView,
+    view: config.view,
+  }));
+
   /** Everything picked, marked, brushed, lit or singled out — let go at once. */
   const anything = selection != null || marks.length > 0 || win != null || solo != null || lights.length > 0;
   const clearAll = () => {
@@ -1169,10 +1187,7 @@ export function NetworkPanel({
           ) : (
             <>
               <PlaneLabels pinned={pinned} emphasis={hover ?? focused} />
-              {stage && stageUnits && stageUnits.a !== stageUnits.b && (
-                <PlaneLink from={stageUnits.a} to={stageUnits.b}
-                           tone={stage.phase === 'judging' ? 'pending' : stage.decision.status === 'merged' ? 'joined' : 'apart'} />
-              )}
+              {stageLinks.map((l) => <PlaneLink key={l.id} from={l.a} to={l.b} tone={l.tone} />)}
             </>
           )}
         </CosmosPlane>
@@ -1502,7 +1517,7 @@ export function NetworkPanel({
           current={resolution.current}
           seeding={resolution.seeding}
           onSet={(patch) => resolution.setResolver(patch)}
-          onFocus={focusPair}
+          onFocus={focusDecisions}
           history={(
             <ResolverHistory
               count={Object.entries(resolution.state?.counts ?? {}).reduce((n, [k, v]) => n + (k === 'pending' ? 0 : v), 0)}
@@ -1511,7 +1526,7 @@ export function NetworkPanel({
               load={(status, more) => { void resolution.loadHistory(status, more); }}
               onRollback={(id) => { void resolution.rollback(id); }}
               onChange={(id, body) => { void resolution.change(id, body); }}
-              onFocus={focusPair}
+              onFocus={focusDecisions}
             />
           )}
         />

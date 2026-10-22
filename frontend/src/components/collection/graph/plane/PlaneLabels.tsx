@@ -75,10 +75,12 @@ export function PlaneLabels({
     const { pinned, max, emphasis } = props.current;
     const sampled = graph.getSampledPointPositionsMap();
     const tracked = graph.getTrackedPointPositionsMap();
-    const first = [...new Set(emphasis != null ? [emphasis, ...pinned] : pinned)];
+    // Props follow the panel's network a render before the plane swaps to it:
+    // an index the plane's network does not have is not named yet.
+    const first = [...new Set(emphasis != null ? [emphasis, ...pinned] : pinned)].filter((i) => i >= 0 && i < net.size);
     const taken = new Set(first);
     const sample = [...sampled.keys()]
-      .filter((i) => !taken.has(i) && net.kind[i] !== OCCURRENCE)
+      .filter((i) => i < net.size && !taken.has(i) && net.kind[i] !== OCCURRENCE)
       .sort((a, b) => net.frequency[b] - net.frequency[a]);
     const candidates: LabelCandidate[] = [];
     // Pinned the plane is not tracking yet have no position this frame: they
@@ -123,7 +125,7 @@ export function PlaneLabels({
     let k = 0;
     for (const i of named.current) {
       const p = at.get(i);
-      if (!p) continue; // absent, or tracked from the next frame on
+      if (!p || i >= net.size) continue; // absent, or tracked from the next frame on
       if (k === pool.current.length) {
         const span = document.createElement('span');
         span.className = 'plane-label';

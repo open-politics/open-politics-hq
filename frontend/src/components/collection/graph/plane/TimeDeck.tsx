@@ -452,7 +452,7 @@ export function TimeDeck(props: TimeDeckProps) {
           sizeMinPixels: 7,
           sizeMaxPixels: 15,
           getSize: (i: number) => (i === featured || pinnedSet.has(i) || (k === atK && onsetSet.has(i)) ? 12.5 : 11) * unit,
-          getText: (i: number) => net.name[i],
+          getText: (i: number) => net.name[i] ?? '',
           getPosition: (i: number) => [pos[2 * i], pos[2 * i + 1], z(k)],
           // Where `declutter` measured it: just right of the dot as drawn.
           getPixelOffset: (i: number) => [dx.get(i) ?? 4, 0],
@@ -510,6 +510,7 @@ export function TimeDeck(props: TimeDeckProps) {
     const [w, h] = s.size;
     const candidates: Array<LabelCandidate & { k: number }> = [];
     const offer = (k: number, i: number, m: number, larger: boolean) => {
+      if (!(i >= 0 && i < net.size)) return;                   // the panel's next network, a draw early
       const z = -k * s.depth;
       const [x, y] = vp.project([pos[2 * i], pos[2 * i + 1], z]);
       if (!(x > -40 && x < w + 40 && y > -20 && y < h + 20)) return;

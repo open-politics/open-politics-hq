@@ -34,7 +34,8 @@ import {
   Microscope,
   Loader2,
   Upload,
-  Terminal
+  Terminal,
+  Folder
 } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { AnnotationRunRead, ResourceType } from '@/client';
@@ -61,6 +62,7 @@ import { toast } from 'sonner';
 import ShareAnnotationRunDialog from './ShareAnnotationRunDialog';
 import { useAnnotationRunStore } from '@/zustand_stores/useAnnotationRunStore';
 import { TopbarSlot } from '@/components/layout/TopbarSlot';
+import { runBundleIds } from '@/lib/annotations/ledger';
 
 /** A run that re-runs itself as new content arrives.
  *
@@ -98,8 +100,32 @@ const LiveIndicator: React.FC<{ compact?: boolean }> = ({ compact = false }) => 
 );
 
 
+type DisplayRun = AnnotationRunRead & { timestamp: string; bundleCount: number; schemeCount: number };
+
+/** What a run reads: the root assets in its scope (the ledger's count, so a
+ *  live run's grows as its bundles fill), and the bundles they flow in from. */
+const ScopeCounts: React.FC<{ run: DisplayRun; iconClassName: string; countClassName?: string }> = ({
+  run, iconClassName, countClassName,
+}) => (
+  <>
+    <span className="flex items-center gap-1.5" title="Assets in scope">
+      <FileText className={cn(iconClassName, "text-green-600 dark:text-green-400")} />
+      <span className={countClassName}>{run.asset_count?.toLocaleString() ?? '—'}</span>
+    </span>
+    {run.bundleCount > 0 && (
+      <span
+        className="flex items-center gap-1.5"
+        title={`Reads ${run.bundleCount} bundle${run.bundleCount === 1 ? '' : 's'}, sub-folders included`}
+      >
+        <Folder className={cn(iconClassName, "text-amber-600 dark:text-amber-400")} />
+        <span className={countClassName}>{run.bundleCount}</span>
+      </span>
+    )}
+  </>
+);
+
 const FavoriteRunCard: React.FC<{
-  run: AnnotationRunRead & { timestamp: string; documentCount: number; schemeCount: number };
+  run: DisplayRun;
   activeRunId?: number | null;
   onSelectRun: (runId: number) => void;
   onToggleFavorite: (run: AnnotationRunRead) => void;
@@ -202,10 +228,7 @@ const FavoriteRunCard: React.FC<{
       {/* Stats + Date Row */}
       <div className="flex items-center justify-between pt-3 mt-3 border-t border-border/50">
         <div className="flex items-center gap-3 text-sm">
-          <div className="flex items-center gap-1.5">
-            <FileText className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
-            <span className="font-medium text-foreground">{run.documentCount}</span>
-          </div>
+          <ScopeCounts run={run} iconClassName="h-3.5 w-3.5" countClassName="font-medium text-foreground" />
           <div className="flex items-center gap-1.5">
             <Microscope className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
             <span className="font-medium text-foreground">{run.schemeCount}</span>
@@ -222,7 +245,7 @@ const FavoriteRunCard: React.FC<{
 };
 
 const RunTableRow: React.FC<{
-  run: AnnotationRunRead & { timestamp: string; documentCount: number; schemeCount: number };
+  run: DisplayRun;
   activeRunId?: number | null;
   onSelectRun: (runId: number) => void;
   onToggleFavorite: (run: AnnotationRunRead) => void;
@@ -327,12 +350,9 @@ const RunTableRow: React.FC<{
           </Badge>
         </div>
       </TableCell>
-      <TableCell className="w-20 text-center py-6">
-        <div className="flex items-center justify-center gap-1.5">
-          <div className="p-1.5 rounded-md">
-            <FileText className="h-3.5 w-3.5 text-green-600 dark:text-green-400" />
-          </div>
-          <span className="font-semibold text-foreground">{run.documentCount}</span>
+      <TableCell className="w-28 text-center py-6">
+        <div className="flex items-center justify-center gap-3">
+          <ScopeCounts run={run} iconClassName="h-3.5 w-3.5" countClassName="font-semibold text-foreground" />
         </div>
       </TableCell>
       <TableCell className="w-20 text-center py-6">
@@ -483,13 +503,12 @@ const RunHistoryPanel: React.FC<{
     return runs.map(run => {
         const config = run.configuration as any;
         const schemaIds = run.schema_ids || config?.schema_ids || [];
-        const assetIds = config?.target_asset_ids || [];
 
         return {
             ...run,
             is_favorite: favOverrides[run.id] ?? run.is_favorite,
             timestamp: format(parseISO(run.created_at), 'PPp'),
-            documentCount: assetIds.length,
+            bundleCount: runBundleIds(run).length,
             schemeCount: schemaIds.length,
         };
     });
@@ -763,10 +782,7 @@ const RunHistoryPanel: React.FC<{
                     </div>
                       <div className="flex items-center justify-between text-xs text-muted-foreground">
                         <div className="flex items-center gap-3">
-                          <span className="flex items-center gap-1">
-                            <FileText className="h-3 w-3" />
-                            {run.documentCount}
-                          </span>
+                          <ScopeCounts run={run} iconClassName="h-3 w-3" />
                           <span className="flex items-center gap-1">
                             <Microscope className="h-3 w-3" />
                             {run.schemeCount}
@@ -796,7 +812,7 @@ const RunHistoryPanel: React.FC<{
                       <TableHead className="w-32 py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider text-center">
                         Status
                       </TableHead>
-                      <TableHead className="w-20 text-center py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      <TableHead className="w-28 text-center py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                         Assets
                       </TableHead>
                       <TableHead className="w-20 text-center py-4 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
