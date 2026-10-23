@@ -135,6 +135,15 @@ export function valueSuggestions(
     kind: 'term' as const, label: v.value, count: Number.isNaN(v.count) ? undefined : v.count, hint: field.label,
     term: { kind: 'value' as const, field: field.path, op, values: [v.value] },
   }));
+  // A number can also be read as a degree: no value picked, the score itself
+  // — what a set's ground is raised from (`plane/surface`).
+  if ((field.shape === 'number' || field.shape === 'array_number') && op !== '~') {
+    out.unshift({
+      kind: 'term', hint: field.label,
+      label: op === '!' ? `Less ${field.label}, by score` : `${field.label}, by score — as ground`,
+      term: { kind: 'value', field: field.path, op, values: [], measure: true },
+    });
+  }
   if (text && (op === '~' || !listed.some((v) => fold(v.value) === q))) {
     out.unshift({
       kind: 'term', hint: field.label,

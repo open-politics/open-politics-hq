@@ -41,8 +41,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { format } from 'date-fns';
 import {
-  Activity, Anchor as AnchorIcon, Boxes, CircleDot, Clock, Contrast, Expand, Eye, EyeOff, Flame, Focus, Frame, Layers,
-  MapPin, Maximize2, Merge, Minimize2, Minus, Pause, Play, Plus, Scan, Spline, Unlink, Waypoints, X,
+  Activity, Anchor as AnchorIcon, Boxes, CircleDot, Clock, Contrast, Expand, Eye, EyeOff, Flame, FlaskConical, Focus, Frame, Layers,
+  MapPin, Maximize2, Merge, Minimize2, Minus, Mountain, Pause, Play, Plus, Scan, Spline, Unlink, Waypoints, X,
 } from 'lucide-react';
 import type { GraphConfig } from '@cosmos.gl/graph';
 import { NetworkService, RunsService, type AnnotationSchemaRead } from '@/client';
@@ -64,8 +64,8 @@ import {
   CosmosPlane, DECK_DEFAULTS, GROUP_HUES, PlaneAnchors, PlaneLabels, PlaneLink, PlaneMap, RUNG_PRESETS, SPACE_SIZE,
   TimeDeck, addTerm, anchored, annotationsOf, applyGain, around, byGroups, describeSet, evaluateSets, fromWords,
   gainStops, hexToRgba, joinLight, lightOf, loudest, newSetId, setGain, setHue, spaceOf, toggleLight, unitStops,
-  withAnchors,
-  type AnchorMark, type DeckApi, type Gain, type GainKind, type Light, type LightKind, type NodeSet, type Pull,
+  withAnchors, foldAnnotations, onView,
+  type AnchorMark, type DeckApi, type Field, type Term, type Gain, type GainKind, type Light, type LightKind, type NodeSet, type Pull,
   type Surface, type TermKind,
   byPlace, byTime, cellOf, collapse, degree, expandedKeys, expansionOf, findNodes, groupPath, headsOf,
   groupsAt, groupColors, identity, inheritFrom, keyIndex, linkArrows, linkColors, linkStrength, linkWidths, merge,
@@ -87,8 +87,9 @@ import { StackPicker } from './StackPicker';
 import { SetBuilder, type TermPick } from './SetBuilder';
 import { RowTools, ToolButton } from './RowTools';
 import { fieldsOf, placesOf, type Catalog, type FieldOption } from './suggest';
-import { useValueTerms } from './useValueTerms';
+import { useValueTerms, valueKey } from './useValueTerms';
 import { networkTarget } from './barTarget';
+import { useAnnotationRunStore } from '@/zustand_stores/useAnnotationRunStore';
 
 const DEFAULT_CONFIG: NetworkVizConfig = {
   kind: 'network', q: null, max_nodes: null, hidden_types: [], view: { occurrences: true },
@@ -179,7 +180,7 @@ function useTheme() {
 }
 
 export function NetworkPanel({
-  panel, infospaceId, runId, schemas, onUpdatePanel,
+  panel, infospaceId, runId: ownRunId, schemas, onUpdatePanel,
 }: {
   panel: PanelConfig;
   infospaceId: number;
@@ -195,6 +196,13 @@ export function NetworkPanel({
     onUpdatePanel({ panel_config: { ...config, ...patch } as any });
   }, [config, onUpdatePanel]);
   const setView = (patch: Partial<NetworkView>) => setConfig({ view: { ...config.view, ...patch } });
+
+  // While a draft is tried, the panel reads its trial run instead — what the
+  // draft read, graphed through the draft, and nothing else
+  // (`annotation/drafts.py`). Everything below reads `runId`.
+  const trialView = useAnnotationRunStore((s) => s.trialView);
+  const setTrialView = useAnnotationRunStore((s) => s.setTrialView);
+  const runId = trialView ?? ownRunId;
 
   const stream = useNetwork({
     infospaceId, runId, q: config.q, maxNodes: config.max_nodes, mergeMaps: panel.merge_maps as any,
@@ -266,11 +274,23 @@ export function NetworkPanel({
   const definitions = useMemo(() => sets.map((x) => ({ id: x.id, terms: x.terms })), [definitionKey]);
   const allTerms = useMemo(() => definitions.flatMap((d) => d.terms), [definitions]);
   const valueTerms = useValueTerms({ infospaceId, runId, terms: allTerms, version: stream.shownKey });
+  // A graded term's weights per annotation, folded once per network onto its
+  // nodes — the field a set's degree is made of (`plane/fields`).
+  const folded = useMemo(() => new Map<string, Field>(), [base, valueTerms.weights]);
+  const weightsOf = useCallback((t: Term) => {
+    const w = base ? valueTerms.weights(t) : undefined;
+    if (!w || !base) return undefined;
+    const key = valueKey(t);
+    let f = folded.get(key);
+    if (!f) folded.set(key, (f = foldAnnotations(base, w.annotation)));
+    return f;
+  }, [base, valueTerms.weights, folded]);
   const setResults = useMemo(() => (base ? evaluateSets(definitions, {
     net: base,
     groupMembers: (head) => groupByHead(head)?.members,
     valueAssets: valueTerms.lookup,
-  }) : new Map<string, { members: number[]; pending: boolean }>()), [base, definitions, groupByHead, valueTerms.lookup]);
+    weights: weightsOf,
+  }) : new Map<string, { members: number[]; pending: boolean; weight?: Field }>()), [base, definitions, groupByHead, valueTerms.lookup, weightsOf]);
   const membersOfSet = useCallback((id: string) => setResults.get(id)?.members, [setResults]);
   const hueOf = useCallback((id: string) => setHue(Math.max(0, sets.findIndex((x) => x.id === id))), [sets]);
 
@@ -290,8 +310,16 @@ export function NetworkPanel({
   const pulls = useMemo<Pull[]>(() => sets.flatMap((x) => {
     const at = x.at?.[anchorSpace];
     const r = reach.get(x.id);
+    const weight = setResults.get(x.id)?.weight;
+    // A set drawn as ground, on the flat timeline: its members take lanes by
+    // value in their own time column — no point to place, the scale is the
+    // place. (Deep time does it where it draws.)
+    if (x.ground && weight && r && anchorSpace === 'time') {
+      const along = { field: weight, axis: 'y' as const, range: 'unit' as const, lo: SPACE_SIZE * 0.7, hi: SPACE_SIZE * 0.3 };
+      return [{ space: anchorSpace, x: 0, y: 0, gain: x.gain ?? 0, direct: r.direct, related: [], along }];
+    }
     return at && r ? [{ space: anchorSpace, x: at[0], y: at[1], gain: x.gain ?? 0, ...r }] : [];
-  }), [sets, anchorSpace, reach]);
+  }), [sets, anchorSpace, reach, setResults]);
   // Shown alone: the plane narrows to these sets' members, together.
   const alone = useMemo(() => {
     const ids = sets.filter((x) => x.only).map((x) => x.id);
@@ -890,6 +918,27 @@ export function NetworkPanel({
     return r.items ?? [];
   }, [infospaceId, runId, panel.merge_maps]);
 
+  // The ground deep time draws: the picked set's, if it is drawn as ground,
+  // else the first that is. One at a time — two terrains would hide each
+  // other. Its field keeps its identity while only the gain moves, so the
+  // nodes rise instead of the ground being measured again.
+  const groundSet = useMemo(() => {
+    const drawn = (x: NodeSet) => !!x.ground && !!setResults.get(x.id)?.weight;
+    const picked = selection?.kind === 'set' ? sets.find((x) => x.id === selection.id && drawn(x)) : undefined;
+    return picked ?? sets.find(drawn) ?? null;
+  }, [sets, setResults, selection]);
+  const groundWeight = groundSet ? setResults.get(groundSet.id)?.weight : undefined;
+  const groundField = useMemo(
+    () => (deep && view && groundWeight ? onView(view, groundWeight) : null), [deep, view, groundWeight]);
+  const ground = useMemo(() => (groundField && groundSet ? {
+    field: groundField,
+    hue: hueOf(groundSet.id),
+    // The set's gain is how much it matters — turned up, its members stand
+    // on their value.
+    rise: Math.max(0, groundSet.gain ?? 0),
+    approximate: false,
+  } : null), [groundField, groundSet, hueOf]);
+
   const anchorMarks = useMemo<AnchorMark[]>(() => sets.flatMap((x) => {
     const at = x.at?.[anchorSpace];
     return at ? [{
@@ -1136,6 +1185,13 @@ export function NetworkPanel({
   return (
     <div ref={root} className="@container/network relative h-full min-h-[420px] w-full overflow-hidden bg-background"
          onKeyDown={onKeyDown}>
+      {trialView != null && (
+        <div className={cn(HUD_GLASS, 'absolute left-1/2 top-2 z-30 flex -translate-x-1/2 items-center gap-2 border border-amber-500/35 py-1 pl-2.5 pr-1')}>
+          <FlaskConical className="size-3 shrink-0 stroke-[1.5] text-amber-600 dark:text-amber-400" />
+          <span className={cn(HUD_PROSE, 'whitespace-nowrap text-hud-fg')}>What the draft read, alone</span>
+          <HudButton size="sm" onClick={() => setTrialView(null)} title="Show the run's own reads again">Back to the run</HudButton>
+        </div>
+      )}
       {net && buffers && (
         <CosmosPlane
           ref={plane}
@@ -1176,6 +1232,7 @@ export function NetworkPanel({
               vanish={deckView?.vanish}
               onVanish={(vanish) => setDeckView({ ...deckView, vanish })}
               anchors={anchorMarks}
+              surface={ground}
               slicer={slicer}
               onCut={(k) => { if (cells[k] != null) { setWin([cells[k], cells[k]]); setPlaying(false); } }}
               inset={openCanvas}
@@ -1299,6 +1356,8 @@ export function NetworkPanel({
                 placing={placing?.id === x.id}
                 canPlace={!!surface}
                 lit={isLit('set', x.id)}
+                graded={!!setResults.get(x.id)?.weight}
+                onGround={() => editSet(x.id, { ground: !x.ground || undefined })}
                 onPick={() => (selection?.kind === 'set' && selection.id === x.id ? select(null) : pickSet(x.id))}
                 onName={(name) => editSet(x.id, { name: name || undefined })}
                 onAlone={() => editSet(x.id, { only: !x.only })}
@@ -1508,8 +1567,9 @@ export function NetworkPanel({
         </section>
       )}
 
-      {/* ── Top-centre: the resolver's ticker ───────────────────────────── */}
-      {raw && (
+      {/* ── Top-centre: the resolver's ticker — a trial's reads are not
+          resolved, so in trial mode its banner stands here instead ───── */}
+      {raw && trialView == null && (
         <ResolverTicker
           className={cn('absolute left-1/2 top-2 z-10 -translate-x-1/2 @max-[760px]/network:hidden',
                         drilling && '@min-[1100px]/network:left-[calc(50%-90px)]')}
@@ -1748,7 +1808,7 @@ function Chip({
  * this view, lit, turned up or down, removed.
  */
 function SetRow({
-  set, label, hue, result, picked, placed, placing, canPlace, lit,
+  set, label, hue, result, picked, placed, placing, canPlace, lit, graded, onGround,
   onPick, onName, onAlone, onPlace, onLight, onGain, onRemove,
 }: {
   set: NodeSet;
@@ -1760,6 +1820,9 @@ function SetRow({
   placing: boolean;
   canPlace: boolean;
   lit: boolean;
+  /** The set has a degree — a score read by its terms — and can be ground. */
+  graded: boolean;
+  onGround: () => void;
   onPick: () => void;
   onName: (name: string) => void;
   onAlone: () => void;
@@ -1802,6 +1865,14 @@ function SetRow({
                   on={!!set.only} onClick={onAlone} className={reveal(!!set.only)}>
         <Focus className="size-3" />
       </ToolButton>
+      {graded && (
+        <ToolButton title={set.ground
+                      ? 'Stop drawing its scores as ground'
+                      : 'Draw its scores as ground — deep in time a terrain of the scale, on the timeline lanes by value. Turn its gain up and its members stand on their value.'}
+                    on={!!set.ground} onClick={onGround} className={reveal(!!set.ground)}>
+          <Mountain className="size-3" />
+        </ToolButton>
+      )}
       {canPlace && (
         <ToolButton title={placed ? 'Take its anchor off this view' : placing ? 'Click the canvas to place it' : 'Anchor it in this view — what it holds gathers there'}
                     on={placed || placing} onClick={onPlace} className={reveal(placed || placing)}>

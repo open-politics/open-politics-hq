@@ -123,7 +123,7 @@ export function SetBuilder({
         )}
         {active?.terms.map((t, k) => (
           <TermChip key={`${t.kind}${t.field ?? ''}${k}`} term={t} nameOf={nameOf}
-                    onOp={() => onTerms(active.terms.map((x, j) => (j === k ? { ...x, op: nextOp(x.op) } : x)))}
+                    onOp={() => onTerms(active.terms.map((x, j) => (j === k ? { ...x, op: nextOp(x.op, x.measure) } : x)))}
                     onDrop={(v) => onTerms(dropValue(active, k, v).terms)} />
         ))}
         {field && (
@@ -202,6 +202,12 @@ function TermChip({
               className="px-1 font-mono text-hud-fg hover:bg-hud-line">
         {OP_GLYPH[term.op]}
       </button>
+      {term.measure && (
+        <button type="button" onClick={() => onDrop('')} title="Take this off"
+                className="px-0.5 text-hud-fg hover:text-hud-dim hover:line-through">
+          by score
+        </button>
+      )}
       {term.values.map((v, k) => (
         <React.Fragment key={v}>
           {k > 0 && <span className="text-hud-dimmer">/</span>}

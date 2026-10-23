@@ -40,5 +40,7 @@ export { TimeDeck, VANISH_REACH, type TimeDeckProps, type DeckApi } from './Time
 export * from './gain';
 export * from './anchoring';
 export * from './sets';
+export * from './fields';
+export * from './surface';
 export * from './light';
 export { PlaneAnchors, type AnchorMark, type Inset, type Surface } from './PlaneAnchors';

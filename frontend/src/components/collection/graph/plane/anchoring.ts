@@ -17,6 +17,14 @@
  * Members are pulled firmly, their neighbours more lightly — the related, not
  * only the named.
  *
+ * A set with a degree (`fields.ts`) can be placed **along** an axis instead
+ * of at a point: each member goes to the height its weight gives — a 9 high,
+ * a 2 low — so the plane sorts itself by the scale. On the flat timeline that
+ * is a lane per value band in each time column. Deep time does it when it
+ * draws (`surface.towardField`), where the layout's height is free to give;
+ * the forces have no pull along one axis only, so in the groups view a field
+ * places as a point until a second field gives the other axis.
+ *
  * Same primitive as every view (`arrange.ts`): an anchor is a cluster with a
  * position, and its members' cluster and strength. `withAnchors` hands back
  * the arrangement with those added — same key, so nothing jumps; the forces
@@ -24,6 +32,7 @@
  */
 import type { Arrangement } from './arrange';
 import type { View } from './collapse';
+import type { Field } from './fields';
 
 export type AnchorSpace = 'free' | 'time' | 'geo';
 
@@ -39,6 +48,21 @@ export interface Pull {
   direct: readonly number[];
   /** Base nodes pulled lightly — what links to them. */
   related: readonly number[];
+  /** Placed along an axis by a field instead of at the point: each node's
+   *  position on `axis` comes from its weight — `unit` maps 0…1 onto
+   *  `lo…hi`, `signed` maps −1…1 (a versus, `a − b`). Nodes without a basis
+   *  are not pulled. */
+  along?: { field: Field; axis: 'x' | 'y'; range: 'unit' | 'signed'; lo: number; hi: number };
+}
+
+/** Value bands a field-placed lane is cut into — fine enough to read as a
+ *  slope, few enough to stay a handful of clusters per column. */
+const BANDS = 24;
+
+/** How far along a field-placed pull a weight lies, 0…1. */
+export function alongShare(along: NonNullable<Pull['along']>, w: number): number {
+  const t = along.range === 'signed' ? (w + 1) / 2 : w;
+  return Math.min(1, Math.max(0, t));
 }
 
 /** Every node some anchor pulls — drawn as itself, out of its group. */
@@ -81,12 +105,30 @@ export function withAnchors(arr: Arrangement, view: View, pulls: readonly Pull[]
   const lanes = new Map<string, number>();
   pulls.forEach((a, k) => {
     const g = 2 ** a.gain;
+    // Along a field, only the timeline's lanes pull here (see the header).
+    if (a.along && a.space !== 'time') return;
     const point = a.space === 'time' ? -1 : add(a.x, a.y);
     const pull = (i: number, s: number) => {
       const u = view.unitOf[i];
       if (s <= taken[u]) return;
       let c = point;
-      if (a.space === 'time') {
+      if (a.along) {
+        // A lane per value band in the node's own time column.
+        const w = a.along.field[i];
+        if (Number.isNaN(w)) return;
+        const cell = arr.clusters[u];
+        if (cell === undefined) return;
+        const band = Math.round(alongShare(a.along, w) * BANDS);
+        const key = `${k}:${cell}:${band}`;
+        c = lanes.get(key) ?? -1;
+        if (c < 0) {
+          const at = a.along.lo + (band / BANDS) * (a.along.hi - a.along.lo);
+          const cx = arr.clusterPositions[2 * cell] ?? a.x;
+          const cy = arr.clusterPositions[2 * cell + 1] ?? a.y;
+          c = a.along.axis === 'y' ? add(cx, at) : add(at, cy);
+          lanes.set(key, c);
+        }
+      } else if (a.space === 'time') {
         // A lane: the node's own time column, at the anchor's height.
         const cell = arr.clusters[u];
         if (cell === undefined) return;

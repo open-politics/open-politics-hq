@@ -31,11 +31,19 @@
  * placed as an anchor that gathers it (`anchoring.ts`) — a point among the
  * groups and on the map, a lane on the timeline, a pillar deep in time.
  *
+ * A value term can also be **graded**: no values, the number at its field
+ * read as a degree (`measure`). Its set then carries a weight per node
+ * (`fields.ts`) — how high each member's documents score — and every reader
+ * can take it graded: a surface, a pull to the value, a colour. A graded
+ * term's members are the nodes with a basis; a ≠ on one takes away by degree.
+ *
  * Pure: a set and the network in, base node indices out. Value terms are the
  * one thing the network does not carry — the documents' annotations — and
- * arrive from outside as asset ids (`SetWorld.valueAssets`).
+ * arrive from outside: as asset ids (`SetWorld.valueAssets`), or graded as a
+ * field (`SetWorld.weights`).
  */
 import type { AnchorSpace } from './anchoring';
+import { and, butNot, type Field } from './fields';
 import type { Network } from './network';
 
 export type TermKind = 'type' | 'name' | 'entity' | 'group' | 'place' | 'set' | 'value';
@@ -50,7 +58,12 @@ export interface Term {
   values: string[];
   /** A value term's field path (`sentiment`, `topics[*]`). */
   field?: string;
+  /** A value term read as a degree — the number at `field`, no values. */
+  measure?: boolean;
 }
+
+/** A term that says something: values to match, or a number to read. */
+export const isLive = (t: Term) => t.values.length > 0 || !!t.measure;
 
 export interface NodeSet {
   id: string;
@@ -61,6 +74,10 @@ export interface NodeSet {
   gain?: number;
   /** Shown alone — with any other set shown alone. */
   only?: boolean;
+  /** With a degree: drawn as ground, and placed along it — deep in time its
+   *  members rise toward their value by the set's gain; on the flat
+   *  timeline they take lanes by value (`surface.ts`, `anchoring.ts`). */
+  ground?: boolean;
   /** Where it anchors, per space — a set can stand on the map and among the
    *  groups at once. In `time`, only y is the anchor's own. */
   at?: Partial<Record<AnchorSpace, [number, number]>>;
@@ -73,6 +90,8 @@ export interface SetWorld {
   groupMembers: (key: string) => readonly number[] | undefined;
   /** The assets a value term finds; undefined while they load. */
   valueAssets: (term: Term) => ReadonlySet<number> | undefined;
+  /** A graded term's field over the network; undefined while it loads. */
+  weights?: (term: Term) => Field | undefined;
 }
 
 export interface SetResult {
@@ -80,12 +99,17 @@ export interface SetResult {
   members: number[];
   /** A value term is still loading — the members are provisional. */
   pending: boolean;
+  /** With a graded term: the degree per node over the network, NaN outside
+   *  the set. Absent: every member counts fully. */
+  weight?: Field;
 }
 
 export const OPS: readonly TermOp[] = ['=', '~', '!'];
 export const OP_GLYPH: Record<TermOp, string> = { '=': '=', '~': '~', '!': '≠' };
-/** The next operator, as a click on it turns. */
-export const nextOp = (op: TermOp): TermOp => OPS[(OPS.indexOf(op) + 1) % OPS.length];
+/** The next operator, as a click on it turns. A degree is had or taken
+ *  away — there is no "loosely" to a score. */
+export const nextOp = (op: TermOp, graded = false): TermOp =>
+  graded ? (op === '!' ? '=' : '!') : OPS[(OPS.indexOf(op) + 1) % OPS.length];
 
 /** The hues sets are drawn in — apart from the groups' own. */
 export const SET_HUES = ['#e8590c', '#0ca678', '#7048e8', '#d6336c', '#1c7ed6', '#f59f00', '#2b8a3e', '#862e9c'];
@@ -190,10 +214,10 @@ function termMask(term: Term, world: SetWorld, setMask: (id: string) => Uint8Arr
 export function evaluateSets(sets: readonly NodeSet[], world: SetWorld): Map<string, SetResult> {
   const { net } = world;
   const byId = new Map(sets.map((s) => [s.id, s]));
-  const masks = new Map<string, { mask: Uint8Array; pending: boolean }>();
+  const masks = new Map<string, { mask: Uint8Array; pending: boolean; weight?: Field }>();
   const visiting = new Set<string>();
 
-  const solve = (id: string): { mask: Uint8Array; pending: boolean } | null => {
+  const solve = (id: string): { mask: Uint8Array; pending: boolean; weight?: Field } | null => {
     const done = masks.get(id);
     if (done) return done;
     const set = byId.get(id);
@@ -207,8 +231,23 @@ export function evaluateSets(sets: readonly NodeSet[], world: SetWorld): Map<str
     };
     let keep: Uint8Array | null = null;
     const drop = new Uint8Array(net.size);
+    let weight: Field | null = null;
+    const less: Field[] = [];
     for (const term of set.terms) {
-      if (!term.values.length) continue;
+      if (!isLive(term)) continue;
+      if (term.measure) {
+        // Graded: a degree, not a match. Its members are the nodes it can
+        // judge; a ≠ subtracts by degree instead of cutting.
+        const w = world.weights?.(term);
+        if (!w) { pending = true; continue; }
+        if (term.op === '!') { less.push(w); continue; }
+        const m = new Uint8Array(net.size);
+        for (let i = 0; i < net.size; i++) m[i] = Number.isNaN(w[i]) ? 0 : 1;
+        if (!keep) keep = m;
+        else for (let i = 0; i < net.size; i++) keep[i] &= m[i];
+        weight = weight ? and(weight, w) : w;
+        continue;
+      }
       const m = termMask(term, world, setMask);
       if (!m) { pending = true; continue; }
       if (term.op === '!') {
@@ -219,15 +258,26 @@ export function evaluateSets(sets: readonly NodeSet[], world: SetWorld): Map<str
         for (let i = 0; i < net.size; i++) keep[i] &= m[i];
       }
     }
-    const positive = set.terms.some((t) => t.op !== '!' && t.values.length);
-    const hasAny = set.terms.some((t) => t.values.length);
+    const positive = set.terms.some((t) => t.op !== '!' && isLive(t));
+    const hasAny = set.terms.some(isLive);
     const mask = new Uint8Array(net.size);
     if (hasAny) {
       // Only ≠: everything but. A positive term still loading: nothing yet.
       for (let i = 0; i < net.size; i++) mask[i] = (keep ? keep[i] : positive ? 0 : 1) && !drop[i] ? 1 : 0;
     }
+    if (less.length) {
+      // Degrees taken away: from the set's own, or from full for a plain set.
+      let w: Field = weight ?? new Float32Array(net.size).fill(1);
+      for (const b of less) w = butNot(w, b);
+      weight = w;
+    }
+    let field: Field | undefined;
+    if (weight) {
+      field = new Float32Array(net.size).fill(NaN);
+      for (let i = 0; i < net.size; i++) if (mask[i]) field[i] = weight[i];
+    }
     visiting.delete(id);
-    const out = { mask, pending };
+    const out = { mask, pending, weight: field };
     masks.set(id, out);
     return out;
   };
@@ -238,7 +288,7 @@ export function evaluateSets(sets: readonly NodeSet[], world: SetWorld): Map<str
     const members: number[] = [];
     for (let i = 0; i < net.size; i++) if (r.mask[i]) members.push(i);
     members.sort((a, b) => net.frequency[b] - net.frequency[a]);
-    results.set(s.id, { members, pending: r.pending });
+    results.set(s.id, r.weight ? { members, pending: r.pending, weight: r.weight } : { members, pending: r.pending });
   }
   return results;
 }
@@ -258,7 +308,8 @@ export function around(net: Network, members: readonly number[], limit = 1600): 
 
 // ─── Editing ────────────────────────────────────────────────────────────────
 
-const sameFacet = (a: Term, b: Term) => a.kind === b.kind && a.op === b.op && (a.field ?? '') === (b.field ?? '');
+const sameFacet = (a: Term, b: Term) =>
+  a.kind === b.kind && a.op === b.op && (a.field ?? '') === (b.field ?? '') && !!a.measure === !!b.measure;
 
 /** A term added to a set: its values join a term of the same facet as
  *  alternatives — or, `apart`, it narrows as a term of its own. */
@@ -274,8 +325,10 @@ export function addTerm(set: NodeSet, term: Term, apart = false): NodeSet {
  *  empty. */
 export function dropValue(set: NodeSet, termIndex: number, value: string): NodeSet {
   const terms = set.terms
+    // A graded term has no values to drop one of: dropping is taking it off.
+    .filter((t, k) => !(k === termIndex && t.measure))
     .map((t, k) => (k === termIndex ? { ...t, values: t.values.filter((v) => v !== value) } : t))
-    .filter((t) => t.values.length);
+    .filter(isLive);
   return { ...set, terms };
 }
 
@@ -287,6 +340,7 @@ export const fieldLabel = (path: string) => path.split('.').pop()!.replace('[*]'
 /** A term in a few words; `nameOf` turns an entity, group or set id into its
  *  name. */
 export function describeTerm(term: Term, nameOf: (kind: TermKind, value: string) => string): string {
+  if (term.measure) return `${term.op === '!' ? 'less ' : ''}${fieldLabel(term.field ?? '')}, by score`;
   const what = term.kind === 'value' ? fieldLabel(term.field ?? '')
     : term.kind === 'entity' ? '' : term.kind;
   const op = term.kind === 'entity' && term.op === '=' ? '' : OP_GLYPH[term.op];

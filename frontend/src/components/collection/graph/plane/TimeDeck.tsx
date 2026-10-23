@@ -50,12 +50,51 @@ import { useThemeVersion, resolveVarToRgba } from '@/lib/theme/cssColor';
 import { hexToRgba } from './channels';
 import { usePlane } from './CosmosPlane';
 import { declutter, labelWidth, type LabelCandidate } from './declutter';
+import type { Field } from './fields';
 import type { Presence } from './presence';
 import type { Inset } from './PlaneAnchors';
+import { heightOf, surfaceGrid, towardField, type Ground, type Span } from './surface';
 import {
   DECK_DEFAULTS, cutAlpha, deckChange, deckCrossings, deckExtent, deckSlices, sliceAlpha,
   type DeckData,
 } from './deck';
+
+/** One piece of the ground's wireframe: along x within a slice, or from a
+ *  slice into the next; with the quad it closes, where all four corners are
+ *  ground. Slice coordinates; z is the deck's to give. */
+interface GroundSeg {
+  ax: number; ay: number; ka: number;
+  bx: number; by: number; kb: number;
+  /** The weight there, 0…1 — how bright. */
+  w: number;
+  quad?: [number, number, number][];
+}
+
+/** The ground as wireframe pieces, grouped by the slice they start in. */
+function groundSegments(g: Ground, span: Span): GroundSeg[][] {
+  const out: GroundSeg[][] = Array.from({ length: g.rows }, () => []);
+  const step = (g.x1 - g.x0) / Math.max(1, g.cols - 1);
+  const at = (r: number, c: number) => g.height[r * g.cols + c];
+  for (let r = 0; r < g.rows; r++) {
+    for (let c = 0; c < g.cols; c++) {
+      const h = at(r, c);
+      if (Number.isNaN(h)) continue;
+      const x = g.x0 + c * step, y = heightOf(h, span);
+      const right = c + 1 < g.cols ? at(r, c + 1) : NaN;
+      const next = r + 1 < g.rows ? at(r + 1, c) : NaN;
+      if (!Number.isNaN(right)) {
+        const seg: GroundSeg = { ax: x, ay: y, ka: r, bx: x + step, by: heightOf(right, span), kb: r, w: (h + right) / 2 };
+        const diag = r + 1 < g.rows ? at(r + 1, c + 1) : NaN;
+        if (!Number.isNaN(next) && !Number.isNaN(diag)) {
+          seg.quad = [[x, y, r], [x + step, seg.by, r], [x + step, heightOf(diag, span), r + 1], [x, heightOf(next, span), r + 1]];
+        }
+        out[r].push(seg);
+      }
+      if (!Number.isNaN(next)) out[r].push({ ax: x, ay: y, ka: r, bx: x, by: heightOf(next, span), kb: r + 1, w: (h + next) / 2 });
+    }
+  }
+  return out;
+}
 
 export interface TimeDeckProps {
   /** When each node is there (`presenceOf`); its cells are the slices. */
@@ -86,6 +125,11 @@ export interface TimeDeckProps {
   inset?: Inset;
   /** Anchors, as pillars through the slices, in their set's hue. */
   anchors?: ReadonlyArray<{ id: string; x: number; y: number; hue?: string }>;
+  /** A field drawn as ground (`surface.ts`): its height is the value, through
+   *  every slice, and the nodes rise toward it by `rise` (0…1). Exact
+   *  values draw as a wireframe; an `approximate` field — a meaning — as a
+   *  lattice of points, so a reader never takes one for the other. */
+  surface?: { field: Field; hue: string; rise: number; approximate?: boolean } | null;
   /** Cut the deck at one instant of the present, named by its slice — null:
    *  no cut. */
   slicer?: { label: (slice: number) => string } | null;
@@ -166,7 +210,19 @@ export function TimeDeck(props: TimeDeckProps) {
 
   // ── What the frame is drawn from — refs, so travelling never re-renders ──
   const s = useRef({
+    /** The layout, as the plane runs it. */
+    raw: null as Float32Array | null,
+    /** What is drawn: the layout, each node risen toward its value. */
     positions: null as Float32Array | null,
+    /** How far the nodes have risen, eased toward the surface's `rise`. */
+    rise: 0,
+    /** The field the nodes rise toward — kept while they settle back after
+     *  the surface goes. */
+    liftField: null as Field | null,
+    ground: {
+      key: '', field: null as Field | null, presence: null as Presence | null,
+      grid: null as Ground | null, segs: [] as GroundSeg[][], span: null as Span | null,
+    },
     posVersion: 0,
     target: [0, 0] as [number, number],
     zoom: 0,
@@ -244,8 +300,8 @@ export function TimeDeck(props: TimeDeckProps) {
   /** The plate: where everything drawn lies, as the layout stands. */
   const plateNow = () => {
     const d = dataRef.current;
-    if (s.positions && (s.plate.version !== s.posVersion || s.plate.data !== d)) {
-      s.plate = { version: s.posVersion, data: d, box: deckExtent(s.positions, d.drawn) };
+    if (s.raw && (s.plate.version !== s.posVersion || s.plate.data !== d)) {
+      s.plate = { version: s.posVersion, data: d, box: deckExtent(s.raw, d.drawn) };
     }
     return s.plate.box;
   };
@@ -290,6 +346,79 @@ export function TimeDeck(props: TimeDeckProps) {
       s.change = { k, data: d, onset, quiet, loud };
     }
     return s.change;
+  };
+
+  // ── The ground ────────────────────────────────────────────────────────────
+  /** Where a field's 0 and 1 lie: the plate's floor and its top. */
+  const spanNow = (): Span | null => {
+    const box = plateNow();
+    return box ? { lo: box[1], hi: box[3] } : null;
+  };
+  /** The drawn positions: the layout, each node risen toward its value. */
+  const relift = () => {
+    const field = latest.current.surface?.field ?? s.liftField;
+    s.liftField = field;
+    const span = spanNow();
+    s.positions = field && span && s.rise > 0.001 && s.raw ? towardField(s.raw, field, span, s.rise) : s.raw;
+  };
+  /** The terrain for the field as it stands, measured from what is drawn. */
+  const groundNow = () => {
+    const sf = latest.current.surface;
+    const box = plateNow();
+    if (!sf || !box || !s.positions) return null;
+    const presence = latest.current.presence;
+    const key = `${s.posVersion}`;
+    if (s.ground.key !== key || s.ground.field !== sf.field || s.ground.presence !== presence) {
+      const grid = surfaceGrid(s.positions, sf.field, presence, box[0], box[2]);
+      const span = spanNow()!;
+      s.ground = { key, field: sf.field, presence, grid, segs: groundSegments(grid, span), span };
+    }
+    return s.ground;
+  };
+  const groundLayers = (k: number, alpha: number, ground: { key: string; segs: GroundSeg[][] }) => {
+    const M = mods.current!;
+    const sf = latest.current.surface!;
+    const [r, g, b] = hexToRgba(sf.hue);
+    const z = (q: number) => -q * s.depth;
+    const segs = ground.segs[k];
+    const base = [r * 255, g * 255, b * 255];
+    // Ridges read brighter than valleys: the light follows the height.
+    const tone = (w: number, a: number) => [base[0], base[1], base[2], (a + (255 - a) * w) * 0.7];
+    if (sf.approximate) {
+      return [new M.ScatterplotLayer({
+        id: `gd-${k}`,
+        data: segs,
+        opacity: alpha,
+        radiusUnits: 'pixels',
+        getPosition: (q: GroundSeg) => [q.ax, q.ay, z(q.ka)],
+        getRadius: 1.4,
+        getFillColor: (q: GroundSeg) => tone(q.w, 50),
+        updateTriggers: { getPosition: [ground.key, s.depth], getFillColor: [sf.hue] },
+      })];
+    }
+    return [
+      new M.SolidPolygonLayer({
+        id: `gf-${k}`,
+        data: segs.filter((q) => q.quad),
+        _full3d: true,
+        opacity: alpha * 0.35,
+        parameters: { depthWriteEnabled: false },
+        getPolygon: (q: GroundSeg) => q.quad!.map(([x, y, kk]) => [x, y, z(kk)]),
+        getFillColor: (q: GroundSeg) => [base[0], base[1], base[2], 10 + 40 * q.w],
+        updateTriggers: { getPolygon: [ground.key, s.depth], getFillColor: [sf.hue] },
+      }),
+      new M.LineLayer({
+        id: `gl-${k}`,
+        data: segs,
+        opacity: alpha,
+        getSourcePosition: (q: GroundSeg) => [q.ax, q.ay, z(q.ka)],
+        getTargetPosition: (q: GroundSeg) => [q.bx, q.by, z(q.kb)],
+        getColor: (q: GroundSeg) => tone(q.w, 40),
+        getWidth: (q: GroundSeg) => (q.ka === q.kb ? 1.1 : 0.6),
+        widthUnits: 'pixels',
+        updateTriggers: { getSourcePosition: [ground.key, s.depth], getTargetPosition: [ground.key, s.depth], getColor: [sf.hue] },
+      }),
+    ];
   };
 
   // ── Drawing ───────────────────────────────────────────────────────────────
@@ -351,6 +480,9 @@ export function TimeDeck(props: TimeDeckProps) {
           updateTriggers: { getSourcePosition: triggers, getTargetPosition: triggers, getColor: triggers },
         }));
       }
+      // The ground: the field's terrain at this time, and its run into the next.
+      const ground = groundNow();
+      if (ground && ground.segs[k]?.length) out.push(...groundLayers(k, alpha, ground));
       // Streams: links whose ends never meet in time, across the depth.
       if (d.streams[k].length) {
         out.push(new M.LineLayer({
@@ -678,9 +810,19 @@ export function TimeDeck(props: TimeDeckProps) {
       const cutGap = cutGoal - s.cut;
       s.cut = Math.abs(cutGap) < 0.002 ? cutGoal : s.cut + cutGap * 0.16;
       s.depth = depthOf();
+      // The nodes rise toward the ground — or settle back — as the weight
+      // moves, eased like travel, so the change reads as motion.
+      const riseGoal = latest.current.surface?.rise ?? 0;
+      const riseGap = riseGoal - s.rise;
+      const fieldNow = latest.current.surface?.field ?? null;
+      if (riseGap !== 0 || (fieldNow && fieldNow !== s.liftField)) {
+        s.rise = Math.abs(riseGap) < 0.002 ? riseGoal : s.rise + riseGap * 0.16;
+        relift();
+        s.posVersion++;
+      }
       d.setProps({ views: viewOf(mods.current!), viewState: viewState(), layers: layers() });
       s.listeners.forEach((fn) => fn());
-      if (s.front !== goal || s.cut !== cutGoal) draw();
+      if (s.front !== goal || s.cut !== cutGoal || s.rise !== riseGoal) draw();
     });
   }
 
@@ -765,8 +907,9 @@ export function TimeDeck(props: TimeDeckProps) {
     if (!graph) return;
     const live = graph.getPointPositions();
     if (!live.length) return;
-    s.positions = Float32Array.from(live);
+    s.raw = Float32Array.from(live);
     s.posVersion++;
+    relift();
     if (!s.framed) frame();
     else draw();
   }

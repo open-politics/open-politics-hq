@@ -568,6 +568,22 @@ describe('anchors', () => {
     const k = lane.clusters[ann]!, own = tl.arrangement.clusters[ann]!;
     expect(lane.clusterPositions[2 * k]).toBe(tl.arrangement.clusterPositions[2 * own]);   // its time
     expect(lane.clusterPositions[2 * k + 1]).toBe(300);                                    // the lane's height
+
+    // Along a field: each node goes to its own value's height in its column;
+    // a node without a basis is not pulled.
+    const field = new Float32Array(net.size).fill(NaN);
+    field[ann] = 1;
+    field[meet] = 0;
+    const along = { field, axis: 'y' as const, range: 'unit' as const, lo: 0, hi: -400 };
+    const valued = withAnchors(tl.arrangement, view, [{ gain: 0, direct: [ann, meet, net.index.get('bob')!], related: [], space: 'time', x: 0, y: 0, along }]);
+    const ka = valued.clusters[ann]!, km = valued.clusters[meet]!;
+    expect(valued.clusterPositions[2 * ka]).toBe(tl.arrangement.clusterPositions[2 * own]);
+    expect(valued.clusterPositions[2 * ka + 1]).toBe(-400);
+    expect(valued.clusterPositions[2 * km + 1]).toBe(0);
+    expect(valued.clusters[net.index.get('bob')!]).toBe(tl.arrangement.clusters[net.index.get('bob')!]);
+    // Placed along a field in the free space, the forces leave it to the drawing.
+    expect(withAnchors(byGroups(net, () => -1), view, [{ gain: 0, direct: [ann], related: [], space: 'free', x: 0, y: 0, along }]).clusters[ann])
+      .toBe(byGroups(net, () => -1).clusters[ann]);
   });
 });
 
