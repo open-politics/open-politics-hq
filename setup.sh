@@ -1887,6 +1887,9 @@ services:
     <<: *host_net
     environment: *searxng_url
 
+  celery_worker_logic:
+    <<: *host_net
+
   celery_beat:
     <<: *host_net
 

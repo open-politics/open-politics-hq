@@ -52,9 +52,9 @@ celery = Celery(
 # llm: language detection, quality scoring, annotation (LLM API rate limits)
 # embedding: embed_task, entity similarity (embedding API limits)
 # external_api: geocoding, OCR (external API limits)
-# logic: decisions (a decision backend commonly serves one request at a time,
-#        so its work queues here instead of contending on the llm pool; split it
-#        onto a dedicated worker with --concurrency=1 when a consumer needs that)
+# logic: decisions — its own --concurrency=1 worker (celery_worker_logic): a
+#        decision backend commonly serves one request at a time, and on the
+#        shared pool judging waited behind hours-long annotation batches
 CELERY_TASK_QUEUES = (
     Queue('default'),
     Queue('processing'),

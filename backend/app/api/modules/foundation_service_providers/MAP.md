@@ -209,11 +209,12 @@
      one request   one state, many questions        the dialect's unit
      one task run  judge_many                       Semaphore(quirks.parallel),
                                                     the width the ENDPOINT serves
-     across runs   queue="logic"                    celery_worker's -Q list
+     across runs   queue="logic"                    celery_worker_logic, -Q logic,
+                                                    --concurrency=1
 
-   A backend that answers one request at a time says so with parallel=1. When a
-   consumer starts blocking the shared pool, split the queue onto its own worker
-   (--concurrency=1), the way celery_worker_processing already does for ingest.
+   A backend that answers one request at a time says so with parallel=1. The
+   queue has its own worker since the resolver judged behind annotation batches
+   on the shared pool — the split celery_worker_processing made for ingest.
 ```
 
 ## Add an endpoint

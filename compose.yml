@@ -98,11 +98,11 @@ services:
       redis: { condition: service_healthy }
     env_file:
       - .env
-    # -Q matters: heavy content work has its own pool below, so this one keeps the
-    # interactive and LLM queues responsive during long ingests.
+    # -Q matters: heavy content work and decisions have their own pools below, so
+    # this one keeps the interactive and LLM queues responsive during long ingests.
     command: ["celery", "-A", "app.core.celery_app.celery", "worker", "--loglevel=info",
               "-P", "prefork", "--concurrency=${CELERY_CONCURRENCY:-4}",
-              "-Q", "default,llm,embedding,external_api,logic"]
+              "-Q", "default,llm,embedding,external_api"]
     volumes:
       - ./HQ.yml:/app/HQ.yml:ro
       # Starter content, read on first boot. Path is deployment.starter.documents.
@@ -134,6 +134,29 @@ services:
       # Starter content, read on first boot. Path is deployment.starter.documents.
       - ./.github/seed:/app/seed:ro
       - ${LOCAL_STORAGE_HOST_PATH:-./.store/local_fs}:${LOCAL_STORAGE_BASE_PATH:-/data/storage}
+    # Source bind is dev-only (compose.override.yml).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  celery_worker_logic:
+    image: '${DOCKER_IMAGE_BACKEND:-backend:latest}'
+    build:
+      context: ./backend
+      args:
+        INSTALL_DEV: ${INSTALL_DEV-false}
+    restart: always
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    env_file:
+      - .env
+    # Decisions only. A decision endpoint answers one request at a time (its width
+    # is the `parallel` quirk), and an annotation batch can hold an llm slot for two
+    # hours — on the shared pool the resolver waited behind it. One process.
+    command: ["celery", "-A", "app.core.celery_app.celery", "worker", "--loglevel=info",
+              "-P", "prefork", "--concurrency=1", "-Q", "logic"]
+    volumes:
+      - ./HQ.yml:/app/HQ.yml:ro
     # Source bind is dev-only (compose.override.yml).
     extra_hosts:
       - "host.docker.internal:host-gateway"

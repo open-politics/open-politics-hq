@@ -36,6 +36,12 @@ services:
       - ./backend/:/app
       - ./HQ.yml:/app/HQ.yml:ro
 
+  celery_worker_logic:
+    restart: "no"
+    volumes:
+      - ./backend/:/app
+      - ./HQ.yml:/app/HQ.yml:ro
+
   celery_beat:
     restart: "no"
     volumes:
