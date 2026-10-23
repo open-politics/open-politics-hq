@@ -1,76 +1,37 @@
 """
-Redis advisory lock for flow execution.
+Exclusive holds across workers on one named thing — an annotation run, a flow
+execution.
 
-Prevents concurrent execution of the same flow across workers.
-Uses a shared connection pool to avoid exhausting Redis connections.
+Both are ``lease``s (``core.tasks``): held by the slot heartbeat, so a worker
+that dies frees its hold within ``SLOT_TTL``. They used to be fixed 30-minute
+locks, which a killed process held for the full half hour — long enough for the
+redelivered task to find it taken, back off, and leave the run sitting.
 """
 
-import contextlib
-import logging
-from typing import Generator
+from contextlib import AbstractContextManager
 
-import redis
-
-from app.core.config import settings
-
-logger = logging.getLogger(__name__)
-
-_redis_pool: redis.ConnectionPool | None = None
+from app.core.redis import get_redis
+from app.core.tasks import lease
 
 
-def _get_redis_client():
-    """Get Redis client from shared connection pool."""
-    global _redis_pool
-    if _redis_pool is None:
-        _redis_pool = redis.ConnectionPool.from_url(
-            settings.redis_url, decode_responses=True, max_connections=20
-        )
-    return redis.Redis(connection_pool=_redis_pool)
+def run_lease_key(run_id: int) -> str:
+    return f"annotation_run:{run_id}"
 
 
-@contextlib.contextmanager
-def flow_execution_lock(flow_id: int) -> Generator[bool, None, None]:
-    """
-    Acquire an advisory lock for flow execution.
-    Yields True if lock acquired, False if another execution holds it.
+def annotation_run_lock(run_id: int) -> AbstractContextManager[bool]:
+    """Hold an annotation run for one batch. Yields whether we got it."""
+    return lease(get_redis(), run_lease_key(run_id))
 
-    TTL set to 30 minutes — matches annotation_run_lock, so a crashed worker's
-    lock self-heals. Long-running flows that exceed 30 min should either be
-    chunked via self_chain or periodically refresh the lock.
-    """
-    client = _get_redis_client()
-    lock_key = f"flow_exec:{flow_id}"
-    lock = client.lock(lock_key, timeout=1800, blocking=False)  # 30 min
-    acquired = lock.acquire()
+
+def flow_execution_lock(flow_id: int) -> AbstractContextManager[bool]:
+    """Hold a flow execution while it steps. Yields whether we got it."""
+    return lease(get_redis(), f"flow_exec:{flow_id}")
+
+
+def run_is_held(run_id: int) -> bool:
+    """Is a worker holding this run right now? True when Redis cannot say, so
+    nothing takes a run back from a worker it simply could not see."""
     try:
-        yield acquired
-    finally:
-        if acquired:
-            try:
-                lock.release()
-            except Exception as e:
-                logger.warning(f"Flow lock release failed for flow {flow_id}: {e}")
-
-
-@contextlib.contextmanager
-def annotation_run_lock(run_id: int) -> Generator[bool, None, None]:
-    """
-    Acquire an advisory lock for annotation run processing.
-    Yields True if lock acquired, False if another execution holds it.
-
-    TTL set to 30 minutes — long enough for one chunk's worth of LLM calls
-    (chunk_size=50) but short enough that a crashed worker's lock self-heals.
-    Chunked self-chains re-acquire the lock at each chunk boundary.
-    """
-    client = _get_redis_client()
-    lock_key = f"annotation_run:{run_id}"
-    lock = client.lock(lock_key, timeout=1800, blocking=False)  # 30 min
-    acquired = lock.acquire()
-    try:
-        yield acquired
-    finally:
-        if acquired:
-            try:
-                lock.release()
-            except Exception as e:
-                logger.warning(f"Annotation run lock release failed for run {run_id}: {e}")
+        return bool(get_redis().exists(run_lease_key(run_id)))
+    except Exception:
+        return True

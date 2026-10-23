@@ -20,7 +20,7 @@ annotation and providers at once.
                                                             │
                                      AnnotationRun(live=True, source_bundle_id=↑)
                                                             │
-                          live_runs (120s) re-pends ──▶ process_annotation_run
+                     reconcile_runs (120s) re-pends ──▶ process_annotation_run
                                                             │
                                             resolve("language", "llamacpp")
                                                             ▼
@@ -56,7 +56,7 @@ cannot be used to argue about it.
 
 NOT IN THIS FILE
     templates.py     the contract this seeds; the lens is not ours to invent.
-    reconcile.py     ``live_runs`` — the heartbeat that re-pends the run.
+    reconcile.py     ``reconcile_runs`` — the heartbeat that re-pends the run.
     source_monitoring.py  ``source_polling`` — the heartbeat that polls feeds.
 """
 
@@ -674,7 +674,7 @@ def reset(infospace_id: int, run_id: int) -> dict[str, int]:
             cfg = dict(run.configuration or {})
             cfg.pop(WATERMARK_KEY, None)   # the stream cursor, now pointing past nothing
             run.configuration = cfg
-            run.status = RunStatus.COMPLETED   # caught up; live_runs re-pends on arrival
+            run.status = RunStatus.COMPLETED   # caught up; reconcile_runs re-pends on arrival
             run.progress_total = None
             run.progress_current = 0
             session.add(run)

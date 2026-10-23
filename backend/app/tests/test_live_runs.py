@@ -1,10 +1,12 @@
-"""Live runs — the streaming delta + in-place extend.
+"""Live runs — the streaming delta, in-place extend, and the reconciler.
 
 Covers the load-bearing new logic without touching the LLM engine:
   * ``_delta_query`` resolves a bundle's **subtree** (the sub-bundle fix),
   * the watermark gates the delta (only ids above it),
   * the coverage anti-join skips pairs this run has already done,
-  * ``extend_run`` grows a run **in place** (no child) and re-pends it.
+  * ``extend_run`` grows a run **in place** (no child) and re-pends it,
+  * ``reconcile`` hands back an orphaned RUNNING run, re-dispatches a quiet
+    PENDING one (one-offs included), re-pends a live run with new content.
 """
 from __future__ import annotations
 
@@ -268,3 +270,77 @@ def test_extend_run_grows_in_place(db):
     assert a2 in (refreshed.configuration or {}).get("target_asset_ids", [])
     assert WATERMARK_KEY not in (refreshed.configuration or {}), "watermark reset on extend"
     assert sid in [s.id for s in refreshed.target_schemas]
+
+
+# ─── reconcile ───────────────────────────────────────────────────────────────
+
+
+def _run_in(db, iid: int, uid: int, status: RunStatus, *, quiet_minutes: int = 0,
+            live: bool = False, source_bundle_id=None) -> AnnotationRun:
+    from datetime import datetime, timedelta, timezone
+
+    run = AnnotationRun(
+        name=f"r-{status.value}", infospace_id=iid, user_id=uid, status=status,
+        live=live, source_bundle_id=source_bundle_id,
+        updated_at=datetime.now(timezone.utc) - timedelta(minutes=quiet_minutes),
+    )
+    db.add(run)
+    db.flush()
+    return run
+
+
+def test_reconcile_hands_back_a_running_run_no_worker_holds(db):
+    """A worker died mid-batch: its lease lapsed, the status still says RUNNING."""
+    from app.api.modules.annotation.tasks.reconcile import reconcile
+
+    uid = _user(db, "rec_running")
+    iid = _infospace(db, uid, "rec_running")
+    run = _run_in(db, iid, uid, RunStatus.RUNNING)
+
+    assert reconcile(db, run, held=True) is None, "a held run is a worker's — leave it"
+    assert run.status == RunStatus.RUNNING
+    assert reconcile(db, run, held=False) == "reclaimed"
+    assert run.status == RunStatus.PENDING
+
+
+def test_reconcile_dispatches_a_quiet_pending_run_one_offs_included(db):
+    """The regression: only live runs were ever re-dispatched, so a one-off
+    whose chain died sat "waiting for a worker" until something else ran."""
+    from app.api.modules.annotation.tasks.reconcile import QUIET_AFTER, reconcile
+
+    uid = _user(db, "rec_pending")
+    iid = _infospace(db, uid, "rec_pending")
+    fresh = _run_in(db, iid, uid, RunStatus.PENDING)
+    quiet = _run_in(db, iid, uid, RunStatus.PENDING,
+                    quiet_minutes=int(QUIET_AFTER.total_seconds() // 60) + 1)
+
+    assert reconcile(db, fresh, held=False) is None, "just queued — give it a moment"
+    assert reconcile(db, fresh, held=False, force=True) == "dispatched", "asked: no waiting"
+    assert reconcile(db, quiet, held=False) == "dispatched"
+    assert not quiet.live
+
+
+def test_reconcile_repends_a_live_run_only_for_new_content(db):
+    from app.api.modules.annotation.tasks.reconcile import reconcile
+
+    uid = _user(db, "rec_live")
+    iid = _infospace(db, uid, "rec_live")
+    bundle = _bundle(db, iid, uid, "watched")
+    first = _asset(db, iid, uid, "first", [bundle])
+    run = _run_in(db, iid, uid, RunStatus.COMPLETED, live=True, source_bundle_id=bundle)
+    run.configuration = {WATERMARK_KEY: first}
+
+    assert reconcile(db, run, held=False) is None, "caught up — nothing above the watermark"
+    _asset(db, iid, uid, "second", [bundle])
+    assert reconcile(db, run, held=False) == "repended"
+    assert run.status == RunStatus.PENDING and run.progress_total is None
+
+
+def test_reconcile_leaves_a_finished_one_off_alone(db):
+    from app.api.modules.annotation.tasks.reconcile import reconcile
+
+    uid = _user(db, "rec_done")
+    iid = _infospace(db, uid, "rec_done")
+    run = _run_in(db, iid, uid, RunStatus.COMPLETED)
+    assert reconcile(db, run, held=False, force=True) is None
+    assert run.status == RunStatus.COMPLETED

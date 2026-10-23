@@ -25,6 +25,7 @@ from app.core.tasks import (
     _slot_prefix,
     acquire_slot,
     count_occupied_slots,
+    lease,
     refresh_slot,
     release_slot,
     slot_held,
@@ -417,6 +418,45 @@ class TestSlotHeartbeat:
         """No Redis is not a reason to refuse work — it is a reason not to count."""
         with slot_held(None, "anything", 1, 4) as admitted:
             assert admitted is True
+
+
+class TestLease:
+    """A slot of one, by name — what holds a run or a flow execution."""
+
+    KEY = "lease_probe:990001"
+
+    @pytest.fixture
+    def r(self):
+        import app.core.tasks as tasks_mod
+
+        r = tasks_mod._get_redis()
+        if r is None:
+            pytest.skip("Redis unavailable")
+        r.delete(self.KEY)
+        yield r
+        r.delete(self.KEY)
+
+    def test_exclusive_while_held_and_free_after(self, r):
+        """The regression: the run lock was a fixed 30-minute TTL, so a killed
+        worker held its run for half an hour."""
+        with lease(r, self.KEY) as mine:
+            assert mine is True
+            assert r.ttl(self.KEY) <= SLOT_TTL
+            with lease(r, self.KEY) as theirs:
+                assert theirs is False
+            assert r.exists(self.KEY), "a refused lease must not free the holder's key"
+        assert not r.exists(self.KEY)
+
+    def test_exit_releases_even_when_the_body_raises(self, r):
+        with pytest.raises(RuntimeError):
+            with lease(r, self.KEY):
+                raise RuntimeError("boom")
+        assert not r.exists(self.KEY)
+
+    def test_a_lapsed_lease_is_not_freed_by_its_old_holder(self, r):
+        with lease(r, self.KEY):
+            r.set(self.KEY, "someone-else")  # it lapsed, and was taken
+        assert r.get(self.KEY) == "someone-else"
 
     def test_beat_interval_leaves_headroom(self):
         assert SLOT_HEARTBEAT < SLOT_TTL / 2, "one missed beat must not lose the slot"

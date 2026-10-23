@@ -523,6 +523,44 @@ def slot_held(r, task_name: str, infospace_id: int,
         yield False
         return
 
+    with _held(r, f"{_slot_prefix(task_name, infospace_id)}:{slot}", token):
+        yield True
+
+
+@contextmanager
+def lease(r, key: str) -> Iterator[bool]:
+    """Hold one named key exclusively for the block — a slot of one, for a
+    single thing (a run, a flow execution) rather than one of N per task.
+
+    .. code-block:: text
+
+        no Redis      ──► True   nothing to exclude with
+        key taken     ──► True   refreshed every SLOT_HEARTBEAT until the block ends
+        already held  ──► False  someone else has it
+
+    Held by the same heartbeat as a slot, so a worker that dies frees it within
+    ``SLOT_TTL`` instead of whenever a long fixed TTL runs out.
+    """
+    if r is None:
+        yield True
+        return
+
+    token = uuid.uuid4().hex
+    if not r.set(key, token, nx=True, ex=SLOT_TTL):
+        yield False
+        return
+
+    with _held(r, key, token):
+        yield True
+
+
+@contextmanager
+def _held(r, key: str, token: str) -> Iterator[None]:
+    """Keep *key* ours while the block runs: refreshed every ``SLOT_HEARTBEAT``,
+    released in a ``finally`` — so an orderly exit, including
+    ``SoftTimeLimitExceeded`` (raised in this thread), frees it at once. Both
+    refresh and release are compare-and-act against *token*, so a stalled
+    heartbeat can never extend or free a key that is no longer ours."""
     stop = threading.Event()
 
     def _beat() -> None:
@@ -530,31 +568,28 @@ def slot_held(r, task_name: str, infospace_id: int,
         # up by a sleep that has just started.
         while not stop.wait(SLOT_HEARTBEAT):
             try:
-                if not refresh_slot(r, task_name, infospace_id, slot, token):
+                if not r.eval(_REFRESH_SLOT_LUA, 1, key, token, SLOT_TTL):
                     logger.warning(
-                        "Slot %s:%d lost while %s was still running — its TTL "
-                        "lapsed and another invocation took the index. The task "
-                        "continues; concurrency may briefly exceed %d.",
-                        _slot_prefix(task_name, infospace_id), slot, task_name,
-                        max_concurrency,
+                        "%s lost while its holder was still running — its TTL "
+                        "lapsed and someone else took it. The holder continues.",
+                        key,
                     )
                     return
             except Exception as e:
-                # A Redis blip must not kill the task it is only accounting for.
-                logger.debug("Slot heartbeat for %s failed: %s", task_name, e)
+                # A Redis blip must not kill the work it is only accounting for.
+                logger.debug("Heartbeat for %s failed: %s", key, e)
 
-    beat = threading.Thread(target=_beat, name=f"slot-hb:{task_name}:{slot}",
-                            daemon=True)
+    beat = threading.Thread(target=_beat, name=f"hb:{key}", daemon=True)
     beat.start()
     try:
-        yield True
+        yield
     finally:
         stop.set()
         beat.join(timeout=5)
         try:
-            release_slot(r, task_name, infospace_id, slot, token)
+            r.eval(_RELEASE_SLOT_LUA, 1, key, token)
         except Exception as e:
-            logger.debug("Slot release for %s failed (it will expire): %s", task_name, e)
+            logger.debug("Release of %s failed (it will expire): %s", key, e)
 
 
 def count_occupied_slots(r, task_name: str, infospace_id: int, max_concurrency: int) -> int:

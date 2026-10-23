@@ -1,7 +1,8 @@
 """
 Shared Redis client for task infrastructure.
 
-Reuses the connection pool from redis_lock.py to avoid exhausting connections.
+One connection pool for the task machinery and the run/flow leases
+(``redis_lock.py``), so they cannot exhaust connections between them.
 """
 
 import redis as _redis
