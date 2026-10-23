@@ -36,11 +36,16 @@ import {
 interface EmbeddingStats {
   total_assets: number;
   documents: number;
+  /** Documents meaning reaches — a vector on their own or a part's chunk. */
+  embedded_documents: number;
   sub_assets: number;
   total_chunks: number;
   embedded_chunks: number;
+  /** Of documents, not chunks. */
   coverage_percentage: number;
   models_used: Record<string, number>;
+  /** The stored vectors' dimension. */
+  dimension: number | null;
 }
 
 interface EmbeddingManagerProps {
@@ -103,12 +108,14 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
       const response = await EmbeddingsService.getEmbeddingStats({ infospaceId: infospace.id });
       setStats({
         total_assets: response.total_assets,
-        documents: (response as any).documents ?? response.total_assets,
-        sub_assets: (response as any).sub_assets ?? 0,
+        documents: response.documents,
+        embedded_documents: response.embedded_documents,
+        sub_assets: response.sub_assets,
         total_chunks: response.total_chunks,
         embedded_chunks: response.embedded_chunks,
         coverage_percentage: response.coverage_percentage,
-        models_used: response.models_used as Record<string, number>
+        models_used: response.models_used as Record<string, number>,
+        dimension: response.dimension ?? null,
       });
     } catch (error: any) {
       console.error('Failed to load embedding stats:', error);
@@ -200,7 +207,7 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
     try {
       await EmbeddingsService.clearInfospaceEmbeddings({ infospaceId: infospace.id });
       toast.success('Embeddings cleared');
-      setStats(s => s ? { ...s, total_chunks: 0, embedded_chunks: 0, coverage_percentage: 0, models_used: {} } : null);
+      setStats(s => s ? { ...s, embedded_documents: 0, total_chunks: 0, embedded_chunks: 0, coverage_percentage: 0, models_used: {}, dimension: null } : null);
       setTimeout(() => loadStats(), 500);
     } catch (error: any) {
       toast.error(`Failed: ${error?.body?.detail || error?.message || 'Unknown error'}`);
@@ -250,7 +257,8 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
   // --- Dimension selector logic ---
   const activeModel = findModel(pinned);
   const nativeDim = activeModel?.dimension;
-  const currentDim = embeddingSel?.dimension || nativeDim;
+  // The catalog may not know a model's dimension; the stored vectors do.
+  const currentDim = embeddingSel?.dimension || nativeDim || stats?.dimension;
   const SUPPORTED_DIMS = [384, 512, 768, 1024, 1536, 2048];
   const eligibleDims = nativeDim ? SUPPORTED_DIMS.filter(d => d <= nativeDim) : currentDim ? [currentDim] : [];
 
@@ -340,10 +348,13 @@ export default function EmbeddingManager({ infospace, onInfospaceUpdate }: Embed
             <div className="space-y-1">
               <Progress value={stats.coverage_percentage} className="h-1" />
               <div className="flex items-center gap-2 text-[11px] text-muted-foreground flex-wrap">
-                <span className="font-medium text-foreground">{stats.coverage_percentage.toFixed(0)}%</span>
-                <span>{stats.documents.toLocaleString()} docs</span>
-                <span>{stats.total_chunks.toLocaleString()} chunks</span>
-                <span>{stats.embedded_chunks.toLocaleString()} embedded</span>
+                <span className="font-medium text-foreground">
+                  {stats.coverage_percentage < 1 && stats.embedded_documents > 0 ? '<1' : stats.coverage_percentage.toFixed(0)}%
+                </span>
+                <span>{stats.embedded_documents.toLocaleString()} of {stats.documents.toLocaleString()} docs</span>
+                <span title="Chunks with a vector, of the chunks made so far">
+                  {stats.embedded_chunks.toLocaleString()} of {stats.total_chunks.toLocaleString()} chunks
+                </span>
               </div>
             </div>
           )}

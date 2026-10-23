@@ -310,6 +310,35 @@ class AssetChunk(SQLModel, table=True):
     )
 
 
+# ─── Text vectors ───
+
+class TextVector(SQLModel, table=True):
+    """A text's vector under one model, kept so the text is embedded once.
+
+    ``embed_texts`` reads these before it asks a provider and writes what it had
+    to ask for — a phrase searched again, a label every run shares. Keyed by the
+    text's sha256, not the text. Per infospace: the trust boundary, and deleting
+    one clears its vectors.
+    """
+    __tablename__ = "text_vector"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    infospace_id: int = Field(sa_column=Column(sa.Integer, sa.ForeignKey("infospace.id", ondelete="CASCADE"), nullable=False))
+    embedding_model_id: int = Field(sa_column=Column(sa.Integer, sa.ForeignKey("embeddingmodel.id", ondelete="CASCADE"), nullable=False))
+    digest: str
+    embedding_384: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(384)))
+    embedding_512: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(512)))
+    embedding_768: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(768)))
+    embedding_1024: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(1024)))
+    embedding_1536: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(1536)))
+    embedding_2048: Optional[List[float]] = Field(default=None, sa_column=Column(Vector(2048)))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (
+        UniqueConstraint("infospace_id", "embedding_model_id", "digest"),
+    )
+
+
 # ─── Datasets ───
 
 class Dataset(SQLModel, table=True):

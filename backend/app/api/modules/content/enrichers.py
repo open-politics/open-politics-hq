@@ -17,7 +17,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Callable, Generator, Optional
 
-from sqlalchemy import literal_column, text, update, exists
+from sqlalchemy import column, exists, literal_column, table, text, union_all, update
 from sqlmodel import Session, select
 
 from app.api.modules.content.contexts import EnrichmentContext
@@ -48,7 +48,10 @@ def retry_enrichment(session: Session, asset_id: int, enricher_name: str):
 
 # ── @enricher decorator ───────────────────────────────────────────────────────
 
-def _enrichment_dispatch_filter(enricher_name: str, capability: str | None = None):
+def enrichment_gate(enricher_name: str, capability: str | None = None):
+    """Whether an enricher runs in an infospace: enabled there (or by the
+    deployment's default), and its capability reachable. Also gates work that
+    fills in alongside an enricher, like label vectors beside document chunks."""
     def _filter(infospace) -> bool:
         from app.api.modules.foundation_service_providers import (
             EnrichmentConfig, enricher_enabled,
@@ -129,7 +132,7 @@ def enricher(
         check=enricher_check,
         context_cls=_EnrichmentContextFactory,
         capability=capability,
-        dispatch_filter=_enrichment_dispatch_filter(name, capability),
+        dispatch_filter=enrichment_gate(name, capability),
         triggers=triggers,
         **defaults,
     )
@@ -486,10 +489,29 @@ def enrich_quality_score(ctx: EnrichmentContext, asset_ids: list[int]):
     emit("asset.enriched", {"enricher_name": "quality_score", "infospace_id": ctx.infospace_id})
 
 
+_annotation = table("annotation", column("asset_id"))
+
+
+def _annotated_first(q):
+    """Documents a run has read come first, then their parts, then the rest:
+    they are what a reader asks about by meaning.
+
+    Three branches, each led by its own side — the annotations, then every
+    asset — so the limit stops each early. Sorting every candidate by "was
+    it read" would rank all of them first: 20 s on 686k assets. An id may come
+    twice where a branch ends; the batch reads it once.
+    """
+    q = q.where(Asset.text_content.isnot(None))
+    read = select(_annotation.c.asset_id).distinct().subquery("read")
+    return union_all(
+        q.join(read, read.c.asset_id == Asset.id),
+        q.join(read, read.c.asset_id == Asset.parent_asset_id),
+        q,
+    )
+
+
 @enricher("embedding",
-          check=lambda q: q.where(
-              Asset.text_content.isnot(None),
-          ),
+          check=_annotated_first,
           capability="embedding",
           depends_on="ocr", batch=20, queue="embedding", timeout=1800,
           max_concurrency=1, self_chain=True,

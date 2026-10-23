@@ -1,2 +1,2 @@
 """Graph domain task registration. Imported by celery_app.py."""
-from app.api.modules.graph.tasks import curation, decide, maintenance, proposals
+from app.api.modules.graph.tasks import curation, decide, labels, maintenance, proposals

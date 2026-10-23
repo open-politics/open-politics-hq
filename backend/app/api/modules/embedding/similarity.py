@@ -1,14 +1,23 @@
 """
-Flat semantic-search primitives over AssetChunk.
+Flat semantic primitives over AssetChunk.
 
-- ``similarity_search(query_vector, embedding_model_id)`` — pure pgvector SQL.
-  No provider resolution, no embedding work. Caller passes a vector that's
-  already sized to the model's dimension (Matryoshka truncation applied
-  upstream).
+- ``weigh(text)`` — how close every embedded document in scope is to a meaning:
+  its best chunk's similarity, scored exactly. What AQL's ``~`` thresholds or
+  ranks; complete, so neither stops at a top-k.
 
-- ``search_by_text(query_text)`` — convenience: embed the query via
-  ``embed.embed_texts`` using the infospace's configured model (or an explicit
-  ``embedding_model_id``), then call ``similarity_search``.
+- ``similarity_search(query_vector, embedding_model_id)`` — the nearest chunks,
+  pure pgvector SQL. No provider resolution, no embedding work. Caller passes a
+  vector that's already sized to the model's dimension (Matryoshka truncation
+  applied upstream).
+
+- ``search_by_text(query_text)`` — the nearest chunks to a phrase, for callers
+  that want passages (RAG, MCP).
+
+A phrase is compared only with chunks of the model it was embedded with: both
+``weigh`` and ``search_by_text`` embed it once per model the infospace's
+chunks are in (``models_in``), never with whatever the infospace is configured
+to embed new documents with — after a model switch the old chunks stay
+readable until they are embedded again.
 
 ``ChunkHit`` is the result shape — same attribute surface as the old
 ``SearchResult``, so MCP/RAG consumers don't need restructuring.
@@ -21,9 +30,9 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import text as sa_text
-from sqlmodel import Session
+from sqlmodel import Session, select
 
-from app.models import Asset, AssetChunk, AssetKind, Infospace
+from app.models import Asset, AssetChunk, AssetKind, EmbeddingModel
 from app.api.modules.content.models import (
     EMBEDDING_SUPPORTED_DIMS,
     get_embedding_column_for_dimension,
@@ -74,6 +83,119 @@ class ChunkHit:
         }
 
 
+def _vec(v: List[float]) -> str:
+    return "[" + ",".join(str(x) for x in v) + "]"
+
+
+def _scope_sql(
+    params: Dict[str, Any],
+    *,
+    asset_kinds: Optional[List[AssetKind]] = None,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    bundle_id: Optional[int] = None,
+    parent_asset_id: Optional[int] = None,
+    scope: Optional[PackageScope] = None,
+) -> str:
+    """The ``AND …`` narrowing the documents ``a`` a search reads, its binds
+    added to *params*. Empty when nothing narrows."""
+    where: List[str] = []
+    if asset_kinds:
+        where.append("a.kind = ANY(:asset_kinds)")
+        params["asset_kinds"] = [k.value for k in asset_kinds]
+    if date_from:
+        where.append("a.created_at >= :date_from")
+        params["date_from"] = date_from
+    if date_to:
+        where.append("a.created_at <= :date_to")
+        params["date_to"] = date_to
+    if bundle_id is not None:
+        where.append("a.bundle_ids @> ARRAY[:bundle_id]::int[]")
+        params["bundle_id"] = bundle_id
+    if parent_asset_id is not None:
+        where.append("a.parent_asset_id = :parent_asset_id")
+        params["parent_asset_id"] = parent_asset_id
+
+    if scope is not None:
+        scope_parts: List[str] = []
+        if scope.bundle_ids:
+            scope_parts.append("a.bundle_ids && CAST(:scope_bids AS int[])")
+            params["scope_bids"] = list(scope.bundle_ids)
+        if scope.asset_ids:
+            scope_parts.append("a.id = ANY(:scope_aids)")
+            params["scope_aids"] = list(scope.asset_ids)
+        if scope.run_ids:
+            scope_parts.append(
+                "a.id IN (SELECT DISTINCT asset_id FROM annotation WHERE run_id = ANY(:scope_rids))"
+            )
+            params["scope_rids"] = list(scope.run_ids)
+        if scope_parts:
+            where.append("(" + " OR ".join(scope_parts) + ")")
+        else:
+            where.append("FALSE")
+
+    return " AND " + " AND ".join(where) if where else ""
+
+
+def models_in(session: Session, infospace_id: int) -> List[EmbeddingModel]:
+    """The models an infospace's chunks are embedded with — what a phrase must be
+    embedded with to be compared with them."""
+    used = (
+        select(AssetChunk.id)
+        .join(Asset, Asset.id == AssetChunk.asset_id)
+        .where(AssetChunk.embedding_model_id == EmbeddingModel.id)
+        .where(Asset.infospace_id == infospace_id)
+        .exists()
+    )
+    return list(session.exec(select(EmbeddingModel).where(used)).all())
+
+
+async def weigh(
+    session: Session,
+    infospace_id: int,
+    text: str,
+    *,
+    asset_kinds: Optional[List[AssetKind]] = None,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    bundle_id: Optional[int] = None,
+    parent_asset_id: Optional[int] = None,
+    scope: Optional[PackageScope] = None,
+) -> Dict[int, float]:
+    """How close every embedded document in scope is to *text*: asset id → its
+    best chunk's cosine similarity.
+
+    Scored exactly — no index, no top-k — so whatever thresholds or ranks the
+    result sees every document. Each model the infospace's chunks are in reads
+    its own chunks with the phrase embedded by that model; a document with
+    chunks under two (mid-switch) keeps its best.
+    """
+    params: Dict[str, Any] = {"infospace_id": infospace_id}
+    extra_sql = _scope_sql(
+        params, asset_kinds=asset_kinds, date_from=date_from, date_to=date_to,
+        bundle_id=bundle_id, parent_asset_id=parent_asset_id, scope=scope,
+    )
+    out: Dict[int, float] = {}
+    for em in models_in(session, infospace_id):
+        col = get_embedding_column_for_dimension(em.dimension)
+        assert col, f"chunks under {em.name} at an unsupported dimension {em.dimension}"
+        (vector,), _ = await embed_texts(session, infospace_id, [text], embedding_model_id=em.id)
+        rows = session.execute(sa_text(f"""
+            SELECT c.asset_id, max(1 - (c.{col} <=> CAST(:query_vec AS vector))) AS similarity
+            FROM assetchunk c
+            JOIN asset a ON c.asset_id = a.id
+            WHERE a.infospace_id = :infospace_id
+              AND c.embedding_model_id = :embedding_model_id
+              AND c.{col} IS NOT NULL
+              {extra_sql}
+            GROUP BY c.asset_id
+        """), {**params, "query_vec": _vec(vector), "embedding_model_id": em.id}).all()
+        for asset_id, similarity in rows:
+            if asset_id not in out or similarity > out[asset_id]:
+                out[asset_id] = float(similarity)
+    return out
+
+
 async def similarity_search(
     session: Session,
     infospace_id: int,
@@ -114,50 +236,16 @@ async def similarity_search(
         raise ValueError(
             f"query_vector has {len(query_vector)} dims but model expects {dim}"
         )
-    vec_str = "[" + ",".join(str(x) for x in query_vector) + "]"
-
-    extra_where: List[str] = []
     params: Dict[str, Any] = {
-        "query_vec": vec_str,
+        "query_vec": _vec(query_vector),
         "infospace_id": infospace_id,
         "embedding_model_id": embedding_model_id,
         "limit": limit,
     }
-    if asset_kinds:
-        extra_where.append("a.kind = ANY(:asset_kinds)")
-        params["asset_kinds"] = [k.value for k in asset_kinds]
-    if date_from:
-        extra_where.append("a.created_at >= :date_from")
-        params["date_from"] = date_from
-    if date_to:
-        extra_where.append("a.created_at <= :date_to")
-        params["date_to"] = date_to
-    if bundle_id is not None:
-        extra_where.append("a.bundle_ids @> ARRAY[:bundle_id]::int[]")
-        params["bundle_id"] = bundle_id
-    if parent_asset_id is not None:
-        extra_where.append("a.parent_asset_id = :parent_asset_id")
-        params["parent_asset_id"] = parent_asset_id
-
-    if scope is not None:
-        scope_parts: List[str] = []
-        if scope.bundle_ids:
-            scope_parts.append("a.bundle_ids && CAST(:scope_bids AS int[])")
-            params["scope_bids"] = list(scope.bundle_ids)
-        if scope.asset_ids:
-            scope_parts.append("a.id = ANY(:scope_aids)")
-            params["scope_aids"] = list(scope.asset_ids)
-        if scope.run_ids:
-            scope_parts.append(
-                "a.id IN (SELECT DISTINCT asset_id FROM annotation WHERE run_id = ANY(:scope_rids))"
-            )
-            params["scope_rids"] = list(scope.run_ids)
-        if scope_parts:
-            extra_where.append("(" + " OR ".join(scope_parts) + ")")
-        else:
-            extra_where.append("FALSE")
-
-    extra_sql = " AND " + " AND ".join(extra_where) if extra_where else ""
+    extra_sql = _scope_sql(
+        params, asset_kinds=asset_kinds, date_from=date_from, date_to=date_to,
+        bundle_id=bundle_id, parent_asset_id=parent_asset_id, scope=scope,
+    )
     sql = sa_text(f"""
         SELECT c.id as chunk_id, c.asset_id, a.id as asset_id,
                (c.{col_name} <=> CAST(:query_vec AS vector)) as distance
@@ -209,21 +297,28 @@ async def search_by_text(
     parent_asset_id: Optional[int] = None,
     scope: Optional[PackageScope] = None,
 ) -> List[ChunkHit]:
-    """Embed ``query_text`` via the infospace's configured model, then search."""
-    vectors, em = await embed_texts(
-        session, infospace_id, [query_text],
-        runtime_key=runtime_key,
-        embedding_model_id=embedding_model_id,
-    )
-    if not vectors:
-        return []
-    return await similarity_search(
-        session, infospace_id, vectors[0], em.id,
-        limit=limit,
-        distance_threshold=distance_threshold,
-        distance_function=distance_function,
-        asset_kinds=asset_kinds,
-        date_from=date_from, date_to=date_to,
-        bundle_id=bundle_id, parent_asset_id=parent_asset_id,
-        scope=scope,
-    )
+    """The *limit* chunks nearest ``query_text`` — under ``embedding_model_id``,
+    else under every model the infospace's chunks are in, the phrase embedded by
+    each."""
+    model_ids = [embedding_model_id] if embedding_model_id is not None else [
+        em.id for em in models_in(session, infospace_id)
+    ]
+    hits: List[ChunkHit] = []
+    for model_id in model_ids:
+        (vector,), _ = await embed_texts(
+            session, infospace_id, [query_text],
+            runtime_key=runtime_key,
+            embedding_model_id=model_id,
+        )
+        hits += await similarity_search(
+            session, infospace_id, vector, model_id,
+            limit=limit,
+            distance_threshold=distance_threshold,
+            distance_function=distance_function,
+            asset_kinds=asset_kinds,
+            date_from=date_from, date_to=date_to,
+            bundle_id=bundle_id, parent_asset_id=parent_asset_id,
+            scope=scope,
+        )
+    hits.sort(key=lambda h: h.similarity, reverse=True)
+    return hits[:limit]

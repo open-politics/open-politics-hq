@@ -23,7 +23,8 @@ import re
 from datetime import datetime
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from sqlalchemy import and_, bindparam, case, or_, column as sa_column, func, text
+from sqlalchemy import Integer, and_, any_, bindparam, case, or_, column as sa_column, func, text
+from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from sqlmodel import Session, select
 
 from app.api.modules.content.facets import build_facet_filter
@@ -95,10 +96,9 @@ class AssetQuery:
         # Compound OR — DNF sub-queries, one per top-level OR group. Empty for a
         # simple query. _where() ORs them; resolve() resolves each. See from_aql.
         self._groups: List["AssetQuery"] = []
-        # Subtree-expanded bundle/asset scope to pre-filter the semantic vector
-        # search by. Set by from_aql / search hints; passed to search_by_text in
-        # resolve() so a bundle-scoped ~semantic search keeps recall inside the scope
-        # (the pre-filter is applied in SQL, not as a post-filter that starves top-k).
+        # Subtree-expanded bundle/asset scope the semantic clause weighs within.
+        # Set by from_aql / search hints; passed to weigh in resolve() so a
+        # bundle-scoped ~semantic clause ranks and thresholds inside the scope.
         self._semantic_scope = None
 
     # ─── Text search ───
@@ -186,7 +186,10 @@ class AssetQuery:
         threshold: Optional[float] = None,
         threshold_op: Optional[str] = None,
     ) -> AssetQuery:
-        """Add semantic similarity filter via pgvector.
+        """Keep the documents close to *query_text* in meaning: every one past a
+        ``>``/``>=`` threshold, every one short of a ``<``/``<=`` threshold, or —
+        with none — the *top_k* closest. Scored exactly over the scope
+        (``similarity.weigh``), so a threshold never stops at a top-k.
 
         Credentials follow the infospace owner (ROADMAP invariant #6) — no BYOK
         at this layer. Call `similarity.search_by_text` directly if runtime_key
@@ -779,38 +782,34 @@ class AssetQuery:
             except Exception as e:
                 logger.warning("Entity semantic search failed: %s", e)
 
-        # ── Asset semantic: embed query → search AssetChunk via pgvector ──
+        # ── Asset semantic: every document in scope weighed, then thresholded ──
         if self._semantic_query:
             try:
-                from app.api.modules.embedding.similarity import search_by_text
+                from app.api.modules.embedding.similarity import weigh
 
-                # Convert similarity threshold → distance threshold for cosine
-                dist_threshold = None
-                if self._semantic_threshold is not None and self._semantic_threshold_op in ('>', '>='):
-                    dist_threshold = 1.0 - self._semantic_threshold
-
-                hits = await search_by_text(
+                similarity = await weigh(
                     self.session, self.infospace_id, self._semantic_query,
-                    limit=self._semantic_top_k,
                     asset_kinds=self._kinds if self._kinds else None,
                     bundle_id=self._bundle_id,
                     scope=self._semantic_scope,
-                    distance_threshold=dist_threshold,
                 )
+                t, op = self._semantic_threshold, self._semantic_threshold_op
+                if t is not None and op in ('>', '>='):
+                    kept = {a: s for a, s in similarity.items() if s >= t}
+                elif t is not None and op in ('<', '<='):
+                    kept = {a: s for a, s in similarity.items() if s < t}
+                else:
+                    kept = dict(sorted(similarity.items(), key=lambda kv: kv[1], reverse=True)[:self._semantic_top_k])
+                self._semantic_scores.update(kept)
 
-                # For < / <= threshold, post-filter: keep only results below threshold
-                if self._semantic_threshold is not None and self._semantic_threshold_op in ('<', '<='):
-                    max_sim = self._semantic_threshold
-                    hits = [h for h in hits if h.similarity < max_sim]
-
-                # Capture similarity scores per asset (best chunk wins)
-                for h in hits:
-                    self._semantic_scores[h.asset_id] = max(self._semantic_scores.get(h.asset_id, 0), h.similarity)
-
-                asset_ids = list(self._semantic_scores.keys())
-                # No semantic hits → the clause matched nothing. Force empty rather
-                # than short-circuit so count / containers stay consistent.
-                self._conditions.append(Asset.id.in_(asset_ids) if asset_ids else text("FALSE"))
+                # Nothing kept → the clause matched nothing. Force empty rather
+                # than short-circuit so count / containers stay consistent. One
+                # array bind: a complete threshold can keep more documents than
+                # a statement has parameters.
+                self._conditions.append(
+                    Asset.id == any_(bindparam("semantic_ids", list(kept), type_=PG_ARRAY(Integer), unique=True))
+                    if kept else text("FALSE")
+                )
             except Exception as e:
                 logger.warning("Semantic search failed: %s", e)
 

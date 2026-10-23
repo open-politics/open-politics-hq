@@ -41,11 +41,13 @@ class EmbeddingStatsResponse(BaseModel):
     """Response with embedding statistics."""
     total_assets: int
     documents: int  # top-level assets (parent_asset_id IS NULL) with text
+    embedded_documents: int  # of those, with a vector on their own or a part's chunk
     sub_assets: int  # child assets with text
     total_chunks: int
     embedded_chunks: int
-    coverage_percentage: float
+    coverage_percentage: float  # embedded_documents / documents
     models_used: dict
+    dimension: Optional[int] = None  # the stored vectors', by the most used model
 
 
 # ======================== HELPERS ========================
@@ -130,7 +132,7 @@ async def get_embedding_stats(
     # Stats are infospace-wide aggregates — not meaningful for scoped access
     if access.scope:
         return EmbeddingStatsResponse(
-            total_assets=0, documents=0, sub_assets=0,
+            total_assets=0, documents=0, embedded_documents=0, sub_assets=0,
             total_chunks=0, embedded_chunks=0, coverage_percentage=0.0, models_used={},
         )
     infospace_id = access.infospace_id
