@@ -42,15 +42,16 @@ _RUNNING = "(annotationrun.graph_config::jsonb -> 'resolution' ->> 'running')::b
 
 
 def _runs_to_seed(infospace_id: int):
-    """Runs with the resolver on whose newest annotation is newer than the
-    watermark their pairs were found at."""
+    """Runs with the resolver on whose annotations changed since the watermark
+    their pairs were found at — new rows or values filled in place, both move
+    ``seq``, the run's change clock."""
     return (
         select(AnnotationRun.id)
         .where(AnnotationRun.infospace_id == infospace_id)
         .where(text(_RUNNING))
         .where(text("""
             COALESCE((annotationrun.graph_config::jsonb -> 'resolution' ->> 'seeded_watermark')::bigint, 0)
-            < COALESCE((SELECT max(a.id) FROM annotation a WHERE a.run_id = annotationrun.id), 0)
+            < COALESCE((SELECT max(a.seq) FROM annotation a WHERE a.run_id = annotationrun.id), 0)
         """))
     )
 
@@ -105,18 +106,6 @@ def seed_entity_decisions(ctx: TaskContext, run_ids: list[int]):
             judge_now(added)
 
 
-@task(
-    "judge_entity_decisions",
-    check=_pending,
-    batch=5,
-    queue="logic",
-    max_concurrency=1,
-    self_chain=True,
-    capability="logic",
-    timeout=900,
-    schedule=60,
-    tags=frozenset({"graph", "resolver", "resolver-judge"}),
-)
 def _group(session, row: EntityDecision) -> list[EntityDecision]:
     """The pending rows asked together with *row* — or *row* alone, for a
     pair filed before groups."""
@@ -130,6 +119,18 @@ def _group(session, row: EntityDecision) -> list[EntityDecision]:
     ).all())
 
 
+@task(
+    "judge_entity_decisions",
+    check=_pending,
+    batch=5,
+    queue="logic",
+    max_concurrency=1,
+    self_chain=True,
+    capability="logic",
+    timeout=900,
+    schedule=60,
+    tags=frozenset({"graph", "resolver", "resolver-judge"}),
+)
 def judge_entity_decisions(ctx: TaskContext, ids: list[int]):
     judge = ctx.provider("logic")
     for decision_id in ids:

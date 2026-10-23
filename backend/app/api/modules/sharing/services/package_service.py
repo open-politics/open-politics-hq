@@ -1959,7 +1959,8 @@ class PackageImporter:
             AnnotationSchema.infospace_id == self.target_infospace_id,
             AnnotationSchema.name == schema_name,
             AnnotationSchema.version == schema_version,
-            AnnotationSchema.is_active == True
+            AnnotationSchema.is_active == True,
+            AnnotationSchema.draft_of.is_(None),
         ).first()
         
         if existing_schema_by_name and conflict_strategy == 'skip':
@@ -2752,8 +2753,10 @@ class PackageService:
                 except Exception as e:
                     logger.error(f"Failed to package Source {ds.id}: {e}", exc_info=True)
 
+        # Drafts and trial runs are a run's work in progress (``annotation/drafts.py``),
+        # not the infospace's: they do not travel.
         if include_schemas and infospace.schemas:
-            for schema_item in infospace.schemas:
+            for schema_item in (s for s in infospace.schemas if s.draft_of is None):
                 try:
                     schema_package = await builder.build_annotation_schema_package(schema_item)
                     infospace_package_content["annotation_schemas_content"].append(schema_package.content)
@@ -2761,7 +2764,7 @@ class PackageService:
                     logger.error(f"Failed to package AnnotationSchema {schema_item.id}: {e}", exc_info=True)
 
         if include_runs and infospace.runs:
-            for run_item in infospace.runs:
+            for run_item in (r for r in infospace.runs if r.trial_of is None):
                 try:
                     run_package = await builder.build_annotation_run_package(
                         run_item,

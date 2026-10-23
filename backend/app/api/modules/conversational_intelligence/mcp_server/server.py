@@ -2954,8 +2954,11 @@ async def _analysis_update_schema(
             if legacy_configs is not None:
                 updates["output_contract"] = _lift_configs_into_contract(base_contract, legacy_configs)
 
+        from app.api.modules.annotation.revisions import CONTRACT_FIELDS, revise
+        revise(session, schema, updates)
         for field, value in updates.items():
-            setattr(schema, field, value)
+            if field not in CONTRACT_FIELDS:
+                setattr(schema, field, value)
         schema.updated_at = datetime.now(timezone.utc)
         session.add(schema)
         session.commit()
@@ -4188,7 +4191,8 @@ async def _analysis_list_runs(
 
     await ctx.info(f"Listing runs (schema_id={schema_id}, status={status}, name={name})")
     
-    query_conditions = [AnnotationRun.infospace_id == services["infospace_id"]]
+    # Trial runs are a draft's, not the infospace's (``annotation/drafts.py``).
+    query_conditions = [AnnotationRun.infospace_id == services["infospace_id"], AnnotationRun.trial_of.is_(None)]
     
     if schema_id:
         from app.models import annotation_run_schema_association
@@ -4196,7 +4200,7 @@ async def _analysis_list_runs(
             select(AnnotationRun)
             .join(annotation_run_schema_association)
             .where(annotation_run_schema_association.c.schema_id == schema_id)
-            .where(AnnotationRun.infospace_id == services["infospace_id"])
+            .where(and_(*query_conditions))
         )
     else:
         query = select(AnnotationRun).where(and_(*query_conditions))

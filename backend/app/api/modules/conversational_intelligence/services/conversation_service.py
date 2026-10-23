@@ -150,6 +150,7 @@ class IntelligenceConversationService:
             select(AnnotationSchema)
             .where(AnnotationSchema.infospace_id == infospace_id)
             .where(AnnotationSchema.is_active == True)
+            .where(AnnotationSchema.draft_of.is_(None))
         ).all()
 
         bundles = self.session.exec(

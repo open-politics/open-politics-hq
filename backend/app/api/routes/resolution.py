@@ -104,6 +104,14 @@ def _run(session: Session, access: Access, run_id: int) -> AnnotationRun:
     return run
 
 
+def _resolvable(run: AnnotationRun) -> AnnotationRun:
+    """A trial run's reads try a draft (``annotation/drafts.py``); deciding
+    about them, least of all into the canon it borrows, is not theirs to do."""
+    if run.trial_of is not None:
+        raise HTTPException(status_code=400, detail="A trial run's reads are not resolved.")
+    return run
+
+
 def _state(session: Session, run: AnnotationRun) -> ResolverState:
     s = dec.settings_of(run)
     counts = dict(session.exec(
@@ -132,7 +140,7 @@ def patch_resolver(
     *, run_id: int, body: ResolverPatch, access: Access = Requires(Capability.ORGANIZE, scope=None),
 ) -> Any:
     with Session(engine) as session:
-        run = _run(session, access, run_id)
+        run = _resolvable(_run(session, access, run_id))
         patch = body.model_dump(exclude_none=True)
         if patch.get("scope") == "canon" and dec.canon_for(run, session) is None:
             raise HTTPException(status_code=422, detail="This run has no canon to write decisions into.")
@@ -233,7 +241,7 @@ def merge_labels(
     """Labels a person picked, merged into one — each a decision like the
     model's, in the history and rolled back the same way."""
     with Session(engine) as session:
-        run = _run(session, access, run_id)
+        run = _resolvable(_run(session, access, run_id))
         settings = dec.settings_of(run)
         canon_id = dec.canon_for(run, session) if settings.scope == "canon" else None
         rows = dec.merge_by_hand(
