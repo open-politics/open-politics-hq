@@ -351,6 +351,7 @@ class AnnotationService:
             select(AnnotationSchema)
             .where(AnnotationSchema.infospace_id == infospace_id)
             .where(AnnotationSchema.is_active == True)
+            .where(AnnotationSchema.draft_of.is_(None))
         ).all()
         return list(schemas)
     
@@ -513,150 +514,59 @@ class AnnotationService:
             ValueError: If validation fails
         """
         logger.info(f"Service: Retrying single annotation {annotation_id}")
-        
-        # Get and validate annotation
+
         annotation = self.session.get(Annotation, annotation_id)
-        if not annotation:
-            raise ValueError(f"Annotation with ID {annotation_id} not found")
-        if annotation.infospace_id != infospace_id:
-            raise ValueError(f"Annotation with ID {annotation_id} does not belong to infospace {infospace_id}")
-        
-        # Get related entities
+        if not annotation or annotation.infospace_id != infospace_id:
+            raise ValueError(f"Annotation with ID {annotation_id} not found in infospace {infospace_id}")
         asset = self.session.get(Asset, annotation.asset_id)
         schema = self.session.get(AnnotationSchema, annotation.schema_id)
-        run = self.session.get(AnnotationRun, annotation.run_id) if annotation.run_id else None
-        
-        if not asset or not schema:
-            raise ValueError(f"Related asset or schema not found for annotation {annotation_id}")
-        
-        # Prepare retry configuration
-        run_config = run.configuration if run else {}
-        
-        # Handle custom prompt if provided
-        original_instructions = schema.instructions or ""
-        final_instructions = original_instructions
-        
+        run = self.session.get(AnnotationRun, annotation.run_id)
+        if not asset or not schema or not run:
+            raise ValueError(f"Related asset, schema or run not found for annotation {annotation_id}")
+
+        # The guidance is for this retry only, after what the researcher wrote.
+        instructions = schema.instructions or ""
         if custom_prompt:
-            if original_instructions:
-                final_instructions = f"{original_instructions}\n\n--- Additional Guidance for this Retry ---\n{custom_prompt}"
-            else:
-                final_instructions = f"--- Custom Instructions ---\n{custom_prompt}"
-        
-        # Create a temporary schema info for processing
-        from app.api.modules.annotation.tasks.annotate import (
-            validate_hierarchical_schema, 
-            detect_schema_structure,
-            process_single_asset_schema
-        )
-        from app.core.task_utils import create_pydantic_model_from_json_schema
-        from app.core.config import settings
-        import asyncio
-        
+            instructions = (
+                f"{instructions}\n\n--- Additional Guidance for this Retry ---\n{custom_prompt}"
+                if instructions else f"--- Custom Instructions ---\n{custom_prompt}"
+            )
+
+        from app.api.modules.annotation.plan import language_for, prepare
+        from app.api.modules.annotation.tasks.annotate import process_single_asset_schema
+        from app.core.task_utils import run_async_in_celery
+        from app.core.tasks import cached_resolve
+
+        async def reread():
+            # Read the way the run read its siblings: its model (or the saved
+            # default it ran on), its contract, its canon bindings.
+            language = language_for(self.session, run)
+            return await process_single_asset_schema(
+                asset=asset,
+                plan=prepare(self.session, run, schema, language, instructions=instructions),
+                run=run,
+                run_config=run.configuration or {},
+                provider=language,
+                storage_provider_instance=cached_resolve("storage"),
+                session=self.session,
+            )
+
         try:
-            # Validate schema structure
-            if not validate_hierarchical_schema(schema.output_contract):
-                raise ValueError(f"Schema {schema.id} has invalid hierarchical structure")
-            
-            schema_structure = detect_schema_structure(schema.output_contract)
-            
-            # Create output model
-            OutputModelClass = create_pydantic_model_from_json_schema(
-                model_name=f"RetryOutput_{schema.name.replace(' ', '_')}_{schema.id}_{annotation_id}",
-                json_schema=schema.output_contract,
-                justifications_enabled=run_config.get("justifications_enabled", True),
-            )
-            
-            if not OutputModelClass.model_fields:
-                raise ValueError(f"Schema {schema.id} resulted in empty model")
-            
-            # Add system mapping prompt for per-modality fields if needed
-            if schema_structure.get("per_modality_fields"):
-                system_mapping_prompt = (
-                    "\n\n--- System Data Mapping Instructions ---\n"
-                    "For each item you generate that corresponds to a specific media input (e.g., an item in a 'per_image' list, 'per_audio' list, etc.), "
-                    "you MUST include a field named '_system_asset_source_uuid'. "
-                    "The value of this '_system_asset_source_uuid' field MUST be the exact UUID string that was provided to you in the input prompt for that specific media item. "
-                    "This is critical for correctly associating your analysis with the source media."
-                )
-                final_instructions += system_mapping_prompt
-            
-            schema_info = {
-                "schema": schema,
-                "schema_structure": schema_structure,
-                "output_model_class": OutputModelClass,
-                "final_instructions": final_instructions
-            }
-            
-            # Create a minimal run context for this retry
-            retry_run = run if run else AnnotationRun(
-                id=0,  # Temporary ID for processing
-                infospace_id=infospace_id,
-                user_id=user_id,
-                configuration=run_config
-            )
-            
-            # Run the async processing
-            from app.core.task_utils import run_async_in_celery
-
-            # Define the complete async workflow to avoid event loop conflicts
-            async def complete_retry_workflow():
-                from app.api.modules.foundation_service_providers import resolve
-
-                fresh_storage_provider_instance = resolve("storage")
-
-                run_cfg = run_config or {}
-                type_key = run_cfg.get("provider") or run_cfg.get("ai_provider")
-                runtime_api_keys = run_cfg.get("api_keys")
-                runtime_key = (runtime_api_keys or {}).get(type_key) if type_key else None
-                provider = resolve("language", type_key, infospace_id=retry_run.infospace_id, runtime_key=runtime_key) if type_key else None
-
-                return await process_single_asset_schema(
-                    asset=asset,
-                    schema_info=schema_info,
-                    run=retry_run,
-                    run_config=run_config,
-                    provider=provider,
-                    storage_provider_instance=fresh_storage_provider_instance,
-                    session=self.session
-                )
-            
-            result = run_async_in_celery(complete_retry_workflow)
-            
+            result = run_async_in_celery(reread)
             if not result.get("success"):
-                error_msg = result.get("error", "Unknown error during retry")
-                raise ValueError(f"Retry failed: {error_msg}")
-            
-            # Delete the old annotation and add the new one
-            self.session.delete(annotation)
-            
-            new_annotations = result.get("annotations", [])
+                raise ValueError(f"Retry failed: {result.get('error') or 'unknown error'}")
+            new_annotations = result.get("annotations") or []
             if not new_annotations:
                 raise ValueError("Retry succeeded but no new annotations were created")
-            
-            # Take the first annotation (should be the main one for this asset)
+
+            self.session.delete(annotation)
             new_annotation = new_annotations[0]
-            
-            # Ensure it has the same run_id as the original if applicable
-            if run:
-                new_annotation.run_id = run.id
-            
             self.session.add(new_annotation)
-            
-            # Add any justifications
-            new_justifications = result.get("justifications", [])
-            if new_justifications:
-                # Set annotation_id for justifications after we have the new annotation ID
-                self.session.flush()  # Get the new annotation ID
-                for justification in new_justifications:
-                    justification.annotation_id = new_annotation.id
-                self.session.add_all(new_justifications)
-            
             self.session.commit()
             self.session.refresh(new_annotation)
-            
-            logger.info(f"Service: Successfully retried annotation {annotation_id}, created new annotation {new_annotation.id}")
+            logger.info(f"Service: Retried annotation {annotation_id} as {new_annotation.id}")
             return new_annotation
-            
+
         except Exception as e:
             self.session.rollback()
             logger.error(f"Service: Error retrying annotation {annotation_id}: {e}", exc_info=True)
@@ -839,6 +749,7 @@ class AnnotationService:
             .where(AnnotationSchema.infospace_id == infospace_id)
             .where(AnnotationSchema.name == name)
             .where(AnnotationSchema.version == version)
+            .where(AnnotationSchema.draft_of.is_(None))
         ).first()
 
         if existing_schema:

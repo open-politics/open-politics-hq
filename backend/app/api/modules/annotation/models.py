@@ -6,7 +6,7 @@ import enum
 import uuid
 
 from sqlmodel import SQLModel, Field, Relationship
-from sqlalchemy import Column, Index, JSON, Text, text, UniqueConstraint
+from sqlalchemy import BigInteger, Column, ForeignKey, Index, Integer, JSON, Text, text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.api.modules.identity_infospace_user.models import User, Infospace
@@ -59,6 +59,19 @@ class AnnotationSchema(SQLModel, table=True):
     output_contract: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
     instructions: Optional[str] = Field(default=None, sa_column=Column(Text))
     version: str = Field(default="1.0")
+    # The head: ``output_contract`` and ``instructions`` are this revision. A
+    # contract annotations were made under is never rewritten — revising keeps
+    # the head it replaces as an ``AnnotationSchemaRevision`` (see ``revisions.py``).
+    revision: int = Field(default=1, sa_column_kwargs={"server_default": "1"})
+    # A draft: a schema being revised inside one run, not yet adopted
+    # (``drafts.py``). ``draft_of`` is the schema it would revise, ``draft_in``
+    # the run it is drafted in; it goes with either. Hidden from every list of
+    # schemas, and read only by that run's trial run.
+    draft_of: Optional[int] = Field(default=None, sa_column=Column(
+        "draft_of", Integer, ForeignKey("annotationschema.id", ondelete="CASCADE"), nullable=True,
+        index=True))
+    draft_in: Optional[int] = Field(default=None, sa_column=Column(
+        "draft_in", Integer, ForeignKey("annotationrun.id", ondelete="CASCADE"), nullable=True))
     is_active: bool = Field(default=True, index=True)
     tags: List[str] = Field(default_factory=list, sa_column=Column(JSON))
     infospace_id: int = Field(foreign_key="infospace.id")
@@ -78,17 +91,40 @@ class AnnotationSchema(SQLModel, table=True):
             "ix_unique_active_schema_name_version",
             "infospace_id", "name", "version",
             unique=True,
-            postgresql_where=text("is_active = true")
+            postgresql_where=text("is_active = true AND draft_of IS NULL")
         ),
+        Index("uq_annotationschema_draft", "draft_in", "draft_of", unique=True,
+              postgresql_where=text("draft_of IS NOT NULL")),
     )
+
+
+class AnnotationSchemaRevision(SQLModel, table=True):
+    """A contract a schema has been revised away from — kept, because the
+    annotations made under it still say so (``Annotation.schema_rev``). The
+    head lives on the schema row; this table only ever holds the past."""
+    __tablename__ = "annotation_schema_revision"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    schema_id: int = Field(sa_column=Column(Integer, ForeignKey("annotationschema.id", ondelete="CASCADE"), nullable=False))
+    rev: int
+    output_contract: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON))
+    instructions: Optional[str] = Field(default=None, sa_column=Column(Text))
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    __table_args__ = (UniqueConstraint("schema_id", "rev", name="uq_annotation_schema_revision"),)
 
 
 class RunSchemaLink(SQLModel, table=True):
     run_id: Optional[int] = Field(foreign_key="annotationrun.id", primary_key=True)
     schema_id: Optional[int] = Field(foreign_key="annotationschema.id", primary_key=True)
+    # The revision this run reads through. NULL follows the schema's head; a
+    # number pins the run to that revision while the head moves on.
+    rev: Optional[int] = None
 
 
 class AnnotationRun(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint("trial_of", name="uq_annotationrun_trial_of"),)
+
     id: Optional[int] = Field(default=None, primary_key=True)
     uuid: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True, index=True)
     name: str
@@ -120,7 +156,7 @@ class AnnotationRun(SQLModel, table=True):
     canon_ids: List[int] = Field(default_factory=list, sa_column=Column(JSON))
     follow_on_version_change: bool = Field(default=False, index=True)
     # A live run is never "done" — it cycles PENDING → RUNNING → COMPLETED(idle,
-    # watching) → PENDING as new content lands in its scope. The `live_runs`
+    # watching) → PENDING as new content lands in its scope. The `reconcile_runs`
     # reconciler re-pends it; the streaming delta makes re-pending idempotent.
     live: bool = Field(default=False, index=True)
     # "Resolve into canon" mode: when on (and canon_ids set), curation of this run's
@@ -129,6 +165,11 @@ class AnnotationRun(SQLModel, table=True):
     resolve_into_canon: bool = Field(default=False, index=True)
     progress_total: Optional[int] = Field(default=None)
     progress_current: Optional[int] = Field(default=None)
+    # The run this one tries drafts for (``drafts.py``): it reads a few chosen
+    # assets through the run's drafts, so what a revision would make is seen
+    # before it is adopted. One per run, gone with it, hidden from every list.
+    trial_of: Optional[int] = Field(default=None, sa_column=Column(
+        "trial_of", Integer, ForeignKey("annotationrun.id", ondelete="CASCADE"), nullable=True))
 
     infospace: Optional[Infospace] = Relationship(back_populates="runs")
     user: Optional[User] = Relationship(back_populates="runs")
@@ -157,6 +198,8 @@ class Annotation(SQLModel, table=True):
     user_id: int = Field(foreign_key="user.id")
     value: Dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSONB))
     status: ResultStatus = ResultStatus.SUCCESS
+    # The schema revision whose contract this value was extracted under.
+    schema_rev: int = Field(default=1, sa_column_kwargs={"server_default": "1"})
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     event_timestamp: Optional[datetime] = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -175,6 +218,23 @@ class Annotation(SQLModel, table=True):
         UniqueConstraint("asset_id", "schema_id", "run_id", "uuid"),
         Index("ix_annotation_value", "value", postgresql_using="gin", postgresql_ops={"value": "jsonb_path_ops"}),
     )
+
+
+# ``annotation.seq`` — a run's change clock, maintained by Postgres: taken from
+# ``annotation_seq`` on insert, and again by a trigger whenever ``value``
+# changes, so an annotation filled in place moves it as surely as a new one.
+# ``max(seq)`` over a run is its watermark (the overview's frame, the
+# resolver's seed check). ``max(id)`` was, and missed every in-place change.
+#
+# On the table, deliberately NOT a model field — the same reason as
+# ``CANON_ENTRY_COORDS``: SQLModel sets every field on construction, so a mapped
+# ``seq`` went into every INSERT as an explicit NULL, past the default.
+ANNOTATION_SEQ = Column(
+    "seq", BigInteger, nullable=False,
+    server_default=text("nextval('annotation_seq')"),
+)
+Annotation.__table__.append_column(ANNOTATION_SEQ)
+Index("ix_annotation_run_seq", Annotation.__table__.c.run_id, ANNOTATION_SEQ)
 
 
 class RunAggregate(SQLModel, table=True):

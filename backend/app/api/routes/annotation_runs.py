@@ -28,6 +28,7 @@ from app.schemas import (
     AnnotationRunsOut,
     RunLedgerSummary,
     RunLedgerAssets,
+    RunContinued,
     Message,
     PackageRead,
     CreatePackageFromRunRequest,
@@ -95,7 +96,7 @@ class RunsCountPhase(BaseModel):
     count: int
 
 
-def _run_reads(session, runs: list[AnnotationRun], include_counts: bool) -> list[AnnotationRunRead]:
+def run_reads(session, runs: list[AnnotationRun], include_counts: bool) -> list[AnnotationRunRead]:
     """Runs as read models — with their schema ids, and, when asked, how many
     annotations they hold and how many assets their scope does. Counted for
     all of them at once, so a page of runs costs two counts, not two per run."""
@@ -125,7 +126,7 @@ def _fetch_runs(
     include_counts: bool, live: Optional[bool] = None,
     status: Optional[RunStatus] = None,
 ):
-    """Fetch a page of runs, counted when asked (see ``_run_reads``).
+    """Fetch a page of runs, counted when asked (see ``run_reads``).
 
     One row per run — there is no family tier. A run is a single durable object;
     extension grows it in place and a live run's annotations accumulate on the
@@ -137,9 +138,10 @@ def _fetch_runs(
     Before this the query had no ORDER BY at all, so the page you got was
     whatever order the database felt like returning.
     """
+    # A trial run is its run's, read through the run (``annotation/drafts.py``).
     query = (
         select(AnnotationRun)
-        .where(AnnotationRun.infospace_id == infospace_id)
+        .where(AnnotationRun.infospace_id == infospace_id, AnnotationRun.trial_of.is_(None))
     )
     if live is not None:
         query = query.where(AnnotationRun.live == live)
@@ -150,7 +152,7 @@ def _fetch_runs(
     query = query.offset(skip).limit(limit)
     runs = list(session.exec(query).all())
 
-    return _run_reads(session, runs, include_counts)
+    return run_reads(session, runs, include_counts)
 
 
 @router.get("", response_model=AnnotationRunsOut)
@@ -177,7 +179,7 @@ async def list_runs(
         live, status,
     )
     count_query = select(func.count(AnnotationRun.id)).where(
-        AnnotationRun.infospace_id == infospace_id
+        AnnotationRun.infospace_id == infospace_id, AnnotationRun.trial_of.is_(None)
     )
     # The count must agree with the page, or a filtered list reports a total it
     # is not showing.
@@ -227,7 +229,7 @@ async def list_runs_stream(
 
     try:
         count_query = select(func.count(AnnotationRun.id)).where(
-            AnnotationRun.infospace_id == infospace_id
+            AnnotationRun.infospace_id == infospace_id, AnnotationRun.trial_of.is_(None)
         )
         if live is not None:
             count_query = count_query.where(AnnotationRun.live == live)
@@ -266,7 +268,7 @@ def get_run(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
         access.require_in_scope("run_ids", run_id)
 
-        return _run_reads(session, [run], include_counts)[0]
+        return run_reads(session, [run], include_counts)[0]
 
     except HTTPException as he:
         raise he
@@ -308,6 +310,29 @@ def list_run_assets(
     """One page of the run's queue (in scope, not yet read; in processing
     order) or of its annotated assets (latest first), with the state's total."""
     return ledger.assets(session, _readable_run(session, access, run_id), state, skip=skip, limit=limit)
+
+
+@router.post("/{run_id}/action/continue", response_model=RunContinued)
+def continue_run(
+    *,
+    access: Access = Requires(Capability.COMPUTE, scope=None),
+    run_id: int,
+    session: SessionDep,
+) -> Any:
+    """Get the run moving now, rather than at the reconciler's next pass: the
+    same ``reconcile`` it runs, without the quiet period. Idempotent — a run a
+    worker is on, or one with nothing left, comes back with no verdict."""
+    from app.api.modules.annotation.tasks.reconcile import reconcile
+    from app.core.events import emit
+    from app.core.redis_lock import run_is_held
+
+    run = _readable_run(session, access, run_id)
+    verdict = reconcile(session, run, held=run_is_held(run_id), force=True)
+    if verdict is not None:
+        session.commit()
+        session.refresh(run)
+        emit("annotation_run.created", {"infospace_id": run.infospace_id})
+    return RunContinued(verdict=verdict, run=run_reads(session, [run], include_counts=True)[0])
 
 
 @router.patch("/{run_id}", response_model=AnnotationRunRead)
@@ -412,10 +437,10 @@ def delete_run(
                 detail="Run not found in this infospace"
             )
         
-        # Check if run can be deleted (not in progress)
-        if run.status == RunStatus.RUNNING:
-            raise ValueError("Cannot delete a run that is currently processing. Cancel it first.")
-        
+        # No guard on RUNNING: a run a worker is on stays deletable, as it was
+        # while the main path left it PENDING. Pause will stop the worker first
+        # (docs/plans/run-workbench/PLAN.md §5).
+
         # Human curation is the one child a cascade must never take (see
         # u1_infospace_cascade_delete), so its FK stays NO ACTION and this path
         # clears it deliberately — the same thing delete_infospace does. Without
@@ -487,7 +512,7 @@ def extend_run(
             schema_ids=body.schema_ids,
             configuration_overrides=body.configuration_overrides,
         )
-        return _run_reads(session, [run], include_counts=True)[0]
+        return run_reads(session, [run], include_counts=True)[0]
     except ValueError as e:
         logger.warning(f"Route: Extension rejected for run {run_id}: {e}")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))

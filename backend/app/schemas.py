@@ -471,6 +471,8 @@ class AnnotationSchemaRead(AnnotationSchemaBase):
     field_specific_justification_configs: Optional[Dict[str, FieldJustificationConfig]] = None
     annotation_count: Optional[int] = None
     is_active: bool
+    # The head revision: ``output_contract`` and ``instructions`` are this one.
+    revision: int = 1
 
     @computed_field  # type: ignore[misc]
     @property
@@ -629,6 +631,47 @@ class RunLedgerAssets(SQLModel):
     items: List[RunLedgerAsset]
     total: int
 
+
+class RunContinued(SQLModel):
+    """What asking a run to continue did (`annotation.tasks.reconcile`):
+    handed back from a worker that died, dispatched again, re-pended for new
+    content — or nothing, because it is already moving or has nothing left."""
+    verdict: Optional[Literal["reclaimed", "dispatched", "repended"]] = None
+    run: AnnotationRunRead
+
+class RunSchemaState(SQLModel):
+    """One schema as a run reads it (`annotation/drafts.py`, `revisions.py`)."""
+    schema_id: int
+    name: str
+    reads: int
+    """The revision the run reads through."""
+    head: int
+    pinned: bool
+    """The run keeps to ``reads`` while the head moves on."""
+    outdated: int
+    """The run's annotations made under another revision than ``reads``."""
+    draft: Optional[AnnotationSchemaRead] = None
+    """The run's draft of the schema, if it has one."""
+
+
+class RunSchemas(SQLModel):
+    schemas: List[RunSchemaState]
+    trial: Optional[AnnotationRunRead] = None
+    """The run that reads chosen assets through the drafts, while there are any."""
+
+
+class TrialRequest(SQLModel):
+    asset_ids: List[int] = Field(min_length=1, max_length=50)
+
+
+class DraftAdopted(SQLModel):
+    rev: int
+    """The revision the run reads now."""
+    annotations: int
+    """Trial reads that became the run's."""
+    pinned: int
+    """Other runs kept on the revision they read."""
+
 # ───────────────────────────────────── Annotation Result ──── #
 
 class AnnotationBase(SQLModel):
@@ -655,6 +698,8 @@ class AnnotationRead(AnnotationBase):
     uuid: str
     asset_id: int
     schema_id: int
+    # The schema revision this value was extracted under.
+    schema_rev: int = 1
     run_id: int
     infospace_id: int
     user_id: int

@@ -154,6 +154,11 @@ def _derive_configs_from_contract(
     return out
 
 
+def schema_read(schema: AnnotationSchema) -> AnnotationSchemaRead:
+    """A schema as every route serves it."""
+    return _attach_legacy_configs(AnnotationSchemaRead.model_validate(schema), schema)
+
+
 def _attach_legacy_configs(schema_read: AnnotationSchemaRead, schema: AnnotationSchema) -> AnnotationSchemaRead:
     """Populate the legacy configs block on a Read response from inline flags."""
     schema_read.field_specific_justification_configs = _derive_configs_from_contract(
@@ -276,7 +281,9 @@ def list_annotation_schemas(
     try:
         infospace_id = access.infospace_id
         # Build query for schemas
-        query = select(AnnotationSchema).where(AnnotationSchema.infospace_id == infospace_id)
+        # Drafts are a run's, not the infospace's (``annotation/drafts.py``).
+        query = select(AnnotationSchema).where(
+            AnnotationSchema.infospace_id == infospace_id, AnnotationSchema.draft_of.is_(None))
         query = access.scope_filter(query, AnnotationSchema.id, "schema_ids")
 
         if not include_archived:
@@ -289,7 +296,7 @@ def list_annotation_schemas(
         
         # Get total count
         count_query = select(func.count(AnnotationSchema.id)).where(
-            AnnotationSchema.infospace_id == infospace_id
+            AnnotationSchema.infospace_id == infospace_id, AnnotationSchema.draft_of.is_(None)
         )
         count_query = access.scope_filter(count_query, AnnotationSchema.id, "schema_ids")
         if not include_archived:
@@ -414,8 +421,13 @@ def update_annotation_schema(
                     base_contract, legacy_configs
                 )
 
+        # The contract goes through a revision (the head it replaces is kept for
+        # the annotations made under it); everything else is set in place.
+        from app.api.modules.annotation.revisions import CONTRACT_FIELDS, revise
+        revise(session, schema, update_data)
         for field, value in update_data.items():
-            setattr(schema, field, value)
+            if field not in CONTRACT_FIELDS:
+                setattr(schema, field, value)
 
         schema.updated_at = datetime.now(timezone.utc)
 

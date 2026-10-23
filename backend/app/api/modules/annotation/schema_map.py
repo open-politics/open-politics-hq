@@ -330,6 +330,11 @@ class FieldNode(BaseModel):
     enum: tuple[str, ...] = ()
     """Declared value vocabulary. ``x-entityEnum`` for entities, ``enum``
     otherwise. Present whether or not it is enforced on the wire."""
+    minimum: float | None = None
+    maximum: float | None = None
+    """A number's declared range (``minimum``/``maximum``, on the items for an
+    array of numbers) — the scale its values are read on, so a 9 on a 1–10
+    score means the same thing in every run (`templates.score_field`)."""
     type_constrained: bool = True
     """``x-entityTypeConstrained`` — is the type list enforced as a Literal?"""
     ref_targets: tuple[str, ...] = ()
@@ -523,6 +528,20 @@ def _ext_source(node: dict, shape: FieldShape) -> dict:
     return source if isinstance(source, dict) else {}
 
 
+def _parse_range(node: dict, shape: str) -> dict[str, float]:
+    """A number's declared ``minimum``/``maximum`` — on the node, or on its
+    items for an array of numbers. Only numbers have one."""
+    if shape not in ("number", "array_number"):
+        return {}
+    src = node.get("items") if shape == "array_number" and isinstance(node.get("items"), dict) else node
+    out: dict[str, float] = {}
+    for key in ("minimum", "maximum"):
+        v = src.get(key)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            out[key] = float(v)
+    return out
+
+
 def _parse_enum(node: dict, shape: FieldShape) -> tuple[str, ...]:
     """Declared vocabulary, whichever key carries it for this shape.
 
@@ -614,6 +633,7 @@ def _walk_node(
         entity_type=entity_type,
         alternate_types=alternates,
         enum=_parse_enum(node, shape),
+        **_parse_range(node, shape),
         type_constrained=constrained,
         # ``or node`` is the fallback for a hand-authored contract that put the
         # ref on the array rather than on its items; the adapter and the
@@ -742,7 +762,7 @@ def build_schema_map(output_contract: Any) -> SchemaMap:
     Handles both HQ's hierarchical shape (fields under ``document`` /
     ``per_*``) and the flat shape some older and MCP-authored schemas use —
     the same two layouts ``core.task_utils.split_schema_for_extraction`` and
-    ``annotate.detect_schema_structure`` already accommodate.
+    ``plan.detect_schema_structure`` already accommodate.
 
     Raises :class:`SchemaRefCycleError` if the contract's ``x-ref`` chains loop.
     """

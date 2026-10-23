@@ -150,14 +150,16 @@ def open_scope(
 
 def frame(scope: RunScope) -> dict[str, Any]:
     """Denominators, cheaply. Everything the HUD needs to say *of how many*
-    before a single bucket exists — and the watermark later stages resume from.
+    before a single bucket exists — and the watermark later stages resume from:
+    ``max(seq)``, the run's change clock, which moves for an annotation filled
+    in place as well as for a new one (``max(id)`` missed the first kind).
     """
     clauses, params = scope.query(include_failed=True)._base_where(include_cursor=False)
     row = scope.session.execute(text(f"""
         SELECT count(*) FILTER (WHERE LOWER(a.status::text) <> 'failed') AS ok,
                count(*) FILTER (WHERE LOWER(a.status::text) = 'failed')  AS failed,
                count(DISTINCT a.asset_id) FILTER (WHERE LOWER(a.status::text) <> 'failed') AS assets,
-               max(a.id) AS watermark
+               max(a.seq) AS watermark
         FROM annotation a WHERE {' AND '.join(clauses)}
     """), params).one()
     run = scope.run

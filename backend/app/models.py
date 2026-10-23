@@ -23,11 +23,13 @@ from app.api.modules.content.models import (
     ProcessingStatus,
     Source,
     SourceStatus,
+    TextVector,
 )
 from app.api.modules.annotation.models import (
     Annotation,
     AnnotationRun,
     AnnotationSchema,
+    AnnotationSchemaRevision,
     AnnotationRunTrigger,
     AnnotationSchemaTargetLevel,
     ResultStatus,

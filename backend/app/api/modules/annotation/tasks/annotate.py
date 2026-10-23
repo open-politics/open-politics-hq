@@ -4,7 +4,7 @@ import logging
 from typing import List, Dict, Any, Type, Optional, TYPE_CHECKING, Tuple
 from datetime import datetime, timezone
 from sqlmodel import Session, select
-from sqlalchemy import func, or_, text
+from sqlalchemy import func, or_, text, update
 import asyncio 
 import traceback
 from app.models import (
@@ -21,17 +21,11 @@ from app.models import (
 )
 from app.schemas import AnnotationCreate
 from app.core.db import engine
-from app.api.modules.foundation_service_providers import resolve
-from app.core.task_utils import (
-    create_pydantic_model_from_json_schema,
-    make_python_identifier,
-    run_async_in_celery,
-    split_schema_for_extraction,
-)
+from app.core.task_utils import run_async_in_celery
 from app.core.tasks import TaskContext, cached_resolve, task
 from app.api.modules.foundation_service_providers import GenerationOptions
 from app.core.config import settings
-from app.api.modules.annotation.contract_resolution import resolve_for_annotation_run
+from app.api.modules.annotation.plan import SchemaPlan, SchemaUnusable, language_for, prepare
 from app.api.modules.annotation.schema_map import infer_shape
 from app.api.modules.annotation.ledger import run_scope_clause
 from app.api.modules.content.types import get_content_type_registry
@@ -77,300 +71,6 @@ def _get_image_asset_kinds(process_pdfs_as_images: bool = True) -> frozenset:
         return all_image
     return all_image - {AssetKind.PDF_PAGE, AssetKind.PDF}
 
-
-def validate_hierarchical_schema(output_contract: dict) -> bool:
-    """Validate that hierarchical schema follows conventions"""
-    valid_top_level = {"document", "per_image", "per_audio", "per_video", "per_page"}
-    
-    # Check if it looks like a hierarchical schema first
-    is_hierarchical = any(key.startswith("per_") or key == "document" for key in output_contract.keys())
-    has_only_valid_keys = all(key in valid_top_level for key in output_contract.keys() if key.startswith("per_") or key == "document")
-
-    if not is_hierarchical:
-        return True # Not hierarchical, so it's valid in this context (treated as flat/document-only)
-
-    # If it is hierarchical, all top-level keys must be from the valid set
-    all_keys = set(output_contract.keys())
-    standard_keys_present = {key for key in all_keys if key == "document" or key.startswith("per_")}
-    non_standard_keys = all_keys - standard_keys_present
-
-    if non_standard_keys:
-        logger.warning(f"Schema has mixed hierarchical and potentially flat structure with non-standard keys: {non_standard_keys}. This might be confusing.")
-        return False # Contains non-standard top-level keys alongside hierarchical ones
-        
-    return True
-
-def simplify_schema_for_model(schema: dict, model_name: str, provider_key: str | None = None) -> dict:
-    """
-    Simplify schemas for local/self-hosted models by truncating long descriptions.
-
-    Args:
-        schema: Original JSON schema (in standard JSON schema format with "type" and "properties")
-        model_name: Name of the model being used
-        provider_key: Provider type key (e.g. "ollama", "mistral", "openai")
-
-    Returns:
-        Potentially simplified schema (always in standard JSON schema format, all fields preserved)
-    """
-    # Only simplify for local/self-hosted providers (Ollama etc.), not cloud APIs
-    if provider_key not in ("ollama",):
-        return schema
-    
-    # For smaller models, truncate long descriptions to reduce token usage
-    # but preserve all fields - no hardcoded field names
-    def truncate_descriptions_in_schema(schema_part: dict, max_desc_length: int = 200) -> dict:
-        """Recursively truncate descriptions in a schema while preserving structure."""
-        if not isinstance(schema_part, dict):
-            return schema_part
-        
-        result = schema_part.copy()
-        
-        # Truncate description if present
-        if "description" in result and isinstance(result["description"], str):
-            if len(result["description"]) > max_desc_length:
-                result["description"] = result["description"][:max_desc_length] + "..."
-        
-        # Recursively process properties
-        if "properties" in result and isinstance(result["properties"], dict):
-            result["properties"] = {
-                key: truncate_descriptions_in_schema(value, max_desc_length)
-                for key, value in result["properties"].items()
-            }
-        
-        # Recursively process items (for arrays)
-        if "items" in result:
-            result["items"] = truncate_descriptions_in_schema(result["items"], max_desc_length)
-        
-        return result
-    
-    # Apply description truncation to the entire schema
-    simplified = truncate_descriptions_in_schema(schema, max_desc_length=200)
-    
-    if simplified != schema:
-        logger.info(f"Truncated long descriptions in schema for Ollama model {model_name} (all fields preserved)")
-    
-    return simplified
-
-def detect_schema_structure(output_contract: dict) -> dict:
-    """Detect which sections apply to which asset types"""
-    structure = {
-        "document_fields": {},
-        "per_modality_fields": {}
-    }
-    
-    # Unwrap if schema is wrapped in type/properties
-    schema_to_check = output_contract
-    if output_contract.get("type") == "object" and "properties" in output_contract:
-        schema_to_check = output_contract["properties"]
-    
-    for key, value in schema_to_check.items():
-        if key == "document":
-            structure["document_fields"] = value
-        elif key.startswith("per_"):
-            modality = key[4:]  # Extract modality name
-            # The `value` here is the schema for the array, so we need `value["items"]` for the item schema
-            if isinstance(value, dict) and value.get("type") == "array" and "items" in value:
-                structure["per_modality_fields"][modality] = value["items"]
-            else:
-                logger.warning(f"Per-modality field '{key}' in output_contract is not a valid array schema with items. Skipping for structure detection.")
-    
-    # If no hierarchical structure, assume all fields are document-level
-    if not structure["document_fields"] and not structure["per_modality_fields"]:
-        # If no "document" or "per_*" keys, assume the whole output_contract is for the document.
-        # And it must be an object schema with properties to be useful here.
-        if output_contract.get("type") == "object" and "properties" in output_contract:
-            structure["document_fields"] = output_contract
-        else: # It's a flat schema but not an object (e.g. just a string type), or empty.
-              # In this case, no properties to iterate for justification prompts.
-            logger.debug(f"Output contract is flat but not an object with properties. No document fields extracted for justification prompt generation. Contract: {output_contract}")
-            
-    return structure
-
-def simplify_schema_for_standalone_image(output_contract: dict) -> dict:
-    """
-    Simplify schema for standalone image assets (PDF_PAGE, IMAGE, IMAGE_REGION).
-    Removes per_modality_fields to eliminate ambiguity - standalone images should only use document field.
-    
-    Args:
-        output_contract: The original schema output contract (from Pydantic model_json_schema())
-        
-    Returns:
-        Simplified schema with only document field (if it exists), with $ref references resolved
-    """
-    # Create a copy to avoid mutating the original
-    simplified = json.loads(json.dumps(output_contract))
-    
-    # Get definitions for resolving $ref references
-    definitions = simplified.get("$defs", simplified.get("definitions", {}))
-    
-    # Helper function to resolve $ref references recursively
-    def resolve_ref(schema_part: dict) -> dict:
-        """Resolve $ref references in a schema part."""
-        if not isinstance(schema_part, dict):
-            return schema_part
-        
-        # If this is a $ref, resolve it
-        if "$ref" in schema_part:
-            ref_path = schema_part["$ref"]
-            # Extract the reference name (e.g., "#/$defs/DocumentSchema" -> "DocumentSchema")
-            if ref_path.startswith("#/$defs/"):
-                ref_name = ref_path.replace("#/$defs/", "")
-            elif ref_path.startswith("#/definitions/"):
-                ref_name = ref_path.replace("#/definitions/", "")
-            else:
-                # Unknown ref format, return as-is
-                logger.warning(f"Unknown $ref format: {ref_path}")
-                return schema_part
-            
-            if ref_name in definitions:
-                # Resolve the reference and recursively resolve any nested $refs
-                resolved = json.loads(json.dumps(definitions[ref_name]))
-                return resolve_ref(resolved)
-            else:
-                logger.warning(f"Reference '{ref_name}' not found in definitions")
-                return schema_part
-        
-        # Recursively resolve $ref in nested objects
-        resolved = {}
-        for key, value in schema_part.items():
-            if isinstance(value, dict):
-                resolved[key] = resolve_ref(value)
-            elif isinstance(value, list):
-                resolved[key] = [resolve_ref(item) if isinstance(item, dict) else item for item in value]
-            else:
-                resolved[key] = value
-        
-        return resolved
-    
-    # Unwrap if schema is wrapped in type/properties
-    schema_to_check = simplified
-    if simplified.get("type") == "object" and "properties" in simplified:
-        schema_to_check = simplified["properties"]
-    
-    # Remove all per_* fields
-    keys_to_remove = [key for key in schema_to_check.keys() if key.startswith("per_")]
-    for key in keys_to_remove:
-        del schema_to_check[key]
-        logger.info(f"Removed '{key}' field from schema for standalone image processing")
-    
-    # Update required fields if present
-    if "required" in schema_to_check:
-        schema_to_check["required"] = [field for field in schema_to_check["required"] if not field.startswith("per_")]
-    
-    # Helper function to flatten anyOf/oneOf/allOf and extract a concrete schema
-    def flatten_combinators(schema_part: dict) -> dict:
-        """Flatten anyOf/oneOf/allOf combinators to extract a concrete schema."""
-        if not isinstance(schema_part, dict):
-            return schema_part
-        
-        # Handle anyOf - take the first option that has a type or can be inferred
-        if "anyOf" in schema_part:
-            any_of_options = schema_part["anyOf"]
-            for option in any_of_options:
-                if isinstance(option, dict):
-                    # Prefer options with explicit type
-                    if "type" in option:
-                        logger.debug(f"Selected anyOf option with explicit type: {option.get('type')}")
-                        return flatten_combinators(option)
-                    # Or options with properties (objects)
-                    elif "properties" in option:
-                        flattened = flatten_combinators(option)
-                        if "type" not in flattened:
-                            flattened["type"] = "object"
-                        logger.debug(f"Selected anyOf option with properties, inferred type='object'")
-                        return flattened
-            
-            # If no good option found, take the first one and try to infer
-            if any_of_options:
-                first_option = any_of_options[0]
-                flattened = flatten_combinators(first_option)
-                if "type" not in flattened:
-                    if "properties" in flattened:
-                        flattened["type"] = "object"
-                    elif "items" in flattened:
-                        flattened["type"] = "array"
-                logger.debug(f"Selected first anyOf option, inferred type if needed")
-                return flattened
-        
-        # Handle oneOf - similar to anyOf
-        if "oneOf" in schema_part:
-            one_of_options = schema_part["oneOf"]
-            for option in one_of_options:
-                if isinstance(option, dict) and "type" in option:
-                    logger.debug(f"Selected oneOf option with explicit type: {option.get('type')}")
-                    return flatten_combinators(option)
-            if one_of_options:
-                first_option = one_of_options[0]
-                flattened = flatten_combinators(first_option)
-                if "type" not in flattened:
-                    if "properties" in flattened:
-                        flattened["type"] = "object"
-                    elif "items" in flattened:
-                        flattened["type"] = "array"
-                logger.debug(f"Selected first oneOf option, inferred type if needed")
-                return flattened
-        
-        # Handle allOf - merge all schemas
-        if "allOf" in schema_part:
-            all_of_options = schema_part["allOf"]
-            merged = {}
-            for option in all_of_options:
-                if isinstance(option, dict):
-                    flattened_option = flatten_combinators(option)
-                    merged.update(flattened_option)
-            logger.debug(f"Merged allOf options")
-            return merged
-        
-        # Recursively process nested combinators
-        result = {}
-        for key, value in schema_part.items():
-            if isinstance(value, dict):
-                result[key] = flatten_combinators(value)
-            elif isinstance(value, list):
-                result[key] = [flatten_combinators(item) if isinstance(item, dict) else item for item in value]
-            else:
-                result[key] = value
-        
-        return result
-    
-    # CRITICAL: Resolve $ref references and flatten combinators for all remaining properties
-    # OpenAI API doesn't support $ref, anyOf, oneOf, allOf - we need inline types
-    for prop_name, prop_schema in schema_to_check.items():
-        if isinstance(prop_schema, dict):
-            # First resolve $ref references
-            resolved_schema = resolve_ref(prop_schema)
-            # Then flatten anyOf/oneOf/allOf combinators
-            resolved_schema = flatten_combinators(resolved_schema)
-            
-            # If resolved schema still doesn't have a type key, infer it from structure
-            if "type" not in resolved_schema:
-                if "properties" in resolved_schema:
-                    # Has properties -> it's an object
-                    resolved_schema["type"] = "object"
-                    logger.debug(f"Inferred type='object' for property '{prop_name}' based on 'properties' key")
-                elif "items" in resolved_schema:
-                    # Has items -> it's an array
-                    resolved_schema["type"] = "array"
-                    logger.debug(f"Inferred type='array' for property '{prop_name}' based on 'items' key")
-                elif "enum" in resolved_schema:
-                    # Has enum -> it's likely a string
-                    resolved_schema["type"] = "string"
-                    logger.debug(f"Inferred type='string' for property '{prop_name}' based on 'enum' key")
-                else:
-                    # Can't infer - log error
-                    logger.error(f"Property '{prop_name}' is missing 'type' key after $ref resolution and cannot be inferred. Keys: {list(resolved_schema.keys())}")
-            
-            schema_to_check[prop_name] = resolved_schema
-            
-            # Validate that document field has type key (required by OpenAI)
-            if prop_name == "document":
-                if "type" not in resolved_schema:
-                    logger.error(f"Property 'document' is missing 'type' key after $ref resolution and inference - this will cause OpenAI API errors")
-                    logger.debug(f"Resolved document schema keys: {list(resolved_schema.keys())}")
-                else:
-                    logger.debug(f"Successfully resolved document schema with type: {resolved_schema.get('type')}")
-    
-    return simplified
 
 async def fetch_asset_content(asset: Asset, storage_provider: 'StorageProviderDep') -> bytes:
     """Fetch asset content from storage or web URL using the injected storage_provider."""
@@ -1188,18 +888,33 @@ async def demultiplex_results(
     return annotations
 
 
+def _handover(run_id: int, held: RunStatus, to: RunStatus) -> bool:
+    """Move a run to *to* only while it is still *held* — the atomic claim of a
+    batch (PENDING → RUNNING) and its hand-back (RUNNING → PENDING), the same
+    ``UPDATE … WHERE status`` claim ingest and processing use. Touching
+    ``updated_at`` sends a run that just worked to the back of the check's line."""
+    with Session(engine) as session:
+        moved = session.execute(
+            update(AnnotationRun)
+            .where(AnnotationRun.id == run_id, AnnotationRun.status == held)
+            .values(status=to, updated_at=datetime.now(timezone.utc))
+        ).rowcount
+        session.commit()
+    return bool(moved)
+
+
 @task("process_annotation_run",
       check=lambda iid: (
           select(AnnotationRun.id)
           .where(
               AnnotationRun.infospace_id == iid,
-              # PENDING only: this task doesn't set RUNNING itself (only the
-              # retry path does). A RUNNING run is either an active retry
-              # (handled by its own task) or a zombie from a prior crash —
-              # picking it up here caused infinite self_chain loops.
+              # A RUNNING run is a worker's for one batch (`_handover`); one
+              # whose worker died is handed back by `reconcile_runs`.
               AnnotationRun.status == RunStatus.PENDING,
           )
-          .order_by(AnnotationRun.created_at)
+          # Least recently worked first, so runs take turns batch by batch
+          # instead of the oldest draining before anything newer starts.
+          .order_by(AnnotationRun.updated_at)
       ),
       schedule=None,
       triggers=["annotation_run.created"],
@@ -1210,47 +925,29 @@ async def demultiplex_results(
       tags=frozenset({"annotation"}))
 def process_annotation_run(ctx: TaskContext, run_ids: list[int]) -> None:
     """
-    Process annotation runs. Discovers PENDING runs via check query.
-    For large runs (> ANNOTATION_CHUNK_SIZE), processes one chunk per invocation
-    and self-chains to continue. Uses Redis lock per run.
+    Process annotation runs, one batch (``ANNOTATION_CHUNK_SIZE`` assets) per
+    run per invocation, self-chaining while any run is PENDING.
+
+    A batch is held twice over: the run's lease (a worker that dies frees it
+    within ``SLOT_TTL``) and its status — RUNNING while the batch works, so the
+    phase a reader sees is the truth, and handed back to PENDING after it.
     """
     from app.core.redis_lock import annotation_run_lock
 
     chunk_size = settings.ANNOTATION_CHUNK_SIZE
 
     for run_id in run_ids:
-        with annotation_run_lock(run_id) as acquired:
-            if not acquired:
-                logger.info("Annotation run %d already in progress, skipping (setting chain_backoff)", run_id)
-                # Throttle self_chain so a live sibling-worker (or a stale
-                # lock whose TTL hasn't expired) doesn't trigger a tight
-                # 50-deep loop. The chain_backoff key is read in
-                # @task self_chain and becomes a countdown for the next
-                # invocation. Key expires so normal scheduling resumes
-                # once the lock clears.
-                try:
-                    from app.core.redis import get_redis
-                    r = get_redis()
-                    if r:
-                        r.set(f"task:process_annotation_run:{ctx.infospace_id}:chain_backoff", "60", ex=120)
-                except Exception:
-                    logger.debug("chain_backoff set failed", exc_info=True)
+        with annotation_run_lock(run_id) as held:
+            # Another worker has it, or it is no longer waiting. Nothing to back
+            # off from: a claimed run is RUNNING, so the check won't offer it again.
+            if not held or not _handover(run_id, RunStatus.PENDING, RunStatus.RUNNING):
                 continue
-
-            # Streaming: the run carries no cursor — the annotations table (and
-            # the watermark in config) are the position. Skip if already caught up.
-            with Session(engine) as session:
-                run = session.get(AnnotationRun, run_id)
-                if not run:
-                    continue
-                if run.status in (RunStatus.COMPLETED, RunStatus.COMPLETED_WITH_ERRORS):
-                    continue
 
             try:
                 result = run_async_in_celery(_process_annotation_run_async, run_id, chunk_size)
                 if result == "more":
-                    # Batch landed, more remain. The run stays PENDING so the
-                    # @task self-chain (PENDING check) re-invokes for the next batch.
+                    # Batch landed, more remain: handed back below, so the
+                    # self-chain (PENDING check) takes the next batch.
                     logger.info("Annotation run %d: batch done, more remain", run_id)
                     ctx.stat("chunk_done")
                 else:
@@ -1293,6 +990,11 @@ def process_annotation_run(ctx: TaskContext, run_ids: list[int]) -> None:
                         logger.error("Could not update run %d to FAILED: %s", run_id, db_exc)
                 ctx.item_failed(run_id)
                 ctx.stat("failed")
+            finally:
+                # Still RUNNING means the batch ended with work left (or ended
+                # without saying): back to the queue. A terminal status stays.
+                _handover(run_id, RunStatus.RUNNING, RunStatus.PENDING)
+
 
 async def _drain_stream(stream_iter) -> Any:
     """Consume a streaming AsyncIterator from a provider and return the final
@@ -1332,7 +1034,6 @@ async def _drain_stream(stream_iter) -> Any:
 # ``extraction_strategy ∈ {auto, two-phase, single-shot}``. Default ``auto``.
 
 _DOC_TOKEN_BUDGET_FRACTION = 0.6  # leave headroom for system + tools + thinking
-_PHASE_A_MODEL_CACHE_KEY = "_phase_a_output_model_class"
 _TOKENS_PER_CHAR = 0.25  # crude approximation; good enough for routing
 
 
@@ -1939,7 +1640,7 @@ def _merge_phase_a_b(
 
 async def process_single_asset_schema(
     asset: Asset,
-    schema_info: Dict[str, Any],
+    plan: SchemaPlan,
     run: AnnotationRun,
     run_config: Dict[str, Any],
     provider,
@@ -1952,10 +1653,10 @@ async def process_single_asset_schema(
 
     Args:
         asset: The asset to process
-        schema_info: Schema information dict containing schema, structure, etc.
+        plan: The schema, made ready for this run (``plan.prepare``)
         run: The annotation run
         run_config: Run configuration
-        provider: The LanguageModelProvider instance (rate-limited)
+        provider: The run's language model (``plan.language_for``)
         storage_provider_instance: Storage provider instance
         session: Database session
         semaphore: Optional semaphore for concurrency control
@@ -1964,10 +1665,10 @@ async def process_single_asset_schema(
         Dict with processing results including success status, annotations, and errors.
         Per-field justifications, when enabled, are inlined into each annotation's value JSONB.
     """
-    schema = schema_info["schema"]
-    schema_structure = schema_info["schema_structure"]
-    OutputModelClass = schema_info["output_model_class"]
-    final_schema_instructions = schema_info["final_instructions"]
+    schema = plan.schema
+    schema_structure = plan.structure
+    OutputModelClass = plan.output_model
+    final_schema_instructions = plan.instructions
 
     result = {
         "success": False,
@@ -2041,15 +1742,16 @@ async def process_single_asset_schema(
         logger.debug(f"Task: Calling provider for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Text length: {len(text_content_for_provider)}, Media items: {len(provider_specific_config.get('media_inputs',[]))}")
 
         # Call the provider for structured classification
-        # Get the model name from run config (frontend sends as ai_model and ai_provider)
-        model_name = run_config.get("model") or run_config.get("ai_model") or run_config.get("model_name")
+        # The model the provider resolved to — the run's own, or the saved default
+        # when the run pins none. Never re-read it off the run's configuration.
+        model_name = provider.model
         thinking_enabled = _thinking_requested(run_config)
 
         logger.info(f"Task: Using model '{model_name}' for Asset {asset.id}, Schema {schema.id}, Run {run.id}. Run config keys: {list(run_config.keys())}")
 
         # ── Track 2: route between single-shot and two-phase iterative ──
-        list_fields = schema_info.get("list_fields") or []
-        phase_a_output_model_class = schema_info.get("phase_a_output_model_class")
+        list_fields = plan.list_fields
+        phase_a_output_model_class = plan.phase_a_model
         # Capability facts come from the declaration via Resolved.spec — no I/O,
         # always present. This used to read a per-instance cache that only the
         # discovery routes ever filled, so in a worker it was always None:
@@ -2393,12 +2095,15 @@ async def process_single_asset_schema(
         result["annotations"] = [failed_ann]
         result["error"] = error_msg
         result["success"] = False
-    
+
+    # Whatever it made, success or failure, was made under this revision.
+    for annotation in result["annotations"]:
+        annotation.schema_rev = plan.rev
     return result
 
 async def process_assets_parallel(
     assets_map: Dict[int, Asset],
-    validated_schemas: List[Dict[str, Any]],
+    plans: List[SchemaPlan],
     run: AnnotationRun,
     run_config: Dict[str, Any],
     provider,
@@ -2432,7 +2137,7 @@ async def process_assets_parallel(
     # it makes re-pend idempotent (insert-only annotations have no upsert guard)
     # and lets a run gain a schema without re-running the schemas it already did.
     asset_ids_in_batch = list(assets_map.keys())
-    schema_ids_in_batch = [si["schema"].id for si in validated_schemas]
+    schema_ids_in_batch = [p.schema.id for p in plans]
     done_pairs: set = set()
     if asset_ids_in_batch and schema_ids_in_batch:
         done_rows = session.exec(
@@ -2447,14 +2152,14 @@ async def process_assets_parallel(
 
     # Create tasks for all asset-schema combinations not already done.
     tasks = []
-    for schema_info in validated_schemas:
-        schema_id = schema_info["schema"].id
+    for plan in plans:
+        schema_id = plan.schema.id
         for asset_id, asset in assets_map.items():
             if (asset_id, schema_id) in done_pairs:
                 continue
             task = process_single_asset_schema(
                 asset=asset,
-                schema_info=schema_info,
+                plan=plan,
                 run=run,
                 run_config=run_config,
                 provider=provider,
@@ -2559,7 +2264,7 @@ async def process_assets_parallel(
 # We never materialize the scope — we stream it: each invocation processes the
 # next batch of un-annotated assets and re-pends itself while work remains. The
 # annotations table IS the cursor (done = a non-failed annotation exists), so
-# re-pending is idempotent at any scale and flat in memory. The `live_runs`
+# re-pending is idempotent at any scale and flat in memory. The `reconcile_runs`
 # reconciler rides this: it just flips a caught-up live run back to PENDING.
 
 WATERMARK_KEY = "_watermark"  # max asset id this run has attempted; the stream cursor
@@ -2605,26 +2310,21 @@ async def _process_annotation_run_async(
     """
     Process one batch of an annotation run's streaming delta.
 
+    Called on a run this worker has claimed (RUNNING, see ``_handover``).
     Resolves the next ``chunk_size`` un-annotated assets in scope, annotates them,
-    advances the watermark. Returns ``"more"`` if work remains (run left PENDING
-    so the @task self-chain re-invokes), ``"done"`` if the run reached a terminal
-    state this call, or ``None`` if skipped (already terminal/invalid).
+    advances the watermark. Returns ``"more"`` if work remains (the caller hands
+    the run back to PENDING for the self-chain), ``"done"`` if the run reached a
+    terminal state this call, or ``None`` if the run is gone.
     """
     import time
     start_time = time.time()
     logger.info(f"Task: Processing annotation run {run_id} with multi-modal engine.")
-    
+
     with Session(engine) as session:
         try:
             run = session.get(AnnotationRun, run_id)
             if not run:
                 logger.error(f"Task: AnnotationRun {run_id} not found")
-                return None
-
-            if run.status in (RunStatus.COMPLETED, RunStatus.COMPLETED_WITH_ERRORS):
-                # Caught up / idle. A live run is re-pended by the reconciler;
-                # nothing to do here until then.
-                logger.warning(f"Task: AnnotationRun {run_id} is already caught up. Skipping.")
                 return None
 
             if not run.started_at:
@@ -2636,21 +2336,8 @@ async def _process_annotation_run_async(
 
             # Create providers
             provider_start_time = time.time()
-            app_settings = settings
             try:
-                run_config_for_provider = run.configuration or {}
-                model_name_for_resolve = run_config_for_provider.get("model") or run_config_for_provider.get("ai_model") or run_config_for_provider.get("model_name")
-                runtime_api_keys = run_config_for_provider.get("api_keys") or {}
-                type_key = run_config_for_provider.get("provider") or run_config_for_provider.get("ai_provider")
-                # BYOK: extract the key for the selected provider, if supplied in the run configuration.
-                runtime_key = runtime_api_keys.get(type_key) if type_key else None
-                provider = resolve(
-                    "language", type_key, model_name_for_resolve,
-                    infospace_id=run.infospace_id,
-                    context="annotation",
-                    runtime_key=runtime_key,
-                    session=session,
-                )
+                provider = language_for(session, run)
                 storage_provider_instance = cached_resolve("storage")
                 provider_creation_time = time.time() - provider_start_time
                 logger.info(f"Task: Provider creation/retrieval took {provider_creation_time:.3f}s for Run {run.id}")
@@ -2667,7 +2354,7 @@ async def _process_annotation_run_async(
             # ═══ Streaming delta ═══
             # Resolve the next batch of un-annotated assets in scope, above the
             # watermark. The annotations table is the cursor, so re-pending (by
-            # the live_runs reconciler or extend) is idempotent. Bundle scopes
+            # the reconcile_runs reconciler or extend) is idempotent. Bundle scopes
             # resolve to the bundle's full subtree.
             watermark = int(run_config.get(WATERMARK_KEY, 0) or 0)
             delta = _delta_query(session, run, watermark, limit=chunk_size)
@@ -2843,132 +2530,19 @@ async def _process_annotation_run_async(
             errors_run_level = [] # Errors pertaining to the whole run or asset/schema processing that isn't an annotation status
             all_created_annotations: List[Annotation] = []
 
-            # OPTIMIZATION 2: Pre-validate all schemas before processing assets
-            validated_schemas = []
+            # Each schema made ready for this run once, read by every asset.
+            plans: List[SchemaPlan] = []
             for schema in schemas_to_apply:
-                if not validate_hierarchical_schema(schema.output_contract):
-                    logger.error(f"Task: Schema {schema.id} ({schema.name}) for Run {run.id} has invalid hierarchical structure. Skipping this schema.")
-                    errors_run_level.append(f"Schema {schema.id} ({schema.name}) invalid structure.")
-                    continue
-                
-                # Simplify schema for local/self-hosted models
-                optimized_contract = simplify_schema_for_model(schema.output_contract, model_name_for_resolve, type_key)
-                
-                # Validate that optimized_contract is a valid JSON schema
-                if not isinstance(optimized_contract, dict):
-                    logger.error(f"Task: Schema {schema.id} ({schema.name}) for Run {run.id} has invalid output_contract type: {type(optimized_contract)}. Expected dict.")
-                    errors_run_level.append(f"Schema {schema.id} ({schema.name}) has invalid output_contract format.")
-                    continue
-                
-                # Ensure optimized_contract has the expected JSON schema structure
-                if optimized_contract.get("type") != "object" or "properties" not in optimized_contract:
-                    logger.error(f"Task: Schema {schema.id} ({schema.name}) for Run {run.id} output_contract is not a valid object schema with properties. Got: {list(optimized_contract.keys())[:10]}")
-                    errors_run_level.append(f"Schema {schema.id} ({schema.name}) output_contract missing 'type: object' or 'properties'.")
-                    continue
-
-                # Canon injection. Resolve ONCE per schema per run, here — every
-                # downstream consumer (the Pydantic builder, the Phase A/B split,
-                # the prompt renderer) reads from the contract, so one rewrite
-                # upstream constrains all three. Runs with no canon binding get
-                # their contract back unchanged.
-                optimized_contract, canon_report = resolve_for_annotation_run(
-                    session, run, optimized_contract,
-                )
-                if canon_report.active:
-                    logger.info(
-                        f"Task: Schema {schema.id} canon injection — "
-                        f"{canon_report.injected_types} types, "
-                        f"~{canon_report.est_tokens_per_asset} tokens/asset"
-                    )
-                for w in canon_report.warnings:
-                    errors_run_level.append(f"Schema {schema.id} canon binding: {w}")
-
-                schema_structure = detect_schema_structure(optimized_contract)
-                
-                # Validate that schema_structure found document_fields
-                if not schema_structure.get("document_fields"):
-                    logger.error(f"Task: Schema {schema.id} ({schema.name}) for Run {run.id} - detect_schema_structure did not find document_fields. Schema structure: {list(schema_structure.keys())}")
-                    errors_run_level.append(f"Schema {schema.id} ({schema.name}) - no document_fields detected in schema structure.")
-                    continue
-                
-                # Per-field opt-in is read inline from the output_contract by the
-                # builder; the run-level master switch lets a caller suppress
-                # all justifications regardless of schema config.
-                justifications_enabled = run_config.get("justifications_enabled", True)
-
                 try:
-                    OutputModelClass = create_pydantic_model_from_json_schema(
-                        model_name=f"DynamicOutput_{schema.name.replace(' ', '_')}_{schema.id}",
-                        json_schema=optimized_contract,
-                        justifications_enabled=justifications_enabled,
-                    )
-                except Exception as e_model_create:
-                    logger.error(f"Task: Failed to create Pydantic model for Schema {schema.id} ({schema.name}) in Run {run.id}: {e_model_create}", exc_info=True)
-                    errors_run_level.append(f"Schema {schema.id} Pydantic model creation failed: {e_model_create}")
+                    plan = prepare(session, run, schema, provider)
+                except SchemaUnusable as e:
+                    logger.error(f"Task: Run {run.id}: {e}. Skipping this schema.")
+                    errors_run_level.append(str(e))
                     continue
+                errors_run_level.extend(plan.warnings)
+                plans.append(plan)
 
-                if not OutputModelClass.model_fields:
-                    logger.error(f"Task: Schema {schema.id} ({schema.name}) for Run {run.id} resulted in an empty model with no fields. This schema cannot be used for structured output. Skipping this schema.")
-                    errors_run_level.append(f"Schema {schema.id} ('{schema.name}') is invalid or empty and was skipped.")
-                    continue
-
-                # Initialize final instructions with schema-level instructions.
-                # Justification prompts come exclusively from researcher-written
-                # places: schema.instructions and per-field justification_prompt
-                # in the output_contract. No hidden prompt injection.
-                final_schema_instructions = schema.instructions or ""
-
-                # --- System instruction for per-modality asset UUID mapping ---
-                # Check if the schema structure implies per-modality outputs that would need mapping
-                if schema_structure.get("per_modality_fields"):
-                    system_mapping_prompt = (
-                        "\\n\\n--- System Data Mapping Instructions ---\\n"
-                        "For each item you generate that corresponds to a specific media input (e.g., an item in a 'per_image' list, 'per_audio' list, etc.), "
-                        "you MUST include a field named 'system_asset_source_uuid'. "
-                        "The value of this 'system_asset_source_uuid' field MUST be the exact UUID string that was provided to you in the input prompt for that specific media item. "
-                        "This is critical for correctly associating your analysis with the source media."
-                    )
-                    if final_schema_instructions:
-                        final_schema_instructions += system_mapping_prompt
-                    else:
-                        final_schema_instructions = system_mapping_prompt[4:] # Remove leading \n\n if no prior instructions
-
-                # Track 2: pre-compute the scalar subset + list field descriptors
-                # for two-phase iterative extraction. The scalar Pydantic model
-                # is built once per schema (here) and re-used per asset.
-                # If the schema has no array<object> fields, list_fields is
-                # empty and the auto-router will pick single-shot.
-                scalar_subset_contract, list_fields_for_phase_b = split_schema_for_extraction(
-                    optimized_contract
-                )
-                phase_a_output_model_class = None
-                if list_fields_for_phase_b:
-                    try:
-                        phase_a_output_model_class = create_pydantic_model_from_json_schema(
-                            model_name=f"PhaseA_{schema.name.replace(' ', '_')}_{schema.id}",
-                            json_schema=scalar_subset_contract,
-                            justifications_enabled=justifications_enabled,
-                        )
-                    except Exception as e_phase_a:
-                        logger.warning(
-                            f"Task: Failed to build Phase A model for Schema {schema.id}; "
-                            f"two-phase extraction unavailable for this schema: {e_phase_a}"
-                        )
-                        list_fields_for_phase_b = []
-                        scalar_subset_contract = None
-
-                # Store the validated schema with all computed values
-                validated_schemas.append({
-                    "schema": schema,
-                    "schema_structure": schema_structure,
-                    "output_model_class": OutputModelClass,
-                    "final_instructions": final_schema_instructions,
-                    "scalar_subset_contract": scalar_subset_contract,
-                    "list_fields": list_fields_for_phase_b,
-                    "phase_a_output_model_class": phase_a_output_model_class,
-                })
-
-            if not validated_schemas:
+            if not plans:
                 logger.error(f"Task: No valid schemas for Run {run.id} after validation.")
                 run.status = RunStatus.FAILED
                 run.error_message = "No valid schemas after validation."
@@ -3017,7 +2591,7 @@ async def _process_annotation_run_async(
                     continue
                 chunk_annotations, chunk_errors, already_committed = await process_assets_parallel(
                     assets_map=chunk_assets_map,
-                    validated_schemas=validated_schemas,
+                    plans=plans,
                     run=run,
                     run_config=run_config,
                     provider=provider,
@@ -3056,9 +2630,9 @@ async def _process_annotation_run_async(
             session.refresh(run)
 
             # This batch landed. Advance the watermark to the highest scope-asset
-            # id we attempted, then re-pend for the next batch if the streaming
-            # delta still has work. The run stays PENDING so the @task self-chain
-            # picks it up; we report "more" so the wrapper doesn't emit completion.
+            # id we attempted, then report "more" if the streaming delta still
+            # has work: the wrapper hands the run back to PENDING for the
+            # self-chain, and does not emit completion.
             cfg = dict(run.configuration or {})
             cfg[WATERMARK_KEY] = max(int(cfg.get(WATERMARK_KEY, 0) or 0), batch_watermark)
             run.configuration = cfg
@@ -3212,21 +2786,10 @@ async def _retry_failed_annotations_async(run_id: int) -> None:
 
             logger.info(f"Task: Found {len(failed_annotations_to_retry)} failed annotations to retry for Run {run_id}.")
             
-            # Set up providers (reuse from original processing)
-            app_settings = settings
+            # The same model and setup the run read with, so a retried
+            # annotation is extracted the way its siblings were.
             try:
-                run_config_for_provider = run.configuration or {}
-                model_name_for_resolve = run_config_for_provider.get("model") or run_config_for_provider.get("ai_model") or run_config_for_provider.get("model_name")
-                runtime_api_keys = run_config_for_provider.get("api_keys") or {}
-                type_key = run_config_for_provider.get("provider") or run_config_for_provider.get("ai_provider")
-                runtime_key = runtime_api_keys.get(type_key) if type_key else None
-                provider = resolve(
-                    "language", type_key, model_name_for_resolve,
-                    infospace_id=run.infospace_id,
-                    context="annotation",
-                    runtime_key=runtime_key,
-                    session=session,
-                )
+                provider = language_for(session, run)
                 storage_provider_instance = cached_resolve("storage")
                 logger.info(f"Task: Providers initialized for retry of Run {run.id}")
             except Exception as e_provider:
@@ -3251,6 +2814,9 @@ async def _retry_failed_annotations_async(run_id: int) -> None:
                 retry_pairs[key].append(annotation)
 
             logger.info(f"Task: Retrying {len(retry_pairs)} unique asset-schema pairs for Run {run_id}.")
+            # One plan per schema, built on its first pair; an unusable schema
+            # is remembered as its reason.
+            plans: Dict[int, SchemaPlan | SchemaUnusable] = {}
 
             for (asset_id, schema_id), annotations_for_pair in retry_pairs.items():
                 try:
@@ -3262,94 +2828,22 @@ async def _retry_failed_annotations_async(run_id: int) -> None:
                         errors.append(f"Invalid context for Asset {asset_id}, Schema {schema_id}")
                         continue
 
-                    # Validate and prepare schema (reuse from original processing)
-                    if not validate_hierarchical_schema(schema.output_contract):
-                        logger.error(f"Task: Schema {schema.id} has invalid hierarchical structure during retry. Skipping.")
-                        errors.append(f"Schema {schema.id} invalid structure during retry.")
-                        continue
-
-                    # Same canon injection as the original pass — a retry must
-                    # extract against the identical effective contract, or the
-                    # retried annotations come back with a different vocabulary
-                    # than their siblings.
-                    retry_contract, _retry_canon_report = resolve_for_annotation_run(
-                        session, run, schema.output_contract,
-                    )
-
-                    schema_structure = detect_schema_structure(retry_contract)
-
-                    # Create output model (reuse from original processing)
-                    try:
-                        OutputModelClass = create_pydantic_model_from_json_schema(
-                            model_name=f"RetryOutput_{schema.name.replace(' ', '_')}_{schema.id}",
-                            json_schema=retry_contract,
-                            justifications_enabled=run_config.get("justifications_enabled", True),
-                        )
-                    except Exception as e_model:
-                        logger.error(f"Task: Failed to create Pydantic model for Schema {schema.id} during retry: {e_model}", exc_info=True)
-                        errors.append(f"Schema {schema.id} model creation failed during retry: {e_model}")
-                        continue
-
-                    if not OutputModelClass.model_fields:
-                        logger.error(f"Task: Schema {schema.id} resulted in empty model during retry. Skipping.")
-                        errors.append(f"Schema {schema.id} is invalid or empty during retry.")
-                        continue
-
-                    # Prepare final instructions (reuse from original processing)
-                    final_schema_instructions = schema.instructions or ""
-
-                    # Add system mapping prompt for per-modality fields if needed
-                    if schema_structure.get("per_modality_fields"):
-                        system_mapping_prompt = (
-                            "\\n\\n--- System Data Mapping Instructions ---\\n"
-                            "For each item you generate that corresponds to a specific media input (e.g., an item in a 'per_image' list, 'per_audio' list, etc.), "
-                            "you MUST include a field named 'system_asset_source_uuid'. "
-                            "The value of this 'system_asset_source_uuid' field MUST be the exact UUID string that was provided to you in the input prompt for that specific media item. "
-                            "This is critical for correctly associating your analysis with the source media."
-                        )
-                        if final_schema_instructions:
-                            final_schema_instructions += system_mapping_prompt
-                        else:
-                            final_schema_instructions = system_mapping_prompt[4:] # Remove leading \n\n if no prior instructions
-
-                    # Mirror the validate_assets_schemas Track-2 build so retries
-                    # get the two-phase strategy when the original run did. Without
-                    # this, retries silently fall back to single-shot and re-truncate
-                    # on the same schemas that needed Phase B in the first place.
-                    scalar_subset_contract, list_fields_for_phase_b = split_schema_for_extraction(
-                        retry_contract
-                    )
-                    phase_a_output_model_class = None
-                    if list_fields_for_phase_b:
+                    if schema_id not in plans:
                         try:
-                            phase_a_output_model_class = create_pydantic_model_from_json_schema(
-                                model_name=f"RetryPhaseA_{schema.name.replace(' ', '_')}_{schema.id}",
-                                json_schema=scalar_subset_contract,
-                                justifications_enabled=run_config.get("justifications_enabled", True),
-                            )
-                        except Exception as e_phase_a:
-                            logger.warning(
-                                f"Task: Failed to build Phase A model for retry of Schema {schema.id}; "
-                                f"two-phase extraction unavailable for this retry: {e_phase_a}"
-                            )
-                            list_fields_for_phase_b = []
-                            scalar_subset_contract = None
-
-                    schema_info = {
-                        "schema": schema,
-                        "schema_structure": schema_structure,
-                        "output_model_class": OutputModelClass,
-                        "final_instructions": final_schema_instructions,
-                        "scalar_subset_contract": scalar_subset_contract,
-                        "list_fields": list_fields_for_phase_b,
-                        "phase_a_output_model_class": phase_a_output_model_class,
-                    }
+                            plans[schema_id] = prepare(session, run, schema, provider)
+                        except SchemaUnusable as e:
+                            plans[schema_id] = e
+                    plan = plans[schema_id]
+                    if isinstance(plan, SchemaUnusable):
+                        logger.error(f"Task: Retry of Run {run.id}: {plan}. Skipping.")
+                        errors.append(str(plan))
+                        continue
 
                     # Call the actual LLM processing function
                     logger.info(f"Task: Processing retry for Asset {asset.id}, Schema {schema.id} in Run {run.id}")
                     result = await process_single_asset_schema(
                         asset=asset,
-                        schema_info=schema_info,
+                        plan=plan,
                         run=run,
                         run_config=run_config,
                         provider=provider,
@@ -3430,9 +2924,16 @@ async def _retry_failed_annotations_async(run_id: int) -> None:
       tags=frozenset({"annotation"}))
 def retry_failed_annotations(ctx: TaskContext, run_ids: list[int]) -> None:
     """Retry failed annotations in runs using actual LLM re-processing."""
+    from app.core.redis_lock import annotation_run_lock
+
     for run_id in run_ids:
         try:
-            run_async_in_celery(_retry_failed_annotations_async, run_id)
+            # Held like a batch: a retry marks the run RUNNING, and the lease is
+            # what tells `reconcile_runs` a worker is still behind that status.
+            with annotation_run_lock(run_id) as held:
+                if not held:
+                    continue
+                run_async_in_celery(_retry_failed_annotations_async, run_id)
             ctx.stat("done")
         except Exception as e:
             logger.exception(f"Retry failed for run {run_id}: {e}")
