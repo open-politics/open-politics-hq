@@ -222,3 +222,66 @@ def test_a_value_gathers_the_assets_that_carry_it(world):
     assert net.assets_where(aliased, what, "=", ["last"]) == [a["A5"]]
     with pytest.raises(ValueError):
         net.assets_where(w.scope, "bad path;", "=", ["x"])
+
+
+# ─── Weighing by value ───────────────────────────────────────────────────────
+
+
+SCORED = {"type": "object", "properties": {"document": {"type": "object", "properties": {
+    "severity": {"type": "integer", "minimum": 1, "maximum": 10},
+    "actors": {"type": "array", "items": {"type": "object", "properties": {
+        "name": {"type": "string"}, "stance": {"type": "number"}}}},
+}}}}
+
+
+@pytest.fixture
+def scored(db):
+    """Four documents scored on a declared 1–10 scale, with an undeclared
+    number on their actors — and one document that has neither."""
+    from app.api.modules.annotation.models import RunSchemaLink
+
+    uid = _user(db, "weigh")
+    iid = _infospace(db, uid, "weigh")
+    sid = _schema_with(db, iid, uid, SCORED)
+    run = _run(db, iid, uid, "scored")
+    db.add(RunSchemaLink(run_id=run, schema_id=sid))
+    rows = {
+        "low": {"document": {"severity": 1, "actors": [{"name": "a", "stance": 2}, {"name": "b", "stance": 4}]}},
+        "mid": {"document": {"severity": "5.5", "actors": [{"name": "c", "stance": 1}]}},
+        "high": {"document": {"severity": 10, "actors": [{"name": "d", "stance": 9}]}},
+        "odd": {"document": {"severity": "n/a", "actors": [{"name": "e", "stance": 3}]}},
+        "bare": {"document": {}},
+    }
+    anns = {}
+    for name, value in rows.items():
+        anns[name] = _annotation(db, iid, uid, run, sid, _asset(db, iid, uid, name), value)
+    db.flush()
+    scope = ov.open_scope(db, types.SimpleNamespace(infospace_id=iid, scope=None), run)
+    return types.SimpleNamespace(scope=scope, anns=anns)
+
+
+def _by_ann(w, out):
+    names = {v: k for k, v in w.anns.items()}
+    return {names[i]: round(x, 4) for i, x in zip(out["annotation"]["ids"], out["annotation"]["weights"])}
+
+
+def test_a_declared_scale_reads_numbers_on_it_and_leaves_the_rest_absent(scored):
+    out = net.weigh(scored.scope, "document.severity", "value")
+    assert out["scale"] == {"by": "declared", "min": 1.0, "max": 10.0}
+    # Text that is not a number, and a missing field, are absent — never zero.
+    assert _by_ann(scored, out) == {"low": 0.0, "mid": 0.5, "high": 1.0}
+
+
+def test_an_undeclared_number_reads_by_rank_and_an_array_by_its_mean(scored):
+    out = net.weigh(scored.scope, "document.actors[*].stance", "value")
+    assert out["scale"]["by"] == "rank"
+    # Means: mid 1, low 3, odd 3, high 9 — the tie shares positions 1 and 2
+    # of 0…3, so both sit at 1.5 / 3.
+    assert _by_ann(scored, out) == {"mid": 0.0, "low": 0.5, "odd": 0.5, "high": 1.0}
+
+
+def test_a_threshold_weighs_one_or_zero_over_the_numbers_there_are(scored):
+    out = net.weigh(scored.scope, "document.severity", "ge", 5)
+    assert out["scale"]["by"] == "threshold"
+    assert _by_ann(scored, out) == {"low": 0.0, "mid": 1.0, "high": 1.0}
+    assert net.weigh(scored.scope, "document.nothing", "value")["annotation"]["ids"] == []

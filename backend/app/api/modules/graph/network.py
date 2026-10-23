@@ -209,6 +209,83 @@ def assets_of(
     }
 
 
+def _declared_range(scope: Any, path: str) -> tuple[float, float] | None:
+    """The scale a run's schemas declare for the number at ``path`` — the
+    first of its schemas that states both ends."""
+    from app.api.modules.annotation.schema_map import schema_map_for
+
+    for schema in scope.run.target_schemas or []:
+        try:
+            smap = schema_map_for(schema.output_contract)
+        except Exception:  # noqa: BLE001 — a broken contract declares nothing
+            continue
+        for f in smap.fields:
+            if f.path == path and f.minimum is not None and f.maximum is not None and f.maximum > f.minimum:
+                return f.minimum, f.maximum
+    return None
+
+
+def _threshold(operator: str, value: Any):
+    """A number test for a thresholded weight; ``between`` takes ``[lo, hi]``."""
+    try:
+        if operator == "between":
+            lo, hi = (float(x) for x in value)
+            return lambda v: lo <= v <= hi
+        t = float(value)
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"{operator} needs a number{' pair' if operator == 'between' else ''}") from e
+    return {"gt": lambda v: v > t, "ge": lambda v: v >= t, "lt": lambda v: v < t, "le": lambda v: v <= t}[operator]
+
+
+def weigh(scope: Any, path: str, operator: str, value: Any = None) -> dict[str, Any]:
+    """A number at ``path`` as a weight per annotation, in 0…1 — what the
+    plane folds onto its nodes as a field.
+
+    Graded (``operator="value"``): by the scale the schema declares, so a 9 on
+    a 1–10 score is high in every run; by rank within the run when no scale
+    is declared, since then only the order means anything. Thresholded
+    (``gt ge lt le between``): 1 where the number passes, 0 where it does not.
+    Either way an annotation without a number there is left out — absent,
+    never zero. ``scale`` says which reading was used, for the chip.
+
+    The ``/network/where`` membership is the 0/1 case of this, and folds into
+    it in time.
+    """
+    numbers = scope.query().numbers(path)
+    if not numbers:
+        return {"annotation": {"ids": [], "weights": []}, "scale": {"by": "none", "min": None, "max": None}}
+    ids = [a for a, _ in numbers]
+    vals = [v for _, v in numbers]
+
+    if operator != "value":
+        # Judged on the same number the graded reading uses — an array's mean
+        # — so a threshold and a surface agree about every annotation.
+        passes = _threshold(operator, value)
+        weights = [1.0 if passes(v) else 0.0 for v in vals]
+        return {"annotation": {"ids": ids, "weights": weights},
+                "scale": {"by": "threshold", "min": min(vals), "max": max(vals)}}
+
+    declared = _declared_range(scope, path)
+    if declared:
+        lo, hi = declared
+        weights = [min(1.0, max(0.0, (v - lo) / (hi - lo))) for v in vals]
+        return {"annotation": {"ids": ids, "weights": weights}, "scale": {"by": "declared", "min": lo, "max": hi}}
+
+    # Rank share: ties share their mean rank, and a single value sits at 1.
+    order = sorted(range(len(vals)), key=vals.__getitem__)
+    ranks = [0.0] * len(vals)
+    i = 0
+    while i < len(order):
+        j = i
+        while j + 1 < len(order) and vals[order[j + 1]] == vals[order[i]]:
+            j += 1
+        share = 1.0 if len(vals) == 1 else ((i + j) / 2) / (len(vals) - 1)
+        for k in range(i, j + 1):
+            ranks[order[k]] = share
+        i = j + 1
+    return {"annotation": {"ids": ids, "weights": ranks}, "scale": {"by": "rank", "min": min(vals), "max": max(vals)}}
+
+
 def assets_where(scope: Any, path: str, op: str, values: Sequence[str]) -> list[int]:
     """The run's assets with an annotation whose ``path`` is (``=``) or
     contains (``~``) any of ``values`` — any schema of the run, read under

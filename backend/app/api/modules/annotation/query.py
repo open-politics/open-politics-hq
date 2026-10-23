@@ -1538,6 +1538,42 @@ class AnnotationQuery:
         sql = f"SELECT DISTINCT a.asset_id FROM annotation a WHERE {' AND '.join(clauses)}"
         return [int(r[0]) for r in self._session.exec(text(sql).bindparams(**params)).all()]
 
+    def numbers(self, value_field: str) -> list[tuple[int, float]]:
+        """Each passing annotation's number at ``value_field`` — the mean of
+        its elements when the path is exploded (``actors[*].stance``), the
+        value itself otherwise. Annotations without a number there are left
+        out, never read as zero; text that does not parse as a number is not
+        one. What a value reads as a weight, one annotation at a time."""
+        ep = parse_explosion(value_field)
+        clauses, params = self._base_where(include_cursor=False)
+        from_clause = "annotation a"
+        element_alias: str | None = None
+        active_explosion: str | None = None
+        if ep.is_exploded and ep.array_field:
+            arr_acc, arr_params = jsonb_value_accessor("a.value", ep.array_field, param_name="expl_fp")
+            params.update(arr_params)
+            from_clause = f"annotation a, LATERAL jsonb_array_elements({safe_array_elements(arr_acc)}) AS elem"
+            element_alias = "elem"
+            active_explosion = ep.array_field
+        self._apply_conditions(clauses, params, element_alias=element_alias, active_explosion=active_explosion)
+
+        if ep.is_exploded:
+            if ep.remainder:
+                acc, acc_params = jsonb_scalar_accessor("elem", ep.remainder, param_name="num_fp")
+                params.update(acc_params)
+            else:
+                acc = scalar_of("elem")
+        else:
+            acc, acc_params = jsonb_scalar_accessor("a.value", value_field, param_name="num_fp")
+            params.update(acc_params)
+        # A guarded cast: a value that is not a number is absent, not an error.
+        number = f"CASE WHEN btrim({acc}) ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN btrim({acc})::float END"
+        sql = (
+            f"SELECT a.id, avg({number}) AS v FROM {from_clause} "
+            f"WHERE {' AND '.join(clauses)} GROUP BY a.id HAVING avg({number}) IS NOT NULL"
+        )
+        return [(int(r[0]), float(r[1])) for r in self._session.exec(text(sql).bindparams(**params)).all()]
+
     def distinct_values(
         self,
         field_path: str,

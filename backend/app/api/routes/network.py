@@ -239,12 +239,69 @@ def network_where(
 ) -> Any:
     """The run's assets with an annotation, of any of its schemas, whose value
     at ``path`` matches — what the client gathers a value's nodes by, through
-    each node's annotations."""
+    each node's annotations. (The 0/1 case of ``/network/weigh``, which it
+    folds into in time.)"""
     access.require_in_scope("run_ids", run_id)
     with Session(engine) as session:
         try:
             scope = ov.open_scope(session, access, run_id)
             return {"assets": net.assets_where(scope, body.path, body.op, body.values)}
+        except LookupError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+# ─── Weighing by value ───────────────────────────────────────────────────────
+
+
+class WeighRequest(BaseModel):
+    """A condition read as a weight — the shape of a ``FieldCondition``, so
+    every graded source (a number now, ``about`` a meaning next) arrives the
+    same way. ``value`` reads the number itself; ``gt ge lt le between`` read
+    it against ``value`` as 0 or 1."""
+
+    path: str = Field(description="A field path, as the schema map writes it (`document.severity`, `actors[*].stance`).")
+    operator: Literal["value", "gt", "ge", "lt", "le", "between"] = "value"
+    value: Any = None
+
+
+class WeightColumn(BaseModel):
+    """Weights by id: listed ids have a basis, the rest are absent."""
+
+    ids: list[int]
+    weights: list[float]
+
+
+class WeightScale(BaseModel):
+    by: Literal["declared", "rank", "threshold", "none"]
+    min: float | None = None
+    max: float | None = None
+
+
+class Weights(BaseModel):
+    """A field's weights per annotation, 0…1; the plane folds them onto its
+    nodes (mean over the annotations that have one). ``scale`` is how the
+    numbers were read, and their range."""
+
+    annotation: WeightColumn
+    scale: WeightScale
+
+
+@router.post("/{run_id}/network/weigh", response_model=Weights)
+def network_weigh(
+    *,
+    run_id: int,
+    body: WeighRequest,
+    access: Access = Requires(scope=None),
+) -> Any:
+    """A number in the run's annotations as a weight per annotation — what a
+    value surface is raised from and what pulls nodes to their value."""
+    access.require_in_scope("run_ids", run_id)
+    with Session(engine) as session:
+        try:
+            scope = ov.open_scope(session, access, run_id)
+            return net.weigh(scope, body.path, body.operator, body.value)
         except LookupError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except ValueError as e:
