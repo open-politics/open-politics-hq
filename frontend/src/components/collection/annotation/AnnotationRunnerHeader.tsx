@@ -47,6 +47,7 @@ import {
   Trash2,
   Maximize2,
   Radio,
+  Play,
   ChevronDown,
   ChevronLeft,
   Library,
@@ -62,7 +63,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
-import { AnnotationRunRead, AnnotationSchemaRead, type RunLedgerSummary } from '@/client';
+import { AnnotationRunRead, AnnotationSchemaRead, type RunLedgerSummary, type RunSchemaState } from '@/client';
 import { useRunResults } from '@/lib/annotations/ledger';
 import { since } from '@/lib/since';
 import { DashboardConfig, PanelViewConfig, useAnnotationRunStore } from '@/zustand_stores/useAnnotationRunStore';
@@ -314,12 +315,15 @@ function OutcomeStep({
   live,
   onLive,
   onBrowse,
+  onContinue,
 }: {
   coverage: Coverage;
   progress: ReturnType<typeof useProgress>;
   live: boolean;
   onLive: (live: boolean) => void;
   onBrowse?: () => void;
+  /** Get a queued run moving now, rather than at the reconciler's next pass. */
+  onContinue?: () => void;
 }) {
   const p = PHASE[progress.phase];
   const { of, unit } = coverage;
@@ -371,6 +375,17 @@ function OutcomeStep({
         <p className="flex justify-between gap-3 text-xs text-hud-dim">
           <span>{progress.next}</span>
           {progress.rate && <span className="shrink-0 tabular-nums">{progress.rate}</span>}
+          {onContinue && (
+            <button
+              type="button"
+              onClick={onContinue}
+              title="Ask a worker for it now, not at the next check"
+              className="flex shrink-0 items-center gap-1 transition-colors hover:text-hud-fg"
+            >
+              <Play className="h-3 w-3 stroke-[1.5]" />
+              Continue
+            </button>
+          )}
         </p>
       </div>
     </li>
@@ -576,6 +591,7 @@ interface AnnotationRunnerHeaderProps {
 
   onUpdateRun: (field: 'name' | 'description' | 'live', value: string | boolean) => void;
   onRetryJobFailures: (runId: number) => void;
+  onContinueRun: (runId: number) => void;
   onSaveDashboard: () => Promise<void>;
   onUpdateDashboardConfig: (updates: Partial<DashboardConfig>) => void;
   onAddPanel: (panel: Omit<PanelViewConfig, 'id' | 'gridPos' | 'filters'>) => void;
@@ -584,7 +600,10 @@ interface AnnotationRunnerHeaderProps {
   onRandomizeLayout: () => void;
   onDeleteRun: () => void;
   onClearRun: () => void;
-  onOpenSchemasDialog: () => void;
+  /** Open the schema column: what the run reads, its drafts. */
+  onOpenSchema: () => void;
+  /** Each schema as the run reads it — revision, draft (`useRunSchemas`). */
+  runSchemaStates?: RunSchemaState[];
   /** Bring the assets column into view. */
   onShowAssets: () => void;
   // Extension flow — null means extension is gated off (continuous run, flow
@@ -607,6 +626,7 @@ export default function AnnotationRunnerHeader({
   isRetryingJob,
   onUpdateRun,
   onRetryJobFailures,
+  onContinueRun,
   onSaveDashboard,
   onUpdateDashboardConfig,
   onAddPanel,
@@ -614,7 +634,8 @@ export default function AnnotationRunnerHeader({
   onRandomizeLayout,
   onDeleteRun,
   onClearRun,
-  onOpenSchemasDialog,
+  onOpenSchema,
+  runSchemaStates,
   onShowAssets,
   onExtendSchemas,
   canExtend,
@@ -683,6 +704,18 @@ export default function AnnotationRunnerHeader({
   const canonNames = canonIds
     .map((id) => canons.find((c) => c.id === id)?.name ?? `Canon ${id}`)
     .join(', ');
+
+  // Said only when there is something to say: a revision past the first, a
+  // newer one adopted elsewhere, a draft.
+  const schemaNote = (schemaId: number) => {
+    const st = runSchemaStates?.find((x) => x.schema_id === schemaId);
+    if (!st) return null;
+    return [
+      (st.reads > 1 || st.reads < st.head) && `revision ${st.reads}`,
+      st.reads < st.head && `${st.head} adopted elsewhere`,
+      st.draft && 'draft open',
+    ].filter(Boolean).join(' · ') || null;
+  };
 
   const phase = phaseOf(activeRun);
   const isLive = !!activeRun.live;
@@ -946,21 +979,24 @@ export default function AnnotationRunnerHeader({
                 <Step
                   icon={Microscope}
                   label={runSchemes.length > 1 ? 'Schemas' : 'Schema'}
-                  onOpen={runSchemes.length ? onOpenSchemasDialog : undefined}
+                  onOpen={runSchemes.length ? onOpenSchema : undefined}
                   action={extend('Add schemas to this run', onExtendSchemas)}
                   // With several, each says how many annotations it has made;
                   // with one, those are the assets the outcome counts.
-                  detail={runSchemes.length > 1 && (
+                  detail={runSchemes.length > 1 ? (
                     <span className="block space-y-0.5">
                       {runSchemes.slice(0, 5).map((s) => (
                         <span key={s.id} className="flex items-baseline gap-2">
-                          <span className="min-w-0 flex-1 truncate text-hud-dim">{s.name}</span>
+                          <span className="min-w-0 flex-1 truncate text-hud-dim">
+                            {s.name}
+                            {schemaNote(s.id) && <span className="text-hud-dimmer"> · {schemaNote(s.id)}</span>}
+                          </span>
                           <span className="shrink-0 tabular-nums">{fmt(perSchema[s.id] ?? 0)}</span>
                         </span>
                       ))}
                       {runSchemes.length > 5 && <span className="block">and {runSchemes.length - 5} more</span>}
                     </span>
-                  )}
+                  ) : runSchemes.length === 1 && schemaNote(runSchemes[0].id)}
                 >
                   {runSchemes.length === 1 ? runSchemes[0].name : runSchemes.length === 0 ? 'None' : `${runSchemes.length} schemas · ${fmt(annotationCount)} annotations`}
                 </Step>
@@ -987,6 +1023,7 @@ export default function AnnotationRunnerHeader({
                   live={isLive}
                   onLive={(v) => onUpdateRun('live', v)}
                   onBrowse={onShowAssets}
+                  onContinue={phase === 'queued' ? () => onContinueRun(activeRun.id) : undefined}
                 />
               </ol>
               <Failures

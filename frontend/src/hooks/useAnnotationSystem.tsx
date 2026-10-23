@@ -17,7 +17,8 @@ import {
     AssetRead,
     AnnotationRead,
     AnnotationRunCreate,
-    Message
+    Message,
+    RunContinued
 } from '@/client';
 import {
     AnnotationSchemasService,
@@ -298,6 +299,26 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
     }
   }, [activeInfospace, loadRun]);
   
+  // Get a run moving now rather than at the reconciler's next pass, and say
+  // what that did. The page's poll and stream carry the new status in.
+  const continueRun = useCallback(async (runId: number): Promise<RunContinued | null> => {
+    if (!activeInfospace?.id) return null;
+    try {
+      const result = await RunsService.continueRun({ infospaceId: activeInfospace.id, runId });
+      toast.info(
+        result.verdict === 'reclaimed' ? 'Its worker had stopped. Back in the queue.'
+        : result.verdict === 'dispatched' ? 'Asked a worker to pick it up.'
+        : result.verdict === 'repended' ? 'New material in scope. Reading it.'
+        : result.run.status === 'running' ? 'A worker is already on it.'
+        : 'Nothing left to read.',
+      );
+      return result;
+    } catch (e: any) {
+      toast.error('Could not continue the run.', { description: e.body?.detail || e.message });
+      return null;
+    }
+  }, [activeInfospace]);
+
   const retrySingleResult = useCallback(async (resultId: number, customPrompt?: string): Promise<AnnotationRead | null> => {
       if (!activeInfospace?.id) return null;
       setIsRetryingResultId(resultId);
@@ -367,6 +388,7 @@ export function useAnnotationSystem({ autoLoadRuns = false } = {}) {
     isCreatingRun,
     isAnnotating,
     retryJobFailures,
+    continueRun,
     isRetryingRun,
     error,
     schemas,

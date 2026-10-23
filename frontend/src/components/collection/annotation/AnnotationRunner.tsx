@@ -3,19 +3,13 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { RunStrip, scrollToRunColumn } from './strip/RunStrip';
+import { RunSchemaColumn } from './strip/RunSchemaColumn';
 import type { RunLedger } from '@/lib/annotations/ledger';
+import { useRunSchemas } from '@/lib/annotations/runSchemas';
 import { columnWidth, heightOf, stripColumns } from '@/lib/annotations/strip';
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardDescription,
-  CardContent,
-  CardFooter,
-} from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle, ChevronDown, ChevronUp, PieChartIcon, Download, Share2, Network, LayoutDashboard, FileText, Sparkles, Trash2, Microscope, Image as ImageIcon, Video, Music, Globe, Type, Mail, Eye, CheckCircle, Minimize2 } from 'lucide-react';
+import { Loader2, X, AlertCircle, Info, Pencil, BarChart3, Table as TableIcon, MapPin, SlidersHorizontal, XCircle, RefreshCw, AlertTriangle, ChevronDown, ChevronUp, PieChartIcon, Download, Share2, Network, LayoutDashboard, FileText, Sparkles, Trash2, Image as ImageIcon, Video, Music, Globe, Type, Mail, Eye, CheckCircle, Minimize2 } from 'lucide-react';
 import {
   AnnotationSchemaRead,
   AssetRead,
@@ -26,7 +20,6 @@ import {
 import { FormattedAnnotation, TimeAxisConfig } from '@/lib/annotations/types';
 import AnnotationResultsChart from './AnnotationResultsChart';
 import AnnotationResultsPieChart from './AnnotationResultsPieChart';
-import { format } from 'date-fns';
 import { ResultFilter, FilterSet } from './AnnotationFilterControls';
 import { getTargetKeysForScheme, extractLocationString } from '@/lib/annotations/utils';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -122,12 +115,14 @@ export default function AnnotationRunner({
 }: AnnotationRunnerProps) {
   const {
     retryJobFailures,
+    continueRun,
     isRetryingJob,
     retrySingleResult: hookRetrySingleResult,
     isRetryingResultId,
     updateJob,
     deleteRun,
     extendRun,
+    loadSchemas,
   } = useAnnotationSystem();
 
   // BYOK keys live in browser state and are passed into the run config at
@@ -191,10 +186,28 @@ export default function AnnotationRunner({
   const [detailAssetId, setDetailAssetId] = useState<number | null>(null);
   // Narrow, the assets stack above the run, and only when asked for.
   const [narrowAssetsOpen, setNarrowAssetsOpen] = useState(false);
+  // The schema the run is read through, and its drafts: open while revising.
+  const [schemaOpen, setSchemaOpen] = useState(false);
+  const runSchemas = useRunSchemas(activeRun);
   useEffect(() => {
     setDetailAssetId(null);
     setNarrowAssetsOpen(false);
+    setSchemaOpen(false);
   }, [activeRun?.id]);
+  const openSchema = useCallback(() => {
+    setSchemaOpen(true);
+    // Opening, the strip glides to it by itself; already open, ask it to.
+    scrollToRunColumn('schema');
+  }, []);
+  // What the drafts read, for the asset column to set beside the run's reads.
+  const trialReads = useMemo(() => {
+    const data = runSchemas.data;
+    if (!data?.trial) return null;
+    return {
+      runId: data.trial.id,
+      drafts: data.schemas.flatMap((s) => (s.draft ? [{ schemaId: s.schema_id, draft: s.draft }] : [])),
+    };
+  }, [runSchemas.data]);
   // To the last column, whichever element is doing the scrolling — the strip
   // when wide, the panels' own row when narrow.
   const jumpToEnd = useCallback(() => {
@@ -532,6 +545,8 @@ export default function AnnotationRunner({
       { name: 'sources', title: sourcesOpen ? 'Close sources' : 'Sources',
         hint: 'Where the material comes from, left of the assets', run: () => setSourcesOpen(!sourcesOpen) },
       { name: 'assets', title: 'Assets', hint: 'What the run reads, and has read', run: showAssets },
+      { name: 'schema', title: 'Schema', hint: 'Revise what the run reads: draft, try, adopt', run: openSchema },
+      { name: 'continue', title: 'Continue', hint: 'Ask a worker for the run now', run: () => { if (activeRun) void continueRun(activeRun.id); } },
       { name: 'end', title: 'Last panel', hint: 'To the end of the strip', run: jumpToEnd },
       { name: 'save', title: 'Save dashboard', run: () => { void saveDashboard(); } },
     ],
@@ -540,7 +555,6 @@ export default function AnnotationRunner({
   useEffect(() => { useCommandBar.getState().setAim(null); }, [activeRun?.id]);
 
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [isSchemasDialogOpen, setIsSchemasDialogOpen] = useState(false);
   // Extension flow — adding assets / schemas to the active run.
   const [isExtendSchemasOpen, setIsExtendSchemasOpen] = useState(false);
   const [extendSelectedSchemaIds, setExtendSelectedSchemaIds] = useState<number[]>([]);
@@ -619,6 +633,15 @@ export default function AnnotationRunner({
     setSelectedAssetIdForDetail(assetId);
     setIsAssetDetailOpen(true);
   }, []);
+  // An asset opens beside the list — narrow, over it, there being no room.
+  const openDetail = useCallback((id: number | null) => {
+    const strip = document.querySelector('[data-panel-strip]');
+    if (id != null && strip && getComputedStyle(strip).flexDirection === 'column') {
+      openDetailOverlayBridge(id);
+      return;
+    }
+    setDetailAssetId(id);
+  }, [openDetailOverlayBridge]);
   const navigateAdjacentBridge = useCallback((direction: 'prev' | 'next') => {
     const ids = navAssetIdsRef.current;
     if (!ids.length || selectedAssetIdForDetail == null) return;
@@ -712,16 +735,25 @@ export default function AnnotationRunner({
       pinned={isRunColumnPinned}
       sourcesOpen={sourcesOpen}
       onSourcesOpen={setSourcesOpen}
+      schemaColumn={schemaOpen ? (
+        <RunSchemaColumn
+          run={activeRun}
+          schemas={runSchemes}
+          handle={runSchemas}
+          detailAssetId={detailAssetId}
+          onDetailAsset={openDetail}
+          onView={setViewingSchema}
+          onAdopted={() => {
+            void loadSchemas({ force: true });
+            void ledger.refreshNow();
+            void runSchemas.refresh();
+          }}
+          onClose={() => setSchemaOpen(false)}
+        />
+      ) : undefined}
+      trial={trialReads}
       detailAssetId={detailAssetId}
-      onDetailAsset={(id) => {
-        // Narrow, there is no room beside the list: the asset opens over it.
-        const strip = document.querySelector('[data-panel-strip]');
-        if (id != null && strip && getComputedStyle(strip).flexDirection === 'column') {
-          openDetailOverlayBridge(id);
-          return;
-        }
-        setDetailAssetId(id);
-      }}
+      onDetailAsset={openDetail}
       narrowAssetsOpen={narrowAssetsOpen}
       onExtendAssets={canExtendRun ? () => {
         setSelectedAssetIds([]);
@@ -739,6 +771,7 @@ export default function AnnotationRunner({
           isRetryingJob={isRetryingJob}
           onUpdateRun={handleUpdateRun}
           onRetryJobFailures={retryJobFailures}
+          onContinueRun={continueRun}
           onSaveDashboard={saveDashboard}
           onUpdateDashboardConfig={updateDashboardConfig}
           onAddPanel={addPanel}
@@ -746,7 +779,8 @@ export default function AnnotationRunner({
           onRandomizeLayout={randomizeLayout}
           onDeleteRun={() => setIsDeleteDialogOpen(true)}
           onClearRun={onClearRun}
-          onOpenSchemasDialog={() => setIsSchemasDialogOpen(true)}
+          onOpenSchema={openSchema}
+          runSchemaStates={runSchemas.data?.schemas}
           onShowAssets={showAssets}
           onExtendSchemas={canExtendRun ? () => {
             setExtendSelectedSchemaIds([]);
@@ -1023,70 +1057,6 @@ export default function AnnotationRunner({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-    <Dialog open={isSchemasDialogOpen} onOpenChange={setIsSchemasDialogOpen}>
-      <DialogContent className="max-w-4xl max-h-[80vh] flex flex-col">
-        <DialogHeader>
-          <DialogTitle>Schemas Used in This Run</DialogTitle>
-          <DialogDescription>
-            This run uses {runSchemes.length} annotation schema{runSchemes.length !== 1 ? 's' : ''}. Click "View Details" to see the full schema definition.
-          </DialogDescription>
-        </DialogHeader>
-        <ScrollArea className="flex-1 p-4">
-          {runSchemes.length === 0 ? (
-            <div className="text-center text-muted-foreground py-8">
-              <LayoutDashboard className="h-12 w-12 mx-auto mb-4 opacity-50" />
-              <p>No schemas found for this run.</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {runSchemes.map((schema) => (
-                <Card key={schema.id} className="p-4 border border-sky-200 dark:border-sky-800 bg-sky-50/20 dark:bg-sky-950/10">
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="p-1.5 rounded-md bg-sky-500/20 dark:bg-sky-500/20 text-sky-700 dark:text-sky-400">
-                          <Microscope className="w-4 h-4" />
-                        </div>
-                        <h3 className="font-semibold text-lg truncate text-gray-900 dark:text-gray-100">{schema.name}</h3>
-                      </div>
-                      <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">
-                        {schema.description || 'No description available'}
-                      </p>
-                      <div className="flex items-center gap-4 mt-2 text-xs text-gray-500 dark:text-gray-500">
-                        <span>ID: {schema.id}</span>
-                        <span>Created: {format(new Date(schema.created_at), 'MMM d, yyyy')}</span>
-                        {schema.updated_at && schema.updated_at !== schema.created_at && (
-                          <span>Updated: {format(new Date(schema.updated_at), 'MMM d, yyyy')}</span>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex gap-2 ml-4">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => {
-                          setViewingSchema(schema);
-                          setIsSchemasDialogOpen(false);
-                        }}
-                        className="border-sky-200 dark:border-sky-800 bg-sky-50/20 dark:bg-sky-950/10 text-sky-700 dark:text-sky-400 hover:bg-sky-100/50 dark:hover:bg-sky-900/20"
-                      >
-                        View Details
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
-              ))}
-            </div>
-          )}
-        </ScrollArea>
-        <DialogFooter>
-          <Button variant="outline" onClick={() => setIsSchemasDialogOpen(false)}>
-            Close
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
 
     <AnnotationSchemaCard
         show={!!viewingSchema}

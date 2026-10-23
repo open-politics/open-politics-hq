@@ -55,6 +55,12 @@ import { useCanons } from "@/hooks/useCanons";
 // Helpers
 // =============================================================================
 
+/** What a save writes as the schema's contract: the fields a revision is made
+ *  of (backend `revisions.CONTRACT_FIELDS`), plus the justification side map
+ *  the route lifts into the contract. */
+const CONTRACT_KEYS = ['output_contract', 'instructions', 'field_specific_justification_configs'] as const;
+const contractOf = (data: AnnotationSchemaUpdate) => JSON.stringify(CONTRACT_KEYS.map(k => data[k] ?? null));
+
 function isValidFieldName(name: string): boolean {
   return /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name);
 }
@@ -585,8 +591,9 @@ const TopBar: React.FC<{
   disabled: boolean;
   onCancel: () => void;
   onStyleChange: (type: string, style: NodeStyle | null) => void;
-}> = ({ formData, onFormChange, formErrors, isReady, isLoading, mode, disabled, onCancel, onStyleChange }) => {
-  const titleByMode = { create: "New schema", edit: "Edit schema", watch: "View schema" }[mode];
+  draft?: boolean;
+}> = ({ formData, onFormChange, formErrors, isReady, isLoading, mode, disabled, onCancel, onStyleChange, draft }) => {
+  const titleByMode = draft ? "Draft" : { create: "New schema", edit: "Edit schema", watch: "View schema" }[mode];
   const [showInstructions, setShowInstructions] = useState(false);
   const [showAppearance, setShowAppearance] = useState(false);
   const nodeTypes = useMemo(
@@ -608,7 +615,8 @@ const TopBar: React.FC<{
             value={formData.name}
             onChange={(e) => onFormChange({ ...formData, name: e.target.value })}
             placeholder="Schema name"
-            disabled={disabled}
+            // A draft revises the contract; the schema keeps its name.
+            disabled={disabled || draft}
             className={cn(
               "h-9 text-base font-medium border-0 focus-visible:ring-0 shadow-none px-2",
               "bg-transparent hover:bg-muted/30 focus-visible:bg-muted/40 transition-colors",
@@ -620,7 +628,7 @@ const TopBar: React.FC<{
             value={formData.description || ""}
             onChange={(e) => onFormChange({ ...formData, description: e.target.value })}
             placeholder="Description"
-            disabled={disabled}
+            disabled={disabled || draft}
             className="hidden md:block h-9 text-sm border-0 focus-visible:ring-0 shadow-none px-2 bg-transparent hover:bg-muted/30 focus-visible:bg-muted/40 transition-colors"
           />
         </div>
@@ -664,7 +672,7 @@ const TopBar: React.FC<{
         </Button>
         {mode !== "watch" && (
           <Button type="submit" size="sm" className="h-8 text-xs px-4" disabled={isLoading || !isReady}>
-            {isLoading ? "Saving…" : mode === "create" ? "Create" : "Update"}
+            {isLoading ? "Saving…" : mode === "create" ? "Create" : draft ? "Save draft" : "Update"}
           </Button>
         )}
       </div>
@@ -2556,6 +2564,9 @@ interface AnnotationSchemaEditorProps {
   schemeId?: number;
   mode: "create" | "edit" | "watch";
   defaultValues?: AnnotationSchemaRead | null;
+  /** A run's draft of a schema (`annotation/drafts.py`): its contract is
+   *  edited, its name is the schema's. */
+  draft?: boolean;
 }
 
 const defaultSchemeFormData: AnnotationSchemaFormData = {
@@ -2566,7 +2577,7 @@ const defaultSchemeFormData: AnnotationSchemaFormData = {
 };
 
 const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
-  show, onClose, schemeId, mode, defaultValues = null,
+  show, onClose, schemeId, mode, defaultValues = null, draft = false,
 }) => {
   const { activeInfospace } = useInfospaceStore();
   const { createSchema, updateScheme, isLoadingSchemas, error: apiError, loadSchemas } = useAnnotationSystem();
@@ -2728,6 +2739,12 @@ const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
 
   // ---- init ----
 
+  // The contract as loaded, written the way a save would write it. Saving gives
+  // it back only when it changed: every contract change is a new revision of
+  // the schema, and the adapter normalises on the way through, so sending it
+  // unchanged would make one out of a rename.
+  const loadedContract = useRef<string | null>(null);
+
   useEffect(() => {
     if (mode === "create") {
       const initialField: AdvancedSchemeField = { id: nanoid(), name: "summary", type: "string", description: "A summary of the document.", required: true };
@@ -2738,6 +2755,7 @@ const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
       if (defaultValues) {
         try {
           const adapted = adaptSchemaReadToSchemaFormData(defaultValues);
+          loadedContract.current = contractOf(adaptSchemaFormDataToSchemaCreate(adapted));
           setFormData(adapted);
           if (adapted.structure[0]?.fields[0]) {
             setSelectedNodeId(adapted.structure[0].fields[0].id);
@@ -2817,8 +2835,12 @@ const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
         toast({ title: "Schema Created", description: `Schema "${response?.name}" created successfully.` });
       } else if (mode === "edit" && schemeId) {
         const updateData: AnnotationSchemaUpdate = adaptSchemaFormDataToSchemaCreate(formData);
+        if (contractOf(updateData) === loadedContract.current) {
+          for (const key of CONTRACT_KEYS) delete updateData[key];
+        }
         response = await updateScheme(schemeId, updateData);
-        toast({ title: "Schema Updated", description: `Schema "${response?.name}" updated successfully.` });
+        // Refused (said by `updateScheme`): stay, with the edits.
+        if (!response) return;
       }
       await loadSchemas({ force: true });
       onClose();
@@ -2849,6 +2871,7 @@ const AnnotationSchemaEditor: React.FC<AnnotationSchemaEditorProps> = ({
             disabled={isDisabled}
             onCancel={onClose}
             onStyleChange={setNodeStyle}
+            draft={draft}
           />
 
           {formErrors.submit && (

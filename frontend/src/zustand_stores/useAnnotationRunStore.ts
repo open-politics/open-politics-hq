@@ -454,6 +454,10 @@ interface AnnotationRunState {
   /** Whether the run strip opens with its sources column (left of the assets). */
   runSourcesOpen: boolean;
   setRunSourcesOpen: (open: boolean) => void;
+  /** The run's trial run, while its network panels show what a draft read
+   *  and nothing else (`annotation/drafts.py`). Not persisted. */
+  trialView: number | null;
+  setTrialView: (trialRunId: number | null) => void;
   setFocusMode: (value: boolean) => void;
 }
 
@@ -624,6 +628,7 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
             const nextRunId = run?.id ?? null;
             set({ activeRun: run });
             if (prevRunId === nextRunId) return;
+            set({ trialView: null });
 
             if (run) {
                 if (run.views_config && run.views_config.length > 0) {
@@ -1184,6 +1189,8 @@ export const useAnnotationRunStore = create<AnnotationRunState>()(
         toggleRunColumnPinned: () => set((s) => ({ runColumnPinned: !s.runColumnPinned })),
         runSourcesOpen: false,
         setRunSourcesOpen: (open) => set({ runSourcesOpen: open }),
+        trialView: null,
+        setTrialView: (trialRunId) => set({ trialView: trialRunId }),
         setFocusMode: (value) => set({ focusMode: value }),
     }),
     {

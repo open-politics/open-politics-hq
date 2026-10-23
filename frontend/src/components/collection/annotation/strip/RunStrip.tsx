@@ -8,16 +8,19 @@ import { useScrollEdges } from '@/hooks/useScrollEdges';
 import { runBundleIds, useRunBundles, type RunLedger } from '@/lib/annotations/ledger';
 import { cn } from '@/lib/utils';
 import { useSourceStore } from '@/zustand_stores/storeSources';
-import { RunAssetDetailColumn } from './RunAssetDetailColumn';
+import { RunAssetDetailColumn, type TrialReads } from './RunAssetDetailColumn';
 import { RunAssetsColumn } from './RunAssetsColumn';
 import { RunSourcesColumn } from './RunSourcesColumn';
+
+/** Columns that open left of where you are, outermost first. */
+const LEFT = ['schema', 'sources'] as const;
 
 /** Where a column starts along the strip's scroll — wherever it is nested. */
 const leftIn = (strip: HTMLElement, el: HTMLElement) =>
   el.getBoundingClientRect().left - strip.getBoundingClientRect().left + strip.scrollLeft;
 
 /** Bring one of the strip's columns into view, from anywhere on the page. */
-export function scrollToRunColumn(name: 'sources' | 'assets' | 'detail' | 'run') {
+export function scrollToRunColumn(name: 'schema' | 'sources' | 'assets' | 'detail' | 'run') {
   // After the frame that mounts it, when the ask is also what opens it.
   requestAnimationFrame(() =>
     document
@@ -28,14 +31,14 @@ export function scrollToRunColumn(name: 'sources' | 'assets' | 'detail' | 'run')
 
 /**
  * The run page as one strip, read left to right the way the material moves:
- * where it comes from (sources, when open), what the run has to read and has
- * read (assets), one asset up close (when picked), the run itself, and what
- * has been made of it (the dashboard's panels, passed in as children after
- * the run column).
+ * the schema it is read through (when revising it), where it comes from
+ * (sources, when open), what the run has to read and has read (assets), one
+ * asset up close (when picked), the run itself, and what has been made of it
+ * (the dashboard's panels, passed in as children after the run column).
  *
  * The page opens on the run: everything left of it is there to scroll back
  * to, and the strip's edge fade says so. Columns left of the run mount only
- * when asked for (sources, detail) or render lazily (assets), so opening a run
+ * when asked for (schema, sources, detail) or render lazily (assets), so opening a run
  * costs what it did before they existed.
  *
  * Narrow, the strip is a column: the sources stay away (their lines need the
@@ -48,6 +51,8 @@ export function RunStrip({
   pinned,
   sourcesOpen,
   onSourcesOpen,
+  schemaColumn,
+  trial,
   detailAssetId,
   onDetailAsset,
   narrowAssetsOpen,
@@ -60,6 +65,10 @@ export function RunStrip({
   pinned: boolean;
   sourcesOpen: boolean;
   onSourcesOpen: (open: boolean) => void;
+  /** The schema column (`RunSchemaColumn`), when open — left of everything. */
+  schemaColumn?: React.ReactNode;
+  /** What the run's drafts read, shown beside what the run read. */
+  trial?: TrialReads | null;
   detailAssetId: number | null;
   onDetailAsset: (assetId: number | null) => void;
   narrowAssetsOpen: boolean;
@@ -89,27 +98,37 @@ export function RunStrip({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sources, sourcesOpen, bundleIds.join(','), anchorId]);
 
-  // The sources open to the left of the assets, so the strip grows behind
-  // where you are looking. Before the paint, hold the assets where they were;
+  // The schema and the sources open to the left, so the strip grows behind
+  // where you are looking. Before the paint, hold what you were looking at
+  // where it was (the run column is right of both, so its shift is theirs);
   // then glide left to what just opened, the way a new window opens into a
   // scrolling tiler beside the one that asked for it. Closing, land on the
   // assets — what is left of where you were.
-  const sourcesWere = useRef(sourcesOpen);
+  const open = { schema: schemaColumn != null, sources: sourcesOpen };
+  const were = useRef(open);
+  const runWasAt = useRef<number | null>(null);
   useLayoutEffect(() => {
-    if (sourcesWere.current === sourcesOpen) return;
-    sourcesWere.current = sourcesOpen;
     const strip = stripRef.current;
-    const assets = strip?.querySelector<HTMLElement>('[data-run-column="assets"]');
-    if (!strip || !assets) return;
-    if (!sourcesOpen) {
-      strip.scrollLeft = leftIn(strip, assets);
+    const runColumn = strip?.querySelector<HTMLElement>('[data-run-column="run"]');
+    const before = were.current;
+    were.current = open;
+    const runAt = strip && runColumn ? leftIn(strip, runColumn) : null;
+    const shift = runAt != null && runWasAt.current != null ? runAt - runWasAt.current : 0;
+    runWasAt.current = runAt;
+    if (!strip) return;
+    const opened = LEFT.find((k) => open[k] && !before[k]);
+    if (opened) {
+      const column = strip.querySelector<HTMLElement>(`[data-run-column="${opened}"]`);
+      if (!column) return;
+      strip.scrollLeft += shift;
+      requestAnimationFrame(() => strip.scrollTo({ left: leftIn(strip, column), behavior: 'smooth' }));
       return;
     }
-    const sources = strip.querySelector<HTMLElement>('[data-run-column="sources"]');
-    if (!sources) return;
-    strip.scrollLeft += leftIn(strip, assets) - leftIn(strip, sources);
-    requestAnimationFrame(() => strip.scrollTo({ left: leftIn(strip, sources), behavior: 'smooth' }));
-  }, [sourcesOpen, stripRef]);
+    if (LEFT.some((k) => before[k] && !open[k])) {
+      const assets = strip.querySelector<HTMLElement>('[data-run-column="assets"]');
+      if (assets) strip.scrollLeft = leftIn(strip, assets);
+    }
+  });
 
   // Open on the run, before the first paint, so nothing visibly jumps.
   useLayoutEffect(() => {
@@ -132,6 +151,10 @@ export function RunStrip({
         pinned ? '@3xl/page:scroll-pl-72 [--pinned:18rem]' : 'scroll-edges-x',
       )}
     >
+      {schemaColumn && (
+        <div className="flex max-h-[70dvh] shrink-0 @3xl/page:max-h-none">{schemaColumn}</div>
+      )}
+
       {/* Sources and assets share one box, so the lines between them are
           drawn in one frame of reference and ride along with the strip. */}
       <div
@@ -164,7 +187,7 @@ export function RunStrip({
 
       {detailAssetId != null && (
         <div className="hidden shrink-0 @3xl/page:flex">
-          <RunAssetDetailColumn assetId={detailAssetId} run={run} schemas={schemas} onClose={() => onDetailAsset(null)} />
+          <RunAssetDetailColumn assetId={detailAssetId} run={run} schemas={schemas} trial={trial} onClose={() => onDetailAsset(null)} />
         </div>
       )}
 
