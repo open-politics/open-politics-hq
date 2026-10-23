@@ -95,6 +95,15 @@ app/
                                 # those paths (iter_values / iter_entity_refs)
         contract_resolution.py  # canon bindings → the contract a RUN executes
                                 # (type vocabulary + canon-declared properties)
+        revisions.py            # a contract annotations were made under is never
+                                # rewritten: revise · contract_at · revision_for
+        plan.py                 # what a run needs to read an asset: language_for
+                                # (the run's model, else the saved default) +
+                                # prepare → SchemaPlan; run, retries, trial, fill
+        drafts.py               # revising a schema inside a run: the draft, its
+                                # trial run, adopt · discard · follow_head
+        changes.py              # what a revision would change, scored against the
+                                # run's own annotations (the preview)
         …                       # (unchanged by the content cutover — see sections below:
                                 # formula.py, formula_query.py, query.py, panel_config.py,
                                 # tasks/annotate.py, tasks/followup.py)
@@ -513,6 +522,18 @@ Bindings: schema `x-canon` default merged with `run.configuration.canon_bindings
 
 ---
 
+## Schema revisions — `annotation/revisions.py`
+
+A contract annotations were made under is never rewritten. The schema row is its head (`output_contract`, `instructions` at `revision`); `revise()` — the only write path, used by the PATCH route and the MCP tool — keeps the head it replaces as an `AnnotationSchemaRevision` and bumps the number. Every annotation records the revision it was extracted under (`schema_rev`), so a field the schema did not have yet can be told from one the model left empty.
+
+A run reads through `RunSchemaLink.rev`: NULL follows the head, a number pins the run there. `plan.prepare` reads `contract_at(revision_for(run, schema))`, so the run loop, the retries, and later the trial and fill all extract against the revision the run is on.
+
+**Drafts — `annotation/drafts.py`.** A run's schema is revised as a draft first: a schema row with `draft_of` (the schema) and `draft_in` (the run), hidden from every list and gone with either. The editor edits it like any schema; `revise()` writes a draft in place and drops what its trial read. **A trial is a run**: the run's trial run (`trial_of`, one per run, hidden from every list) links its drafts and reads the assets it is handed through them — claimed, leased and reconciled by the engine, graphed by the network panel like any run. It copies the run's reading (configuration, canon for the type vocabulary) and none of its consequences: not live, no curation, no resolver (the resolution routes refuse it). So nothing scoped to the run or the schema ever sees a trial read, with no exclusion clause anywhere. Adopting pins the schema's other runs to what they read, revises the schema from the draft, makes the run read the head, and turns the trial's reads into the run's — over the run's own read of an asset in place (its id, and what was curated from it, stay), moved in where it had none. `changes.py` is the preview: the two schema maps diffed by path, each change counted against the run's annotations (latest 2,000 looked at, and said so), and the run's saved panels that read a changed field named.
+
+**The change clock.** `annotation.seq` (unmapped, like `CanonEntry.coords`) comes from `annotation_seq` on insert and again from a trigger whenever `value` changes. `max(seq)` over a run is its watermark — the overview frame, the network's cache key and the resolver's seed check. It was `max(id)`, which no in-place change ever moved.
+
+---
+
 ## Value aliases — two layers, one resolution order
 
 Values get normalised from two places, and the order they compose in is
@@ -557,15 +578,15 @@ Per-asset ownership (no parent→child copying). `merge_facets()` bypasses ORM; 
 
 | Mechanism | Where | What it prevents |
 |---|---|---|
-| Atomic claim | `ingest` (job) + `item_processing` (asset) | double-processing: `UPDATE … WHERE status=PENDING`, rowcount=0 → skip |
-| Redis slot concurrency | `@task` wrapper (`slot_held`, `max_concurrency` per task × infospace) | herd effects per infospace. The slot is held by a **heartbeat** — `SLOT_TTL=90` refreshed every `SLOT_HEARTBEAT=30` by a daemon thread — so a killed worker frees it in ~a minute. It was `ttl = timeout*2+60` released in a `finally`, which a killed process never reaches: four hours per crash on `process_annotation_run`, and four crashes wedged an infospace. Refresh and release are compare-and-act against a per-acquisition token, so a stalled heartbeat can never extend a slot that is no longer its own |
+| Atomic claim | `ingest` (job) + `item_processing` (asset) + `process_annotation_run` (run, per batch: `PENDING → RUNNING`, handed back after) | double-processing: `UPDATE … WHERE status=PENDING`, rowcount=0 → skip. For runs it is also what makes `RUNNING` true — the main path used to leave a working run `PENDING`, shown as "waiting for a worker" |
+| Redis slot concurrency | `@task` wrapper (`slot_held`, `max_concurrency` per task × infospace) | herd effects per infospace. The slot is held by a **heartbeat** — `SLOT_TTL=90` refreshed every `SLOT_HEARTBEAT=30` by a daemon thread — so a killed worker frees it in ~a minute. It was `ttl = timeout*2+60` released in a `finally`, which a killed process never reaches: four hours per crash on `process_annotation_run`, and four crashes wedged an infospace. Refresh and release are compare-and-act against a per-acquisition token, so a stalled heartbeat can never extend a slot that is no longer its own. The same heartbeat holds single-key `lease`s — the run and flow-execution locks (`core/redis_lock.py`), which were fixed 30-minute locks |
 | Structural block | `@task` wrapper (ProviderError → `:block` key) | retry storms on misconfig; cleared by config save |
 | Source claim | `run_source_ingestion` sets PROCESSING + advances `next_poll_at` | double-minting a poll mid-run |
 | Poll circuit breaker | `source_polling` check (`consecutive_failures` ≤ threshold) | dead-feed retry storms |
-| Stale reset | `reset_stale_processing` (3600s) | assets stuck after worker crash |
+| Stale reset | `reset_stale_processing` (3600s) · `reconcile_runs` (120s) | assets stuck after worker crash · runs: `RUNNING` with no lease is handed back, a quiet `PENDING` run is dispatched again (one-offs included — only live runs used to be), a caught-up live run with new content is re-pended. `POST /runs/{id}/action/continue` is the same check on demand |
 | `task_acks_late` + `reject_on_worker_lost` | celery_app | lost work on worker death |
 
-Beat runs as a single instance; workers replicate freely (all downstream work is idempotent via claims + the dedup ladder, with asset identity enforced by a DB constraint rather than by convention — this claim used to be aspirational, and ~20% of newly created assets were duplicates because of it). Content work runs on its own `-Q processing` pool so a long ingest cannot starve annotate/embed. Decisions ride `-Q logic` on the shared worker: a decision backend commonly answers one request at a time, so its width comes from the endpoint's own `parallel` quirk (the semaphore in `judge_many`) rather than from the pool — and when a consumer makes that contention real, the queue splits onto its own `--concurrency=1` worker the way `processing` already did.
+Beat runs as a single instance; workers replicate freely (all downstream work is idempotent via claims + the dedup ladder, with asset identity enforced by a DB constraint rather than by convention — this claim used to be aspirational, and ~20% of newly created assets were duplicates because of it). Content work runs on its own `-Q processing` pool so a long ingest cannot starve annotate/embed. Decisions run on their own `-Q logic --concurrency=1` worker: a decision backend commonly answers one request at a time, so its width comes from the endpoint's own `parallel` quirk (the semaphore in `judge_many`) rather than from the pool — and on the shared pool the resolver waited behind annotation batches that hold a slot for hours.
 
 ---
 
