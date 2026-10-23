@@ -55,6 +55,7 @@ export type AnnotationRead = {
     uuid: string;
     asset_id: number;
     schema_id: number;
+    schema_rev?: number;
     run_id: number;
     infospace_id: number;
     user_id: number;
@@ -234,6 +235,7 @@ export type AnnotationSchemaRead = {
 } | null);
     annotation_count?: (number | null);
     is_active: boolean;
+    revision?: number;
     /**
      * The contract's resolved meaning — shapes, entity paths, ``x-ref``
      * vocabularies, canon ties, time/place candidates.
@@ -1625,6 +1627,12 @@ export type DistinctValuesResponse = {
     truncated: boolean;
 };
 
+export type DraftAdopted = {
+    rev: number;
+    annotations: number;
+    pinned: number;
+};
+
 /**
  * Prose in, questions out. The evidence rides along so they fit it.
  */
@@ -1649,6 +1657,7 @@ export type DraftResponse = {
 export type EmbeddingStatsResponse = {
     total_assets: number;
     documents: number;
+    embedded_documents: number;
     sub_assets: number;
     total_chunks: number;
     embedded_chunks: number;
@@ -1656,6 +1665,7 @@ export type EmbeddingStatsResponse = {
     models_used: {
         [key: string]: unknown;
     };
+    dimension?: (number | null);
 };
 
 /**
@@ -1867,6 +1877,18 @@ export type ExternalSearchRequest = {
 } | null);
 };
 
+export type FieldChange = {
+    path: string;
+    kind: 'added' | 'removed' | 'retyped' | 'narrowed' | 'widened' | 'reworded' | 'instructions';
+    label?: (string | null);
+    before?: (string | null);
+    after?: (string | null);
+    affected?: number;
+    read_by?: Array<(string)>;
+};
+
+export type kind2 = 'added' | 'removed' | 'retyped' | 'narrowed' | 'widened' | 'reworded' | 'instructions';
+
 /**
  * Single condition on a JSONB field path.
  *
@@ -1923,6 +1945,8 @@ export type FieldNode = {
     entity_type?: (string | null);
     alternate_types?: Array<(string)>;
     enum?: Array<(string)>;
+    minimum?: (number | null);
+    maximum?: (number | null);
     type_constrained?: boolean;
     ref_targets?: Array<(string)>;
     canon?: (CanonTie | null);
@@ -3337,6 +3361,16 @@ export type RssSourceCreateRequest = {
     target_bundle_name?: (string | null);
 };
 
+/**
+ * What asking a run to continue did (`annotation.tasks.reconcile`):
+ * handed back from a worker that died, dispatched again, re-pended for new
+ * content — or nothing, because it is already moving or has nothing left.
+ */
+export type RunContinued = {
+    verdict?: ('reclaimed' | 'dispatched' | 'repended' | null);
+    run: AnnotationRunRead;
+};
+
 export type RunLedgerAsset = {
     id: number;
     title: string;
@@ -3367,6 +3401,24 @@ export type RunLedgerSummary = {
     last_annotated_at?: (string | null);
 };
 
+export type RunSchemas = {
+    schemas: Array<RunSchemaState>;
+    trial?: (AnnotationRunRead | null);
+};
+
+/**
+ * One schema as a run reads it (`annotation/drafts.py`, `revisions.py`).
+ */
+export type RunSchemaState = {
+    schema_id: number;
+    name: string;
+    reads: number;
+    head: number;
+    pinned: boolean;
+    outdated: number;
+    draft?: (AnnotationSchemaRead | null);
+};
+
 export type RunStatus = 'pending' | 'running' | 'waiting' | 'completed' | 'failed' | 'completed_with_errors';
 
 /**
@@ -3385,6 +3437,20 @@ export type SchemaBindingPreview = {
     warnings?: Array<(string)>;
     est_tokens_per_asset?: number;
 };
+
+export type SchemaChanges = {
+    reads: number;
+    to: 'draft' | 'head';
+    verdict: 'same' | 'additive' | 'breaking';
+    changes: Array<FieldChange>;
+    dropped_types: Array<TypeDrop>;
+    annotations: number;
+    looked_at: number;
+};
+
+export type to = 'draft' | 'head';
+
+export type verdict2 = 'same' | 'additive' | 'breaking';
 
 /**
  * Resolved meaning of one ``output_contract``.
@@ -3840,6 +3906,15 @@ export type TreeDeleteRequest = {
     out_of?: number;
 };
 
+export type TrialRequest = {
+    asset_ids: Array<(number)>;
+};
+
+export type TypeDrop = {
+    type: string;
+    decisions: number;
+};
+
 export type UpdatePassword = {
     current_password: string;
     new_password: string;
@@ -4112,6 +4187,49 @@ export type WatchStatusResponse = {
     inbox_path?: (string | null);
     inbox_files_pending?: number;
 };
+
+/**
+ * A condition read as a weight — the shape of a ``FieldCondition``, so
+ * every graded source (a number now, ``about`` a meaning next) arrives the
+ * same way. ``value`` reads the number itself; ``gt ge lt le between`` read
+ * it against ``value`` as 0 or 1.
+ */
+export type WeighRequest = {
+    /**
+     * A field path, as the schema map writes it (`document.severity`, `actors[*].stance`).
+     */
+    path: string;
+    operator?: 'value' | 'gt' | 'ge' | 'lt' | 'le' | 'between';
+    value?: unknown;
+};
+
+export type operator2 = 'value' | 'gt' | 'ge' | 'lt' | 'le' | 'between';
+
+/**
+ * Weights by id: listed ids have a basis, the rest are absent.
+ */
+export type WeightColumn = {
+    ids: Array<(number)>;
+    weights: Array<(number)>;
+};
+
+/**
+ * A field's weights per annotation, 0…1; the plane folds them onto its
+ * nodes (mean over the annotations that have one). ``scale`` is how the
+ * numbers were read, and their range.
+ */
+export type Weights = {
+    annotation: WeightColumn;
+    scale: WeightScale;
+};
+
+export type WeightScale = {
+    by: 'declared' | 'rank' | 'threshold' | 'none';
+    min?: (number | null);
+    max?: (number | null);
+};
+
+export type by = 'declared' | 'rank' | 'threshold' | 'none';
 
 export type GetRegistrationStatsResponse = (RegistrationStats);
 
@@ -6647,6 +6765,16 @@ export type NetworkWhereData = {
 
 export type NetworkWhereResponse = (AssetsWhere);
 
+export type NetworkWeighData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: WeighRequest;
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type NetworkWeighResponse = (Weights);
+
 export type OverviewStreamData = {
     infospaceId: number;
     packageToken?: (string | null);
@@ -7096,6 +7224,15 @@ export type ListRunAssetsData = {
 
 export type ListRunAssetsResponse = (RunLedgerAssets);
 
+export type ContinueRunData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type ContinueRunResponse = (RunContinued);
+
 export type ExtendRunData = {
     infospaceId: number;
     packageToken?: (string | null);
@@ -7240,6 +7377,79 @@ export type GetGeocodedEntitiesData = {
 };
 
 export type GetGeocodedEntitiesResponse = (Array<GeocodedEntityOut>);
+
+export type RunSchemasData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type RunSchemasResponse = (RunSchemas);
+
+export type SchemaChangesData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    runId: number;
+    schemaId: number;
+    /**
+     * What to compare what the run reads against.
+     */
+    to?: 'draft' | 'head';
+    xPackageToken?: (string | null);
+};
+
+export type SchemaChangesResponse = (SchemaChanges);
+
+export type OpenDraftData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    runId: number;
+    schemaId: number;
+    xPackageToken?: (string | null);
+};
+
+export type OpenDraftResponse = (RunSchemaState);
+
+export type DiscardDraftData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    runId: number;
+    schemaId: number;
+    xPackageToken?: (string | null);
+};
+
+export type DiscardDraftResponse = (void);
+
+export type AdoptDraftData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    runId: number;
+    schemaId: number;
+    xPackageToken?: (string | null);
+};
+
+export type AdoptDraftResponse = (DraftAdopted);
+
+export type FollowHeadData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    runId: number;
+    schemaId: number;
+    xPackageToken?: (string | null);
+};
+
+export type FollowHeadResponse = (RunSchemaState);
+
+export type TryDraftsData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: TrialRequest;
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type TryDraftsResponse = (AnnotationRunRead);
 
 export type WebSearchAndIngestData = {
     requestBody: ExternalSearchRequest;
