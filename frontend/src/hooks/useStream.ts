@@ -73,17 +73,27 @@ interface Channel {
   connected: boolean;
   error: string | null;
   close: () => void;
+  /** A pending close, while no one listens. */
+  closing: ReturnType<typeof setTimeout> | null;
 }
 
 const channels = new Map<string, Channel>();
+/** Where each stream got to — kept past its channel, so a channel reopened
+ *  a moment later resumes instead of losing what passed in between. */
+const resumeAt = new Map<string, string>();
+/** A channel left by its last listener closes after this, unless someone
+ *  subscribes again first — a remount in one commit keeps the connection. */
+const LINGER_MS = 250;
+/** Statuses that will not change by asking again: give up on them. */
+const permanent = (status: number | undefined) =>
+  status != null && status >= 400 && status < 500 && ![401, 408, 429].includes(status);
 
 /** Open a stream and keep it open — reconnecting, resuming from the last
  *  event id — until `close`. Every event goes to every listener. */
 function openChannel(url: string): Channel {
-  const channel: Channel = { listeners: new Set(), connected: false, error: null, close: () => {} };
+  const channel: Channel = { listeners: new Set(), connected: false, error: null, close: () => {}, closing: null };
   const controller = new AbortController();
   let cancelled = false;
-  let lastEventId: string | undefined;
   let attempt = 0;
 
   const status = (connected: boolean, error: string | null) => {
@@ -94,15 +104,17 @@ function openChannel(url: string): Channel {
 
   (async () => {
     while (!cancelled) {
-      status(true, null);
-      attempt = 0;
+      let failed: number | undefined;
       try {
         await connectSSE({
           url,
-          lastEventId,
+          lastEventId: resumeAt.get(url),
           signal: controller.signal,
+          // Connected once the server answers — not before — and only then
+          // does the backoff start over.
+          onOpen: () => { attempt = 0; status(true, null); },
           onEvent: (raw: SSEEvent) => {
-            if (raw.id) lastEventId = raw.id;
+            if (raw.id) resumeAt.set(url, raw.id);
             // Deadline event: server closing connection, reconnect
             if (raw.type === 'deadline') return;
             // Bare events without a body — keepalives, lifecycle pings, or
@@ -121,11 +133,16 @@ function openChannel(url: string): Channel {
             channel.listeners.forEach((l) => l.onEvent(event));
           },
         });
-      } catch {
+      } catch (err: any) {
         // connectSSE handles AbortError internally — if we're here,
         // it's a real error (network, auth, server error)
+        failed = err?.status;
       }
       if (cancelled) return;
+      if (permanent(failed)) {
+        status(false, `Stream unavailable (${failed})`);
+        return;
+      }
 
       // Stream ended or errored — reconnect with backoff
       const delay = backoffDelay(attempt);
@@ -165,6 +182,7 @@ export function useStream<T = unknown>(options: UseStreamOptions<T>): UseStreamR
       channel = openChannel(url);
       channels.set(url, channel);
     }
+    if (channel.closing) { clearTimeout(channel.closing); channel.closing = null; }
     const listener: Listener = {
       onEvent: (event) => onEventRef.current?.(event as StreamEvent<T>),
       onStatus: (connected, err) => {
@@ -180,9 +198,13 @@ export function useStream<T = unknown>(options: UseStreamOptions<T>): UseStreamR
       const ch = channels.get(url);
       if (!ch) return;
       ch.listeners.delete(listener);
-      if (ch.listeners.size === 0) {
-        ch.close();
-        channels.delete(url);
+      if (ch.listeners.size === 0 && !ch.closing) {
+        ch.closing = setTimeout(() => {
+          ch.closing = null;
+          if (ch.listeners.size) return;
+          ch.close();
+          if (channels.get(url) === ch) channels.delete(url);
+        }, LINGER_MS);
       }
       setIsConnected(false);
     };

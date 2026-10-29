@@ -39,17 +39,21 @@ export function RunAssetDetailColumn({
   run,
   schemas,
   trial,
+  stamp,
   onClose,
 }: {
   assetId: number;
   run: AnnotationRunRead;
   schemas: AnnotationSchemaRead[];
   trial?: TrialReads | null;
+  /** Moves as the run does (the ledger's version): what it read of the asset
+   *  is asked again. */
+  stamp?: unknown;
   onClose: () => void;
 }) {
   const ref = useRef<HTMLElement>(null);
-  const results = useAssetRunResults(assetId, run.id, run.infospace_id);
-  const trialResults = useAssetRunResults(trial ? assetId : null, trial?.runId, run.infospace_id);
+  const results = useAssetRunResults(assetId, run.id, run.infospace_id, stamp);
+  const trialResults = useAssetRunResults(trial ? assetId : null, trial?.runId, run.infospace_id, stamp);
   // Per schema the run reads: its draft, and what the draft read of this asset.
   const drafted = (schemaId: number) => {
     const d = trial?.drafts.find((x) => x.schemaId === schemaId)?.draft;

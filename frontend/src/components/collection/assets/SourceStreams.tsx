@@ -178,7 +178,8 @@ export function SourceStreams({
         y2: b.y,
       });
     }
-    setDrawn(next);
+    // Only a change re-renders: the observers measure often, the lines rarely move.
+    setDrawn((prev) => (prev.length === next.length && prev.every((p, i) => p.d === next[i].d && p.id === next[i].id) ? prev : next));
   }, [containerRef, streams, clearDrawn]);
 
   React.useEffect(() => {

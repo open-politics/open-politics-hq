@@ -949,7 +949,8 @@ html:has([data-app-shell]) body {
 }
 
 /* The chat card: the page's margins and corners, so their edges line up.
-   Resting, it sits exactly one screen below where it is pulled up to. */
+   Resting, its top sits a gap below the bottom of the screen — out of view,
+   one strip-step below where it is pulled up to. */
 [data-chat-strip="window"] {
   inset: calc(var(--drawer-peek) + var(--card-gap)) var(--card-gap) var(--card-gap);
   border-radius: var(--strip-radius) var(--strip-radius) var(--card-radius) var(--card-radius);

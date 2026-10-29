@@ -29,6 +29,8 @@ export interface SSEOptions {
   lastEventId?: string;
   signal?: AbortSignal;
   onEvent: (event: SSEEvent) => void;
+  /** The server answered and the stream is open. */
+  onOpen?: () => void;
   onError?: (err: Error) => void;
   onDone?: () => void;
 }
@@ -104,10 +106,11 @@ export async function connectSSE(options: SSEOptions): Promise<void> {
   }
 
   if (!resp.ok || !resp.body) {
-    const error = new Error(`SSE connection failed: ${resp.status}`);
+    const error = Object.assign(new Error(`SSE connection failed: ${resp.status}`), { status: resp.status });
     onError?.(error);
     throw error;
   }
+  options.onOpen?.();
 
   // eslint-disable-next-line no-console
   console.log('[sse] connected', url, 'headers:', {

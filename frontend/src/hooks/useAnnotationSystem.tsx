@@ -36,7 +36,16 @@ function keepIfSame(prev: AnnotationRunRead, next: AnnotationRunRead): Annotatio
     prev.progress_current === next.progress_current &&
     prev.progress_total === next.progress_total &&
     prev.live === next.live;
-  return same ? prev : next;
+  if (same) return prev;
+  // A read that left before a stream event can land after it. Within one
+  // status, progress only goes forward; and a run the stream has seen finish
+  // is not sent back to running by an older read of it.
+  const older = !!prev.updated_at && !!next.updated_at && Date.parse(next.updated_at) < Date.parse(prev.updated_at);
+  if (older) return prev;
+  if (next.status === prev.status && (next.progress_current ?? 0) < (prev.progress_current ?? 0)) {
+    return { ...next, progress_current: prev.progress_current };
+  }
+  return next;
 }
 
 export function useAnnotationSystem({ autoLoadRuns = false } = {}) {

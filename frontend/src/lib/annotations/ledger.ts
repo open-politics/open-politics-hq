@@ -41,11 +41,15 @@ export function useRunLedger(run: Pick<AnnotationRunRead, 'id' | 'infospace_id'>
   const [version, setVersion] = useState(0);
   const last = useRef<string | null>(null);
   const timer = useRef<number | null>(null);
+  // The run being read: an answer for a run already left is dropped.
+  const reading = useRef<number | null>(runId);
+  reading.current = runId;
 
   const fetchNow = useCallback(async () => {
     if (runId == null || infospaceId == null) return;
     try {
       const next = await RunsService.getRunSummary({ infospaceId, runId });
+      if (reading.current !== runId) return;
       const sig = signature(next);
       if (sig === last.current) return;
       last.current = sig;
@@ -80,24 +84,36 @@ export function useRunLedger(run: Pick<AnnotationRunRead, 'id' | 'infospace_id'>
 /**
  * One asset's annotations in one run — its children's included, so a CSV or a
  * PDF shows what was read from its rows or pages. `null` while not asked for.
+ * Asked again, quietly, whenever `stamp` moves (the ledger's version): an
+ * asset opened while queued fills in once the run reads it.
  */
-export function useAssetRunResults(assetId: number | null, runId: number | null | undefined, infospaceId: number | null | undefined) {
+export function useAssetRunResults(
+  assetId: number | null, runId: number | null | undefined, infospaceId: number | null | undefined, stamp?: unknown,
+) {
   const [results, setResults] = useState<FormattedAnnotation[] | null>(null);
+  const subject = `${assetId}:${runId}:${infospaceId}`;
+  const shown = useRef<string | null>(null);
 
   useEffect(() => {
     if (assetId == null || runId == null || infospaceId == null) {
+      shown.current = null;
       setResults(null);
       return;
     }
     let current = true;
-    setResults(null);
+    // A new asset starts empty; the same one, asked again, keeps what it has.
+    if (shown.current !== subject) {
+      shown.current = subject;
+      setResults(null);
+    }
     AnnotationsService.getRunResults({ infospaceId, runId, assetId, limit: 500 })
       .then((rows) => current && setResults(rows.map(adaptEnhancedAnnotationToFormattedAnnotation)))
-      .catch(() => current && setResults([]));
+      .catch(() => current && setResults((prev) => prev ?? []));
     return () => {
       current = false;
     };
-  }, [assetId, runId, infospaceId]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [subject, stamp]);
 
   return results;
 }

@@ -43,8 +43,11 @@ export function useScrollEdges<T extends HTMLElement>(
     // Writing attributes rather than state keeps this off the render path —
     // a scroll handler that re-renders a large table is how scrolling gets
     // slow, and nothing in React needs to know these values.
-    el.dataset.edgeStart = String(overflows && !atStart);
-    el.dataset.edgeEnd = String(overflows && !atEnd);
+    // Written only when they change: a write restyles the region, and this
+    // runs on every scroll and burst of content.
+    const start = String(overflows && !atStart), end = String(overflows && !atEnd);
+    if (el.dataset.edgeStart !== start) el.dataset.edgeStart = start;
+    if (el.dataset.edgeEnd !== end) el.dataset.edgeEnd = end;
   }, [axis]);
 
   useEffect(() => {

@@ -97,6 +97,10 @@ interface AnnotationRunnerProps {
   onClearRun: () => void;
   onRunWithNewAssets: (template: { schemaIds: number[], config: any, assetIds: number[] }) => void;
   onRetrySingleResult?: (resultId: number, customPrompt?: string) => Promise<AnnotationRead | null>;
+  /** The run was changed from here — renamed, made live, extended, retried,
+   *  continued: the page reads it again. This component's own run system
+   *  makes the change; the page's holds the run that is shown. */
+  onRunChanged?: () => void;
 }
 
 // --- Note: PanelRenderer is now imported from separate file ---
@@ -112,10 +116,11 @@ export default function AnnotationRunner({
   onClearRun,
   onRunWithNewAssets,
   onRetrySingleResult: onRetrySingleResultProp,
+  onRunChanged,
 }: AnnotationRunnerProps) {
   const {
-    retryJobFailures,
-    continueRun,
+    retryJobFailures: retryJobFailuresHere,
+    continueRun: continueRunHere,
     isRetryingJob,
     retrySingleResult: hookRetrySingleResult,
     isRetryingResultId,
@@ -124,6 +129,12 @@ export default function AnnotationRunner({
     extendRun,
     loadSchemas,
   } = useAnnotationSystem();
+
+  // Every change made from here is read back by the page once it lands, so
+  // the run on screen — and whether it is watched — follows at once.
+  const changed = useCallback(<T,>(p: Promise<T>): Promise<T> => p.finally(() => onRunChanged?.()), [onRunChanged]);
+  const retryJobFailures = useCallback((id: number) => changed(Promise.resolve(retryJobFailuresHere(id))), [changed, retryJobFailuresHere]);
+  const continueRun = useCallback((id: number) => changed(Promise.resolve(continueRunHere(id))), [changed, continueRunHere]);
 
   // BYOK keys live in browser state and are passed into the run config at
   // submission time. Extension flows have to inject fresh keys too — the
@@ -597,8 +608,8 @@ export default function AnnotationRunner({
   const handleUpdateRun = useCallback((field: 'name' | 'description' | 'live', value: string | boolean) => {
     if (!activeRun) return;
     const updatePayload: AnnotationRunUpdate = { [field]: value };
-    updateJob(activeRun.id, updatePayload);
-  }, [activeRun, updateJob]);
+    void changed(Promise.resolve(updateJob(activeRun.id, updatePayload)));
+  }, [activeRun, updateJob, changed]);
 
   const handleDeleteRun = async () => {
     if (!activeRun) return;
@@ -795,7 +806,7 @@ export default function AnnotationRunner({
         {/* Wide, this wrapper steps out of the box tree (`contents`) so the
             panels sit in the same strip as the run column. Narrow, it is the
             strip. */}
-        <div className="flex min-h-0 min-w-0 flex-1 snap-x snap-proximity gap-px overflow-x-auto overflow-y-hidden @3xl/page:contents">
+        <div className="flex min-h-0 min-w-0 flex-1 snap-x snap-proximity gap-px overflow-x-auto overflow-y-hidden overscroll-x-none @3xl/page:contents">
           {/* Render the panels as soon as we have a dashboard config —
               even while the run is still processing. Panels self-fetch and
               re-render as incremental annotations land (per-row commits in
@@ -966,6 +977,7 @@ export default function AnnotationRunner({
                           : undefined,
                       });
                       if (result) {
+                        onRunChanged?.();
                         setIsAssetSelectorOpen(false);
                         setSelectedAssetIds([]);
                       }
@@ -1044,6 +1056,7 @@ export default function AnnotationRunner({
                       : undefined,
                   });
                   if (result) {
+                    onRunChanged?.();
                     setIsExtendSchemasOpen(false);
                     setExtendSelectedSchemaIds([]);
                   }

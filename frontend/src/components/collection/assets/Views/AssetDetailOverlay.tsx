@@ -39,6 +39,17 @@ interface AssetDetailOverlayProps {
   activeRunId?: number | null;
 }
 
+/** Clears highlights when the overlay opens or moves to another asset. Out
+ *  here, not inside the overlay's render, where a new component type each
+ *  render remounted it and cleared highlights on every render. */
+function HighlightClearer({ assetId, open }: { assetId: number | null; open: boolean }) {
+  const { clearHighlights } = useTextSpanHighlight();
+  useEffect(() => {
+    if (open && assetId) clearHighlights();
+  }, [open, assetId, clearHighlights]);
+  return null;
+}
+
 export default function AssetDetailOverlay({
   open,
   onClose,
@@ -219,15 +230,6 @@ export default function AssetDetailOverlay({
 
   // Check if we should show the annotations panel (based on pre-search results, not post-search)
   const showAnnotations = resultsBeforeSearch > 0 && schemas.length > 0;
-
-  // Helper component to clear highlights when overlay opens or assetId changes
-  const HighlightClearer = ({ assetId, open }: { assetId: number | null; open: boolean }) => {
-    const { clearHighlights } = useTextSpanHighlight();
-    useEffect(() => {
-      if (open && assetId) clearHighlights();
-    }, [open, assetId, clearHighlights]);
-    return null;
-  };
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && onClose()}>

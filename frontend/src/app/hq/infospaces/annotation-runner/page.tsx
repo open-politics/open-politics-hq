@@ -75,6 +75,9 @@ export default function AnnotationRunnerPage() {
   });
 
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingProgress = useRef<{ run_id: number; progress_current?: number; progress_total?: number; status?: string } | null>(null);
+  const progressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (progressTimer.current) clearTimeout(progressTimer.current); }, []);
 
   useEffect(() => {
     if (activeInfospace?.id) {
@@ -113,16 +116,27 @@ export default function AnnotationRunnerPage() {
         // Apply progress directly from the event (no full refetch) so the
         // header's progress bar updates per-annotation without hammering
         // /runs. Also silently refresh row results so the table fills in.
-        setActiveRun((prev) =>
-          prev && prev.id === event.data.run_id
-            ? {
-                ...prev,
-                progress_current: event.data.progress_current ?? prev.progress_current,
-                progress_total: event.data.progress_total ?? prev.progress_total,
-                status: (event.data.status as AnnotationRunRead['status']) ?? prev.status,
-              }
-            : prev,
-        );
+        // Coalesced: a fast run sends a progress event per annotation, and
+        // each new run object re-renders the page — four a second is plenty.
+        pendingProgress.current = event.data;
+        if (progressTimer.current == null) {
+          progressTimer.current = setTimeout(() => {
+            progressTimer.current = null;
+            const p = pendingProgress.current;
+            pendingProgress.current = null;
+            if (!p) return;
+            setActiveRun((prev) =>
+              prev && prev.id === p.run_id
+                ? {
+                    ...prev,
+                    progress_current: p.progress_current ?? prev.progress_current,
+                    progress_total: p.progress_total ?? prev.progress_total,
+                    status: (p.status as AnnotationRunRead['status']) ?? prev.status,
+                  }
+                : prev,
+            );
+          }, 250);
+        }
         ledger.refresh();
       }
       if (event.type === 'completed' || event.type === 'completed_with_errors' || event.type === 'failed') {
@@ -194,10 +208,19 @@ export default function AnnotationRunnerPage() {
     return result;
   }, [retrySingleResult, refreshLedger]);
 
+  // A change made in the runner — live, a rename, an extension, a retry —
+  // read back at once: the run's state decides whether it is watched.
+  const onRunChanged = useCallback(() => {
+    void refreshActiveRun();
+    void refreshLedger();
+  }, [refreshActiveRun, refreshLedger]);
+
   const isProcessing = activeRun?.status === 'running' || activeRun?.status === 'pending';
   
   return (
-    <Surface>
+    // A sideways swipe here scrolls the runner's columns or pans a canvas —
+    // never the browser's history, even past the first column.
+    <Surface className="overscroll-x-none">
       <div className="relative z-10 flex min-h-0 flex-1 flex-col">
         <AnnotationRunner
             allRuns={runs}
@@ -210,6 +233,7 @@ export default function AnnotationRunnerPage() {
             onClearRun={clearActiveRun}
             onRunWithNewAssets={(template) => { /* Logic to be implemented if needed */ }}
             onRetrySingleResult={retrySingleResultWithRefresh}
+            onRunChanged={onRunChanged}
         />
         {runError && <p className="text-red-500 mt-4 text-center">{runError}</p>}
       </div>

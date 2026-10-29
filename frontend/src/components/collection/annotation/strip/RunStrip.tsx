@@ -109,7 +109,11 @@ export function RunStrip({
   const runWasAt = useRef<number | null>(null);
   useLayoutEffect(() => {
     const strip = stripRef.current;
-    const runColumn = strip?.querySelector<HTMLElement>('[data-run-column="run"]');
+    // Measured on the first panel column where there is one: the run column
+    // is sticky when pinned, and a stuck column reports where it is held,
+    // not where it lies — its "shift" would be the scroll, not the opening.
+    const runColumn = strip?.querySelector<HTMLElement>('[data-strip-column]')
+      ?? strip?.querySelector<HTMLElement>('[data-run-column="run"]');
     const before = were.current;
     were.current = open;
     const runAt = strip && runColumn ? leftIn(strip, runColumn) : null;
@@ -143,7 +147,7 @@ export function RunStrip({
       data-panel-strip
       className={cn(
         'relative flex min-h-0 flex-1 flex-col',
-        '@3xl/page:flex-row @3xl/page:gap-px @3xl/page:overflow-x-auto @3xl/page:overflow-y-hidden @3xl/page:snap-x @3xl/page:snap-proximity',
+        '@3xl/page:flex-row @3xl/page:gap-px @3xl/page:overflow-x-auto @3xl/page:overflow-y-hidden @3xl/page:overscroll-x-none @3xl/page:snap-x @3xl/page:snap-proximity',
         // Pinned, the run column covers the strip's left edge once it gets
         // there: panels are sized against the room beside it (`--pinned`)
         // and snap to its edge rather than under it. The edge fade goes,
@@ -187,7 +191,7 @@ export function RunStrip({
 
       {detailAssetId != null && (
         <div className="hidden shrink-0 @3xl/page:flex">
-          <RunAssetDetailColumn assetId={detailAssetId} run={run} schemas={schemas} trial={trial} onClose={() => onDetailAsset(null)} />
+          <RunAssetDetailColumn assetId={detailAssetId} run={run} schemas={schemas} trial={trial} stamp={ledger.version} onClose={() => onDetailAsset(null)} />
         </div>
       )}
 

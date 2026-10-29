@@ -337,7 +337,7 @@ const AssetDetailView = ({
         setCsvBrowseItems(items);
         setCsvBrowseTreeSkip(treeItems.length);
       }
-      setCsvBrowseTotal(tree.section.total);
+      setCsvBrowseTotal(tree.section.total ?? 0);
       setCsvBrowseHasMore(tree.section.has_more ?? false);
     } catch (err: any) {
       console.error('[AssetDetailView] CSV tree fetch error:', err);
@@ -792,7 +792,7 @@ const AssetDetailView = ({
       // Tree skip now reflects the start of the loaded page + its size, so
       // "load more" continues from the right offset when the user scrolls.
       setCsvBrowseTreeSkip(skip + treeItems.length);
-      setCsvBrowseTotal(tree.section.total);
+      setCsvBrowseTotal(tree.section.total ?? 0);
       setCsvBrowseHasMore(tree.section.has_more ?? false);
 
       // Find the target row in the new page and select it

@@ -38,7 +38,7 @@ const TONE: Record<RunLedgerAsset['status'], string> = {
  * away and rows that arrive slide in, so the pane is seen to move — the
  * queue draining at the top, the read filling in at the top.
  */
-function usePane(run: AnnotationRunRead, state: State, version: number, size: number) {
+function usePane(run: AnnotationRunRead, state: State, version: string | number, size: number) {
   const [items, setItems] = useState<RunLedgerAsset[] | null>(null);
   const [total, setTotal] = useState(0);
 
@@ -62,12 +62,19 @@ function usePane(run: AnnotationRunRead, state: State, version: number, size: nu
   return { items, total };
 }
 
-function AssetRow({ asset, selected, onSelect }: { asset: RunLedgerAsset; selected: boolean; onSelect: () => void }) {
+/** A row of a pane. Its ref is the presence animation's, which needs to
+ *  measure a row as it leaves. Past the first window rows do not animate their
+ *  moves — at a few hundred, measuring every one on each refresh costs more
+ *  than the motion is worth. */
+const AssetRow = React.forwardRef<HTMLLIElement, {
+  asset: RunLedgerAsset; selected: boolean; onSelect: () => void; animate: boolean;
+}>(function AssetRow({ asset, selected, onSelect, animate }, ref) {
   const Icon = getAssetIconComponent(asset.kind);
   const label = asset.status === 'queued' ? 'Queued' : asset.status === 'failed' ? 'Failed' : 'Annotated';
   return (
     <motion.li
-      layout="position"
+      ref={ref}
+      layout={animate ? 'position' : false}
       initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, transition: { duration: 0.15 } }}
@@ -94,7 +101,7 @@ function AssetRow({ asset, selected, onSelect }: { asset: RunLedgerAsset; select
       </button>
     </motion.li>
   );
-}
+});
 
 /**
  * One half of the column: a heading with the one figure only it can give,
@@ -142,9 +149,11 @@ function Pane({
           <p className="px-2 py-1 text-xs text-hud-dimmer">{empty}</p>
         ) : (
           <ul className="space-y-px">
-            <AnimatePresence initial={false}>
-              {items.map((a) => (
-                <AssetRow key={a.id} asset={a} selected={a.id === selectedAssetId} onSelect={() => onSelectAsset(a.id)} />
+            {/* Leaving rows stop holding their place at once, so the
+                window rotates without a stutter. */}
+            <AnimatePresence initial={false} mode="popLayout">
+              {items.map((a, k) => (
+                <AssetRow key={a.id} asset={a} animate={k < WINDOW} selected={a.id === selectedAssetId} onSelect={() => onSelectAsset(a.id)} />
               ))}
             </AnimatePresence>
           </ul>
@@ -212,8 +221,11 @@ export function RunAssetsColumn({
     setQueueSize(WINDOW);
     setReadSize(WINDOW);
   }, [run.id]);
-  const queue = usePane(run, 'queued', version, queueSize);
-  const read = usePane(run, 'annotated', version, readSize);
+  // Each pane asks again only when its own count moves.
+  const queueStamp = summary ? `${summary.queued}` : version;
+  const readStamp = summary ? `${summary.annotated + summary.failed}:${summary.last_annotated_at ?? ''}` : version;
+  const queue = usePane(run, 'queued', queueStamp, queueSize);
+  const read = usePane(run, 'annotated', readStamp, readSize);
 
 
   return (

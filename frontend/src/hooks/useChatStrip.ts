@@ -43,6 +43,17 @@ function settle(from: number, to: 0 | 1) {
     window.setTimeout(() => el.style.removeProperty('--chat-pull-ms'), ms + 50);
   }
   if (from === 0 && to === 0) part('page')?.removeAttribute('data-chat-moved');
+  // Back at rest the page drops its transform once the transition ends; if
+  // that end never comes (interrupted, or a browser without registered
+  // properties), drop it anyway once the time is up.
+  if (to === 0) {
+    window.setTimeout(() => {
+      const page = part('page');
+      if (page && !page.hasAttribute('data-following') && !useChatStore.getState().drawerOpen) {
+        page.removeAttribute('data-chat-moved');
+      }
+    }, ms + 120);
+  }
 }
 
 /**
@@ -142,6 +153,25 @@ export function useChatStrip(
     };
     const pullOf = (d: NonNullable<typeof drag>) => (d.from === 0 ? progress(d) : 1 - progress(d));
 
+    /** A drag given up, not let go: the strip goes back where it started. */
+    const abandon = () => {
+      if (!drag) return;
+      const d = drag;
+      drag = null;
+      window.clearTimeout(timer);
+      settle(pullOf(d), d.from);
+    };
+    // The drawer moved without the hand — a button, Escape, Ctrl+K — while a
+    // drag was under way: that drag is over, and its release must not undo
+    // the press.
+    const unsubscribe = useChatStore.subscribe((st, prev) => {
+      if (drag && st.drawerOpen !== prev.drawerOpen) {
+        drag = null;
+        window.clearTimeout(timer);
+        for (const el of strip()) el.removeAttribute('data-following');
+      }
+    });
+
     const release = (velocity = 0) => {
       if (!drag) return;
       const d = drag;
@@ -206,7 +236,9 @@ export function useChatStrip(
     };
 
     const onTouchMove = (e: TouchEvent) => {
-      if (!touch || e.touches.length !== 1) return;
+      // A second finger is a pinch, not a pull: give the strip back.
+      if (e.touches.length !== 1) { touch = null; abandon(); return; }
+      if (!touch) return;
       const t = e.touches[0];
       // The finger moves against the content: lifting it scrolls down.
       const dy = touch.y - t.clientY;
@@ -227,6 +259,11 @@ export function useChatStrip(
       if (samples.length > 6) samples.shift();
     };
 
+    const onTouchCancel = () => {
+      touch = null;
+      abandon();
+    };
+
     const onTouchEnd = () => {
       touch = null;
       if (!drag) return;
@@ -241,14 +278,15 @@ export function useChatStrip(
     window.addEventListener('touchstart', onTouchStart, opts);
     window.addEventListener('touchmove', onTouchMove, opts);
     window.addEventListener('touchend', onTouchEnd, opts);
-    window.addEventListener('touchcancel', onTouchEnd, opts);
+    window.addEventListener('touchcancel', onTouchCancel, opts);
     return () => {
+      unsubscribe();
       window.clearTimeout(timer);
       window.removeEventListener('wheel', onWheel);
       window.removeEventListener('touchstart', onTouchStart);
       window.removeEventListener('touchmove', onTouchMove);
       window.removeEventListener('touchend', onTouchEnd);
-      window.removeEventListener('touchcancel', onTouchEnd);
+      window.removeEventListener('touchcancel', onTouchCancel);
     };
   }, [page]);
 }
