@@ -37,6 +37,7 @@ from app.core.filters import (
     MergeMap,
     condition_sql,
     jsonb_scalar_accessor,
+    NUMBER_PATTERN,
     jsonb_value_accessor,
     merge_case,
     parse_explosion,
@@ -302,6 +303,21 @@ ResultsPage.model_rebuild()
 # ---------------------------------------------------------------------------
 # Builder
 # ---------------------------------------------------------------------------
+
+def _guarded_number(acc: str) -> str:
+    """``acc`` as a float where it reads as a number, NULL where it does not —
+    a value that is not a number is absent, never an error. The pattern is the
+    one filters compare with (``core.filters.NUMBER_PATTERN``, bounded so no
+    value overflows the cast), so a threshold and a weight read alike."""
+    return "CASE WHEN (" + acc + ") ~ '" + NUMBER_PATTERN + "' THEN btrim(" + acc + ")::float END"
+
+
+def _one_array(ep: Any, path: str) -> None:
+    """A number is read through one array at most; a path through two
+    (`a[*].b[*].c`) would silently read nothing, so it is refused."""
+    if ep.remainder and "[*]" in ep.remainder:
+        raise ValueError(f"{path} reads through more than one array")
+
 
 class AnnotationQuery:
     """Composable SQL builder rooted in the Annotation table.
@@ -1545,6 +1561,7 @@ class AnnotationQuery:
         out, never read as zero; text that does not parse as a number is not
         one. What a value reads as a weight, one annotation at a time."""
         ep = parse_explosion(value_field)
+        _one_array(ep, value_field)
         clauses, params = self._base_where(include_cursor=False)
         from_clause = "annotation a"
         element_alias: str | None = None
@@ -1567,12 +1584,50 @@ class AnnotationQuery:
             acc, acc_params = jsonb_scalar_accessor("a.value", value_field, param_name="num_fp")
             params.update(acc_params)
         # A guarded cast: a value that is not a number is absent, not an error.
-        number = f"CASE WHEN btrim({acc}) ~ '^-?[0-9]+(\\.[0-9]+)?$' THEN btrim({acc})::float END"
+        number = _guarded_number(acc)
         sql = (
             f"SELECT a.id, avg({number}) AS v FROM {from_clause} "
             f"WHERE {' AND '.join(clauses)} GROUP BY a.id HAVING avg({number}) IS NOT NULL"
         )
         return [(int(r[0]), float(r[1])) for r in self._session.exec(text(sql).bindparams(**params)).all()]
+
+    def number_elements(self, value_field: str, name_rel: str) -> list[tuple[int, str, float]]:
+        """The number at an exploded ``value_field`` per array element, with
+        the entity that element names — ``actors[*].stance`` read as each
+        actor's own stance in each annotation. ``name_rel`` is where the
+        element names its entity: ``""`` when the element is the entity,
+        ``"actor"`` when it holds one. Elements naming the same entity in one
+        annotation share their mean; elements without a number or a name are
+        left out.
+        """
+        ep = parse_explosion(value_field)
+        if not (ep.is_exploded and ep.array_field):
+            raise ValueError(f"{value_field} is not a path into an array")
+        _one_array(ep, value_field)
+        clauses, params = self._base_where(include_cursor=False)
+        arr_acc, arr_params = jsonb_value_accessor("a.value", ep.array_field, param_name="expl_fp")
+        params.update(arr_params)
+        from_clause = f"annotation a, LATERAL jsonb_array_elements({safe_array_elements(arr_acc)}) AS elem"
+        self._apply_conditions(clauses, params, element_alias="elem", active_explosion=ep.array_field)
+
+        if ep.remainder:
+            acc, acc_params = jsonb_scalar_accessor("elem", ep.remainder, param_name="num_fp")
+            params.update(acc_params)
+        else:
+            acc = scalar_of("elem")
+        if name_rel:
+            name_acc, name_params = jsonb_scalar_accessor("elem", name_rel, param_name="name_fp")
+            params.update(name_params)
+        else:
+            name_acc = scalar_of("elem")
+        number = _guarded_number(acc)
+        name = f"NULLIF(btrim({name_acc}), '')"
+        sql = (
+            f"SELECT a.id, {name} AS who, avg({number}) AS v FROM {from_clause} "
+            f"WHERE {' AND '.join(clauses)} AND {name} IS NOT NULL "
+            f"GROUP BY a.id, {name} HAVING avg({number}) IS NOT NULL"
+        )
+        return [(int(r[0]), str(r[1]), float(r[2])) for r in self._session.exec(text(sql).bindparams(**params)).all()]
 
     def distinct_values(
         self,

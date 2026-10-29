@@ -41,6 +41,12 @@ def _valid_path(path: str) -> bool:
 # Filter models
 # ---------------------------------------------------------------------------
 
+# A JSON scalar's text that reads as a number — what a comparison compares,
+# and what every reader casts with `::float` (`annotation/query`'s too).
+# Bounded so nothing that passes can overflow float8: at most 30 digits
+# either side of the point, a two-digit exponent — 1e129 at the most.
+NUMBER_PATTERN = r"^\s*[-+]?([0-9]{1,30}(\.[0-9]{0,30})?|\.[0-9]{1,30})([eE][-+]?[0-9]{1,2})?\s*$"
+
 Operator = Literal[
     "eq", "ne",
     "gt", "ge", "lt", "le",
@@ -598,6 +604,9 @@ def condition_sql(
 
     op = cond.operator
     val = cond.value
+    # What is a number there, as one; anything else (`"n/a"`) NULL — so a
+    # comparison passes over it instead of failing the whole query.
+    number = f"(CASE WHEN ({acc}) ~ '{NUMBER_PATTERN}' THEN ({acc})::float END)"
 
     if op == "eq":
         fragment = f"({acc})::text = {_p(f'{pp}_val')}"
@@ -611,7 +620,7 @@ def condition_sql(
         sql_op = {"gt": ">", "ge": ">=", "lt": "<", "le": "<="}[op]
         try:
             params[f"{pp}_val"] = float(val)
-            fragment = f"({acc})::float {sql_op} {_p(f'{pp}_val')}"
+            fragment = f"{number} {sql_op} {_p(f'{pp}_val')}"
         except (ValueError, TypeError):
             params[f"{pp}_val"] = str(val)
             fragment = f"({acc})::text {sql_op} {_p(f'{pp}_val')}"
@@ -643,7 +652,7 @@ def condition_sql(
             params[f"{pp}_lo"] = float(val[0])
             params[f"{pp}_hi"] = float(val[1])
             fragment = (
-                f"({acc})::float BETWEEN {_p(f'{pp}_lo')} AND {_p(f'{pp}_hi')}"
+                f"{number} BETWEEN {_p(f'{pp}_lo')} AND {_p(f'{pp}_hi')}"
             )
         except (ValueError, TypeError):
             params[f"{pp}_lo"] = str(val[0])
