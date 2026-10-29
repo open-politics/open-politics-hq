@@ -324,7 +324,7 @@ def get_run_results(
         )
         return results
     except ValueError as ve:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(ve))
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(ve))
     except HTTPException as he:
         raise he
     except Exception as e:

@@ -294,7 +294,7 @@ def get_run_summary(
     """Where the run's scope stands: in scope, queued, annotated and failed
     assets (counted at the root), and annotations per schema. Aggregates only,
     so it is cheap enough to ask on every bit of progress."""
-    return ledger.summary(session, _readable_run(session, access, run_id))
+    return ledger.summary(session, _readable_run(session, access, run_id), package=access.scope)
 
 
 @router.get("/{run_id}/assets", response_model=RunLedgerAssets)
@@ -309,7 +309,8 @@ def list_run_assets(
 ) -> Any:
     """One page of the run's queue (in scope, not yet read; in processing
     order) or of its annotated assets (latest first), with the state's total."""
-    return ledger.assets(session, _readable_run(session, access, run_id), state, skip=skip, limit=limit)
+    return ledger.assets(session, _readable_run(session, access, run_id), state, skip=skip, limit=limit,
+                         package=access.scope)
 
 
 @router.post("/{run_id}/action/continue", response_model=RunContinued)

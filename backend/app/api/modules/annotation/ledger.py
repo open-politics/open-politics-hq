@@ -12,7 +12,7 @@ annotations are rolled up to it (``coalesce(parent_asset_id, id)``). An asset
 is *annotated* when any of its annotations succeeded, *failed* when it has
 annotations and none did, and *queued* while it is in scope with none at all.
 """
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from sqlalchemy import func, or_, text
 from sqlmodel import Session, select
@@ -134,16 +134,41 @@ def _rollup(run: AnnotationRun):
     )
 
 
-def _root_filters(session: Session, run: AnnotationRun) -> Optional[list]:
+def _visible(package: Any) -> list:
+    """What a package grant lets its reader see of the run's assets: the assets
+    it names (with the ancestors of what the run annotated) and its bundles'
+    subtrees. A reader with no package sees the infospace's — no clause."""
+    if package is None:
+        return []
+    ids = list(package.asset_ids or ())
+    bids = list(package.bundle_ids or ())
+    clauses = []
+    if ids:
+        clauses.append(Asset.id.in_(ids))
+    if bids:
+        clauses.append(text("asset.bundle_ids && CAST(:visible_bids AS int[])").bindparams(visible_bids=bids))
+    return [or_(*clauses)] if clauses else [Asset.id.in_([])]
+
+
+def _root_filters(session: Session, run: AnnotationRun, package: Any = None) -> Optional[list]:
     """What makes an asset one of the run's roots in scope, or None if the run
-    has no scope of its own (a flow step or a retry hands it assets one by one)."""
+    has no scope of its own (a flow step or a retry hands it assets one by one).
+
+    A run named rows or pages outright (``target_asset_ids`` of CSV rows, PDF
+    pages) reads their documents: those count as its roots."""
     scope = run_scope_clause(session, run)
     if scope is None:
         return None
-    return [scope, Asset.infospace_id == run.infospace_id, Asset.parent_asset_id.is_(None)]
+    named = (run.configuration or {}).get("target_asset_ids") or []
+    if named:
+        parents = session.exec(
+            select(func.coalesce(Asset.parent_asset_id, Asset.id)).where(Asset.id.in_(list(named)))
+        ).all()
+        scope = or_(scope, Asset.id.in_(list({int(p) for p in parents})))
+    return [scope, Asset.infospace_id == run.infospace_id, Asset.parent_asset_id.is_(None), *_visible(package)]
 
 
-def summary(session: Session, run: AnnotationRun) -> RunLedgerSummary:
+def summary(session: Session, run: AnnotationRun, package: Any = None) -> RunLedgerSummary:
     rolled = _rollup(run)
     annotated, failed, last = session.exec(
         select(
@@ -154,7 +179,7 @@ def summary(session: Session, run: AnnotationRun) -> RunLedgerSummary:
     ).one()
 
     in_scope = queued = None
-    filters = _root_filters(session, run)
+    filters = _root_filters(session, run, package)
     if filters is not None:
         roots = select(Asset.id).where(*filters).subquery()
         in_scope, queued = session.exec(
@@ -187,13 +212,14 @@ def assets(
     *,
     skip: int = 0,
     limit: int = 100,
+    package: Any = None,
 ) -> RunLedgerAssets:
     """One page of the queue (in processing order) or of the annotated
     (latest first), with the total for that state."""
     rolled = _rollup(run)
 
     if state == "queued":
-        filters = _root_filters(session, run)
+        filters = _root_filters(session, run, package)
         if filters is None:
             return RunLedgerAssets(items=[], total=0)
         base = (
@@ -207,11 +233,12 @@ def assets(
         # An annotated asset's moment is when it was read.
         base = select(Asset.id, Asset.title, Asset.kind, rolled.c.last, rolled.c.ok).join(
             rolled, rolled.c.root_id == Asset.id
-        )
+        ).where(*_visible(package))
         order = rolled.c.last.desc()
 
     total = session.exec(select(func.count()).select_from(base.subquery())).one()
-    rows = session.exec(base.order_by(order).offset(skip).limit(limit)).all()
+    # Ties broken by id, so paging neither repeats nor skips a row.
+    rows = session.exec(base.order_by(order, Asset.id.desc()).offset(skip).limit(limit)).all()
     return RunLedgerAssets(
         total=total,
         items=[
