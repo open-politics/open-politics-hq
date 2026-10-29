@@ -12,6 +12,9 @@ each needs (``reconcile``):
                                    dispatch again
     live, caught up, new content   new material landed in the watched bundle →
                                    re-pend; the streaming delta reads only it
+    live, caught up, scope moved   an asset joined behind the watermark (moved
+                                   in, or its bundle was) and is unread →
+                                   re-pend; the sweep reads it
 
 Monitoring falls out of the last line — it isn't a feature. Every re-dispatch
 is idempotent (the claim, the streaming delta and the pair-level skip), so one
@@ -54,7 +57,9 @@ def reconcile(
     ``held``: a worker holds the run's lease right now. ``force``: skip the
     quiet period. None means the run needs nothing — it is moving, or done.
     """
-    from app.api.modules.annotation.tasks.annotate import _delta_query, WATERMARK_KEY
+    from app.api.modules.annotation.tasks.annotate import (
+        SCOPE_SIG_KEY, WATERMARK_KEY, _delta_query, _scope_signature, _stragglers_query,
+    )
 
     now = datetime.now(timezone.utc)
 
@@ -75,10 +80,21 @@ def reconcile(
         return "dispatched"
 
     if run.live and run.status in _CAUGHT_UP:
-        watermark = int((run.configuration or {}).get(WATERMARK_KEY, 0) or 0)
+        cfg = run.configuration or {}
+        watermark = int(cfg.get(WATERMARK_KEY, 0) or 0)
         delta = _delta_query(session, run, watermark, limit=1)
-        if delta is None or session.exec(delta).first() is None:
-            return None  # caught up — nothing new in the subtree above the watermark
+        if delta is None:
+            return None
+        if session.exec(delta).first() is None:
+            # Nothing new above the watermark. Behind it, only if the scope has
+            # moved since the last pass — two numbers, cheap — and something
+            # there is unread; so an asset that yields nothing is tried once per
+            # change of scope, not every heartbeat.
+            if _scope_signature(session, run) == cfg.get(SCOPE_SIG_KEY):
+                return None
+            behind = _stragglers_query(session, run, 0, watermark, limit=1)
+            if behind is None or session.exec(behind).first() is None:
+                return None
         run.status = RunStatus.PENDING
         run.completed_at = None
         run.progress_total = None

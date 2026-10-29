@@ -2268,6 +2268,8 @@ async def process_assets_parallel(
 # reconciler rides this: it just flips a caught-up live run back to PENDING.
 
 WATERMARK_KEY = "_watermark"  # max asset id this run has attempted; the stream cursor
+SWEEP_KEY = "_sweep"          # how far the sweep below the watermark has read this pass
+SCOPE_SIG_KEY = "_scope_sig"  # the scope as the last finished pass left it: [count, id sum]
 LIVE_AGGREGATE_THROTTLE_SECONDS = 120  # min gap between aggregate recomputes for a live run
 ERROR_TEXT_LIMIT = 2000
 
@@ -2302,6 +2304,67 @@ def _delta_query(session: Session, run: AnnotationRun, watermark: int, *, limit:
         .order_by(Asset.id)
     )
     return q.limit(limit) if limit is not None else q
+
+
+def _stragglers_query(
+    session: Session, run: AnnotationRun, after: int, watermark: int, *, limit: Optional[int] = None,
+):
+    """Assets in scope at or below the watermark that the run has nothing for
+    — on themselves or on their rows or pages — above the sweep cursor
+    ``after``. Returns None if the run is unscoped.
+
+    The watermark only moves forward, so an asset that joins the scope with an
+    older id — moved into a watched bundle, or under it with a whole bundle —
+    is below it before the run ever sees it. The sweep reads those, once the
+    run has caught up above the watermark. Any annotation counts as read,
+    failed ones too: retrying failures is its own act, not the sweep's.
+    """
+    scope = run_scope_clause(session, run)
+    if scope is None:
+        return None
+    unread = text(
+        "NOT EXISTS (SELECT 1 FROM annotation an WHERE an.run_id = :sweep_run AND an.asset_id = asset.id) "
+        "AND NOT EXISTS (SELECT 1 FROM annotation an JOIN asset part ON part.id = an.asset_id "
+        "WHERE an.run_id = :sweep_run AND part.parent_asset_id = asset.id)"
+    ).bindparams(sweep_run=run.id)
+    q = (
+        select(Asset.id)
+        .where(
+            scope,
+            Asset.infospace_id == run.infospace_id,
+            Asset.id > after,
+            Asset.id <= watermark,
+            unread,
+        )
+        .order_by(Asset.id)
+    )
+    return q.limit(limit) if limit is not None else q
+
+
+def _scope_signature(session: Session, run: AnnotationRun) -> Optional[list[int]]:
+    """The scope as it stands, in two numbers: how many assets, and their id
+    sum. It changes when an asset joins or leaves — by its own move or its
+    bundle's — which is all the reconciler needs to know to sweep again. None
+    if the run is unscoped."""
+    scope = run_scope_clause(session, run)
+    if scope is None:
+        return None
+    count, total = session.exec(
+        select(func.count(), func.coalesce(func.sum(Asset.id), 0)).where(
+            scope, Asset.infospace_id == run.infospace_id,
+        )
+    ).one()
+    return [int(count), int(total)]
+
+
+def _finish_pass(session: Session, run: AnnotationRun) -> None:
+    """A pass read everything in scope, above the watermark and behind it:
+    the sweep starts over next pass, and the scope it read is remembered."""
+    cfg = dict(run.configuration or {})
+    cfg[SWEEP_KEY] = 0
+    cfg[SCOPE_SIG_KEY] = _scope_signature(session, run)
+    run.configuration = cfg
+    session.add(run)
 
 
 async def _process_annotation_run_async(
@@ -2368,9 +2431,20 @@ async def _process_annotation_run_async(
 
             target_asset_ids_to_process = list(session.exec(delta).all())
 
+            # Caught up above the watermark: read what joined the scope behind
+            # it, a batch at a time, with the sweep's own cursor — so an asset
+            # that yields nothing is passed, not tried again next batch.
+            sweep_after = int(run_config.get(SWEEP_KEY, 0) or 0)
+            sweeping = False
+            if not target_asset_ids_to_process:
+                behind = _stragglers_query(session, run, sweep_after, watermark, limit=chunk_size)
+                target_asset_ids_to_process = list(session.exec(behind).all()) if behind is not None else []
+                sweeping = bool(target_asset_ids_to_process)
+
             if not target_asset_ids_to_process:
                 # Caught up — every (asset, schema) pair in scope is annotated.
                 # A live run sits here, "watching", until the reconciler re-pends it.
+                _finish_pass(session, run)
                 run.status = RunStatus.COMPLETED
                 run.completed_at = datetime.now(timezone.utc)
                 run.updated_at = datetime.now(timezone.utc)
@@ -2510,7 +2584,11 @@ async def _process_annotation_run_async(
                 count_q = select(func.count()).select_from(
                     _delta_query(session, run, watermark).subquery()
                 )
-                run.progress_total = session.exec(count_q).one() or 0
+                behind_q = select(func.count()).select_from(
+                    _stragglers_query(session, run, sweep_after, watermark).subquery()
+                )
+                # What this pass has to read: above the watermark, and behind it.
+                run.progress_total = (session.exec(count_q).one() or 0) + (session.exec(behind_q).one() or 0)
                 run.progress_current = 0
                 session.add(run)
                 session.commit()
@@ -2634,7 +2712,11 @@ async def _process_annotation_run_async(
             # has work: the wrapper hands the run back to PENDING for the
             # self-chain, and does not emit completion.
             cfg = dict(run.configuration or {})
-            cfg[WATERMARK_KEY] = max(int(cfg.get(WATERMARK_KEY, 0) or 0), batch_watermark)
+            if sweeping:
+                # Behind the watermark: the sweep's cursor moves, the watermark stays.
+                cfg[SWEEP_KEY] = max(int(cfg.get(SWEEP_KEY, 0) or 0), batch_watermark)
+            else:
+                cfg[WATERMARK_KEY] = max(int(cfg.get(WATERMARK_KEY, 0) or 0), batch_watermark)
             run.configuration = cfg
             session.add(run)
             session.commit()
@@ -2651,12 +2733,15 @@ async def _process_annotation_run_async(
                     from app.api.modules.graph.tasks.curation import curate_annotated
                     curate_annotated.delay(batch_ann_ids, run.infospace_id)
 
-            remaining = session.exec(
-                _delta_query(session, run, cfg[WATERMARK_KEY], limit=1)
-            ).first()
+            mark = int(cfg.get(WATERMARK_KEY, 0) or 0)
+            remaining = session.exec(_delta_query(session, run, mark, limit=1)).first()
+            if remaining is None:
+                behind = _stragglers_query(session, run, int(cfg.get(SWEEP_KEY, 0) or 0), mark, limit=1)
+                remaining = session.exec(behind).first() if behind is not None else None
             if remaining is not None:
-                logger.info(f"Task: Run {run.id} batch done (watermark {cfg[WATERMARK_KEY]}); more remain.")
+                logger.info(f"Task: Run {run.id} batch done (watermark {mark}, sweep {cfg.get(SWEEP_KEY, 0)}); more remain.")
                 return "more"
+            _finish_pass(session, run)
 
             # Determine final run status. ``all_created_annotations`` holds only
             # THIS batch's results, so a multi-batch run could hide earlier

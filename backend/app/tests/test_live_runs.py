@@ -328,6 +328,8 @@ def test_reconcile_repends_a_live_run_only_for_new_content(db):
     bundle = _bundle(db, iid, uid, "watched")
     first = _asset(db, iid, uid, "first", [bundle])
     run = _run_in(db, iid, uid, RunStatus.COMPLETED, live=True, source_bundle_id=bundle)
+    # Caught up means read: the asset under the watermark has its annotation.
+    _annotation(db, iid, uid, run.id, _schema(db, iid, uid), first)
     run.configuration = {WATERMARK_KEY: first}
 
     assert reconcile(db, run, held=False) is None, "caught up — nothing above the watermark"
@@ -344,3 +346,57 @@ def test_reconcile_leaves_a_finished_one_off_alone(db):
     run = _run_in(db, iid, uid, RunStatus.COMPLETED)
     assert reconcile(db, run, held=False, force=True) is None
     assert run.status == RunStatus.COMPLETED
+
+
+def test_an_asset_that_joins_behind_the_watermark_is_swept(db):
+    """The watermark only moves forward: an older asset moved into a watched
+    bundle is below it from the start. The reconciler sees the scope move and
+    something unread behind the watermark; the sweep reads it; a pass that
+    finished remembers the scope, so nothing is re-pended for it again."""
+    from app.api.modules.annotation.tasks.annotate import (
+        SCOPE_SIG_KEY, _finish_pass, _stragglers_query,
+    )
+    from app.api.modules.annotation.tasks.reconcile import reconcile
+
+    uid = _user(db, "sweep")
+    iid = _infospace(db, uid, "sweep")
+    schema = _schema(db, iid, uid)
+    watched = _bundle(db, iid, uid, "watched")
+    elsewhere = _bundle(db, iid, uid, "elsewhere")
+    old = _asset(db, iid, uid, "old", [elsewhere])          # the lower id
+    read = _asset(db, iid, uid, "read", [watched])
+    run = _run_in(db, iid, uid, RunStatus.COMPLETED, live=True, source_bundle_id=watched)
+    _annotation(db, iid, uid, run.id, schema, read)
+    run.configuration = {WATERMARK_KEY: read}
+    _finish_pass(db, run)
+    assert reconcile(db, run, held=False) is None, "read, and the scope as the pass left it"
+
+    # The old asset is moved in — the way the tree moves it, raw SQL, no row touched otherwise.
+    db.execute(text("UPDATE asset SET bundle_ids = ARRAY[:b]::int[] WHERE id = :a"), {"b": watched, "a": old})
+    assert old < read
+    assert [r for r in db.exec(_stragglers_query(db, run, 0, read)).all()] == [old]
+    assert reconcile(db, run, held=False) == "repended"
+
+    # Read now (what the sweep's batch leaves): nothing behind the watermark,
+    # and once the pass finishes the moved scope is the remembered one.
+    _annotation(db, iid, uid, run.id, schema, old)
+    assert [r for r in db.exec(_stragglers_query(db, run, 0, read)).all()] == []
+    run.status = RunStatus.COMPLETED
+    _finish_pass(db, run)
+    assert run.configuration[SCOPE_SIG_KEY] == [2, old + read]
+    assert reconcile(db, run, held=False) is None
+
+
+def test_an_asset_that_yields_nothing_is_swept_once_per_change_of_scope(db):
+    from app.api.modules.annotation.tasks.annotate import _finish_pass
+    from app.api.modules.annotation.tasks.reconcile import reconcile
+
+    uid = _user(db, "sweep_once")
+    iid = _infospace(db, uid, "sweep_once")
+    watched = _bundle(db, iid, uid, "watched")
+    empty = _asset(db, iid, uid, "empty csv", [watched])    # read, but nothing came of it
+    run = _run_in(db, iid, uid, RunStatus.COMPLETED, live=True, source_bundle_id=watched)
+    run.configuration = {WATERMARK_KEY: empty}
+    # A pass that swept it and finished: the scope is remembered as is.
+    _finish_pass(db, run)
+    assert reconcile(db, run, held=False) is None, "unread, but the scope has not moved since"
