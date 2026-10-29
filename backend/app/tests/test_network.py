@@ -252,12 +252,17 @@ def scored(db):
         "odd": {"document": {"severity": "n/a", "actors": [{"name": "e", "stance": 3}]}},
         "bare": {"document": {}},
     }
-    anns = {}
+    anns, assets = {}, {}
+
+    def add(name, value):
+        assets[name] = _asset(db, iid, uid, name)
+        anns[name] = _annotation(db, iid, uid, run, sid, assets[name], value)
+        db.flush()
+
     for name, value in rows.items():
-        anns[name] = _annotation(db, iid, uid, run, sid, _asset(db, iid, uid, name), value)
-    db.flush()
+        add(name, value)
     scope = ov.open_scope(db, types.SimpleNamespace(infospace_id=iid, scope=None), run)
-    return types.SimpleNamespace(scope=scope, anns=anns)
+    return types.SimpleNamespace(scope=scope, anns=anns, assets=assets, add=add)
 
 
 def _by_ann(w, out):
@@ -285,3 +290,22 @@ def test_a_threshold_weighs_one_or_zero_over_the_numbers_there_are(scored):
     assert out["scale"]["by"] == "threshold"
     assert _by_ann(scored, out) == {"low": 0.0, "mid": 1.0, "high": 1.0}
     assert net.weigh(scored.scope, "document.nothing", "value")["annotation"]["ids"] == []
+
+
+def test_a_comparison_gathers_the_assets_whose_number_passes(scored):
+    assets = scored.assets
+    assert sorted(net.assets_where(scored.scope, "document.severity", ">=", ["5"])) == sorted([assets["mid"], assets["high"]])
+    assert net.assets_where(scored.scope, "document.severity", "<", ["2"]) == [assets["low"]]
+    # Elements of an array: any one passing will do.
+    assert net.assets_where(scored.scope, "document.actors[*].stance", ">", ["8"]) == [assets["high"]]
+    with pytest.raises(ValueError):
+        net.assets_where(scored.scope, "document.severity", ">", ["high"])
+
+
+def test_a_comparison_passes_over_numbers_too_large_to_read(scored):
+    # Postgres prints a JSON 1e400 as its 400 digits; a string may say it
+    # outright. Neither overflows the cast: both read as no number at all.
+    scored.add("vast", {"document": {"severity": 10 ** 400}})
+    scored.add("said", {"document": {"severity": "1e400"}})
+    assert sorted(net.assets_where(scored.scope, "document.severity", ">=", ["5"])) == sorted(
+        [scored.assets["mid"], scored.assets["high"]])

@@ -5,6 +5,10 @@
          behind a set of the graph's annotations; see :func:`network_assets`
     POST /infospaces/{iid}/runs/{run_id}/network/where    (JSON) — the assets
          whose annotations carry a value; see :func:`network_where`
+    POST /infospaces/{iid}/runs/{run_id}/network/weigh    (JSON) — a number,
+         or a meaning, as a weight per annotation; see :func:`network_weigh`
+    POST /infospaces/{iid}/runs/{run_id}/network/describe (JSON) — some of the
+         run's documents in words; see :func:`network_describe`
 
     frame     denominators + the watermark (the overview's frame)
     building  every few seconds while the graph assembles: elapsed time
@@ -219,10 +223,12 @@ def network_assets(
 
 class ValueTerm(BaseModel):
     """A condition on the run's annotation values — ``sentiment = negative``,
-    ``topics ~ energy``. Values are alternatives."""
+    ``topics ~ energy``, ``severity > 7``. Values are alternatives; a
+    comparison takes one, a number."""
 
     path: str = Field(description="A field path, as the schema map writes it (`topics[*]`).")
-    op: Literal["=", "~"] = Field(description="`=` is one of the values; `~` contains one.")
+    op: Literal["=", "~", ">", ">=", "<", "<="] = Field(
+        description="`=` is one of the values; `~` contains one; `> >= < <=` compare the number there to the value.")
     values: list[str] = Field(min_length=1, max_length=50)
 
 
@@ -257,13 +263,23 @@ def network_where(
 
 class WeighRequest(BaseModel):
     """A condition read as a weight — the shape of a ``FieldCondition``, so
-    every graded source (a number now, ``about`` a meaning next) arrives the
-    same way. ``value`` reads the number itself; ``gt ge lt le between`` read
-    it against ``value`` as 0 or 1."""
+    every graded source arrives the same way. ``value`` reads the number
+    itself; ``gt ge lt le between`` read it against ``value`` as 0 or 1;
+    ``about`` reads a meaning — ``value`` a phrase or alternatives, ``like``
+    documents whose centroid is one more, ``path`` ``$`` — and, given
+    ``labels``, the reader's node names by what they say."""
 
-    path: str = Field(description="A field path, as the schema map writes it (`document.severity`, `actors[*].stance`).")
-    operator: Literal["value", "gt", "ge", "lt", "le", "between"] = "value"
+    path: str = Field(description="A field path, as the schema map writes it (`document.severity`, `actors[*].stance`); `$` for `about`.")
+    operator: Literal["value", "gt", "ge", "lt", "le", "between", "about"] = "value"
     value: Any = None
+    labels: list[str] | None = Field(
+        default=None, max_length=500_000,
+        description="`about` only: node names to weigh by their own vectors — the *said* basis. Omitted = none.",
+    )
+    like: list[int] | None = Field(
+        default=None, max_length=20_000,
+        description="`about` only: documents of the run whose centroid is one more alternative — a held room's snapshot.",
+    )
 
 
 class WeightColumn(BaseModel):
@@ -277,15 +293,43 @@ class WeightScale(BaseModel):
     by: Literal["declared", "rank", "threshold", "none"]
     min: float | None = None
     max: float | None = None
+    quantiles: list[float] | None = Field(
+        default=None,
+        description="`rank` only: the raw value (a score, a cosine) at each twentieth of the rank, lowest first.",
+    )
+
+
+class LabelWeights(BaseModel):
+    """Weights by name: listed names have a vector, the rest are absent."""
+
+    names: list[str]
+    weights: list[float]
+    scale: WeightScale
+
+
+class ElementWeights(BaseModel):
+    """Weights per array element, by the annotation and the entity the element
+    names — a number that belongs to the entities in an array, read as each
+    one's own (an actor's stance)."""
+
+    annotation: list[int]
+    name: list[str]
+    weights: list[float]
+    scale: WeightScale
 
 
 class Weights(BaseModel):
     """A field's weights per annotation, 0…1; the plane folds them onto its
     nodes (mean over the annotations that have one). ``scale`` is how the
-    numbers were read, and their range."""
+    numbers were read, and their range. ``label`` is ``about``'s said basis,
+    when names were asked about: a node takes its own name's weight.
+    ``element``, for a number inside an array of entities: each entity takes
+    the elements that name it, and other nodes none."""
 
     annotation: WeightColumn
     scale: WeightScale
+    label: LabelWeights | None = None
+    element: ElementWeights | None = None
 
 
 @router.post("/{run_id}/network/weigh", response_model=Weights)
@@ -295,13 +339,80 @@ def network_weigh(
     body: WeighRequest,
     access: Access = Requires(scope=None),
 ) -> Any:
-    """A number in the run's annotations as a weight per annotation — what a
-    value surface is raised from and what pulls nodes to their value."""
+    """A number in the run's annotations, or a meaning, as a weight per
+    annotation — what a surface is raised from and what pulls nodes to their
+    value.
+
+    Sync, so the whole read — scope, scans, session — stays on one worker
+    thread and off the event loop the network streams beat on. ``about``
+    awaits its provider on a loop of its own there."""
     access.require_in_scope("run_ids", run_id)
     with Session(engine) as session:
         try:
             scope = ov.open_scope(session, access, run_id)
+            if body.operator == "about":
+                return asyncio.run(net.about(scope, body.value, labels=body.labels, like=body.like))
             return net.weigh(scope, body.path, body.operator, body.value)
+        except LookupError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
+
+
+# ─── Reading in words ────────────────────────────────────────────────────────
+
+
+class DescribeRequest(BaseModel):
+    """Some of the run's documents — a room's — to read in words."""
+
+    documents: list[int] = Field(max_length=20_000)
+    labels: list[str] = Field(
+        default_factory=list, max_length=50_000,
+        description="Names to read the meaning in, by their own vectors — the room's.",
+    )
+    passages: int = Field(default=3, ge=0, le=10)
+    terms: int = Field(default=8, ge=0, le=30)
+
+
+class ReadingPassage(BaseModel):
+    asset_id: int
+    title: str
+    text: str
+    similarity: float
+
+
+class ReadingTerm(BaseModel):
+    text: str
+    similarity: float
+
+
+class Reading(BaseModel):
+    """What the documents are about, apart from the rest of the run: their
+    passages and the names closest to it, best first. ``documents`` were read;
+    ``embedded`` of them have chunks, which the reading stands on."""
+
+    passages: list[ReadingPassage]
+    terms: list[ReadingTerm]
+    documents: int
+    embedded: int
+
+
+@router.post("/{run_id}/network/describe", response_model=Reading)
+def network_describe(
+    *,
+    run_id: int,
+    body: DescribeRequest,
+    access: Access = Requires(scope=None),
+) -> Any:
+    """Documents of the run in words — the meaning that sets them apart from
+    the rest of it, as passages and names. A room's reading. Sync, as weigh."""
+    access.require_in_scope("run_ids", run_id)
+    with Session(engine) as session:
+        try:
+            scope = ov.open_scope(session, access, run_id)
+            return asyncio.run(net.describe(
+                scope, body.documents, body.labels, passages=body.passages, terms=body.terms,
+            ))
         except LookupError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except ValueError as e:
