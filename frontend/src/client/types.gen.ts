@@ -1549,6 +1549,19 @@ export type DeriveSpec = {
 };
 
 /**
+ * Some of the run's documents — a room's — to read in words.
+ */
+export type DescribeRequest = {
+    documents: Array<(number)>;
+    /**
+     * Names to read the meaning in, by their own vectors — the room's.
+     */
+    labels?: Array<(string)>;
+    passages?: number;
+    terms?: number;
+};
+
+/**
  * One group key of a Formula's output relation.
  *
  * ``kind`` is mostly a semantic tag: the engine treats ``field``,
@@ -1649,6 +1662,18 @@ export type DraftResponse = {
     questions: {
         [key: string]: QuestionIn;
     };
+};
+
+/**
+ * Weights per array element, by the annotation and the entity the element
+ * names — a number that belongs to the entities in an array, read as each
+ * one's own (an actor's stance).
+ */
+export type ElementWeights = {
+    annotation: Array<(number)>;
+    name: Array<(string)>;
+    weights: Array<(number)>;
+    scale: WeightScale;
 };
 
 /**
@@ -2625,6 +2650,15 @@ export type KnowledgeGraphUpdate = {
 };
 
 /**
+ * Weights by name: listed names have a vector, the rest are absent.
+ */
+export type LabelWeights = {
+    names: Array<(string)>;
+    weights: Array<(number)>;
+    scale: WeightScale;
+};
+
+/**
  * Language defaults with context-specific overrides.
  *
  * ``default`` is the base choice. ``chat`` and ``annotation`` override it for
@@ -3254,6 +3288,30 @@ export type RagSource = {
 export type RawEntityItem = {
     name: string;
     type: string;
+};
+
+/**
+ * What the documents are about, apart from the rest of the run: their
+ * passages and the names closest to it, best first. ``documents`` were read;
+ * ``embedded`` of them have chunks, which the reading stands on.
+ */
+export type Reading = {
+    passages: Array<ReadingPassage>;
+    terms: Array<ReadingTerm>;
+    documents: number;
+    embedded: number;
+};
+
+export type ReadingPassage = {
+    asset_id: number;
+    title: string;
+    text: string;
+    similarity: number;
+};
+
+export type ReadingTerm = {
+    text: string;
+    similarity: number;
 };
 
 /**
@@ -4126,7 +4184,8 @@ export type ValidationError = {
 
 /**
  * A condition on the run's annotation values — ``sentiment = negative``,
- * ``topics ~ energy``. Values are alternatives.
+ * ``topics ~ energy``, ``severity > 7``. Values are alternatives; a
+ * comparison takes one, a number.
  */
 export type ValueTerm = {
     /**
@@ -4134,16 +4193,16 @@ export type ValueTerm = {
      */
     path: string;
     /**
-     * `=` is one of the values; `~` contains one.
+     * `=` is one of the values; `~` contains one; `> >= < <=` compare the number there to the value.
      */
-    op: '=' | '~';
+    op: '=' | '~' | '>' | '>=' | '<' | '<=';
     values: Array<(string)>;
 };
 
 /**
- * `=` is one of the values; `~` contains one.
+ * `=` is one of the values; `~` contains one; `> >= < <=` compare the number there to the value.
  */
-export type op = '=' | '~';
+export type op = '=' | '~' | '>' | '>=' | '<' | '<=';
 
 /**
  * The unified /view request.
@@ -4190,20 +4249,30 @@ export type WatchStatusResponse = {
 
 /**
  * A condition read as a weight — the shape of a ``FieldCondition``, so
- * every graded source (a number now, ``about`` a meaning next) arrives the
- * same way. ``value`` reads the number itself; ``gt ge lt le between`` read
- * it against ``value`` as 0 or 1.
+ * every graded source arrives the same way. ``value`` reads the number
+ * itself; ``gt ge lt le between`` read it against ``value`` as 0 or 1;
+ * ``about`` reads a meaning — ``value`` a phrase or alternatives, ``like``
+ * documents whose centroid is one more, ``path`` ``$`` — and, given
+ * ``labels``, the reader's node names by what they say.
  */
 export type WeighRequest = {
     /**
-     * A field path, as the schema map writes it (`document.severity`, `actors[*].stance`).
+     * A field path, as the schema map writes it (`document.severity`, `actors[*].stance`); `$` for `about`.
      */
     path: string;
-    operator?: 'value' | 'gt' | 'ge' | 'lt' | 'le' | 'between';
+    operator?: 'value' | 'gt' | 'ge' | 'lt' | 'le' | 'between' | 'about';
     value?: unknown;
+    /**
+     * `about` only: node names to weigh by their own vectors — the *said* basis. Omitted = none.
+     */
+    labels?: (Array<(string)> | null);
+    /**
+     * `about` only: documents of the run whose centroid is one more alternative — a held room's snapshot.
+     */
+    like?: (Array<(number)> | null);
 };
 
-export type operator2 = 'value' | 'gt' | 'ge' | 'lt' | 'le' | 'between';
+export type operator2 = 'value' | 'gt' | 'ge' | 'lt' | 'le' | 'between' | 'about';
 
 /**
  * Weights by id: listed ids have a basis, the rest are absent.
@@ -4216,17 +4285,26 @@ export type WeightColumn = {
 /**
  * A field's weights per annotation, 0…1; the plane folds them onto its
  * nodes (mean over the annotations that have one). ``scale`` is how the
- * numbers were read, and their range.
+ * numbers were read, and their range. ``label`` is ``about``'s said basis,
+ * when names were asked about: a node takes its own name's weight.
+ * ``element``, for a number inside an array of entities: each entity takes
+ * the elements that name it, and other nodes none.
  */
 export type Weights = {
     annotation: WeightColumn;
     scale: WeightScale;
+    label?: (LabelWeights | null);
+    element?: (ElementWeights | null);
 };
 
 export type WeightScale = {
     by: 'declared' | 'rank' | 'threshold' | 'none';
     min?: (number | null);
     max?: (number | null);
+    /**
+     * `rank` only: the raw value (a score, a cosine) at each twentieth of the rank, lowest first.
+     */
+    quantiles?: (Array<(number)> | null);
 };
 
 export type by = 'declared' | 'rank' | 'threshold' | 'none';
@@ -6774,6 +6852,16 @@ export type NetworkWeighData = {
 };
 
 export type NetworkWeighResponse = (Weights);
+
+export type NetworkDescribeData = {
+    infospaceId: number;
+    packageToken?: (string | null);
+    requestBody: DescribeRequest;
+    runId: number;
+    xPackageToken?: (string | null);
+};
+
+export type NetworkDescribeResponse = (Reading);
 
 export type OverviewStreamData = {
     infospaceId: number;
