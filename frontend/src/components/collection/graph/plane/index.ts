@@ -16,10 +16,12 @@
  *   TimeDeck        a layer on `usePlane()` — time as depth, the present in front
  *   gain.ts         turning types, entities and groups up or down
  *   sets.ts         the reader's own groups, from types, names, nodes, groups,
- *                   places, other sets and the documents' values
+ *                   places, other sets, the documents' values and meanings
  *   anchoring.ts    sets placed on the canvas, gathering what they hold
- *   light.ts        what the reader keeps lit, with its direct links
- *   PlaneAnchors    the anchors, on any surface — plane, map or deck
+ *   rooms.ts        sets placed as boxes: reading what is inside, or holding
+ *   light.ts        what the reader keeps lit, with its direct links, and the
+ *                   paths between two sets
+ *   PlaneAnchors    the anchors and rooms, on any surface — plane, map or deck
  *   declutter.ts    names that fit, and what is under the pointer
  */
 export * from './network';
@@ -39,8 +41,9 @@ export * from './declutter';
 export { TimeDeck, VANISH_REACH, type TimeDeckProps, type DeckApi } from './TimeDeck';
 export * from './gain';
 export * from './anchoring';
+export * from './rooms';
 export * from './sets';
 export * from './fields';
 export * from './surface';
 export * from './light';
-export { PlaneAnchors, type AnchorMark, type Inset, type Surface } from './PlaneAnchors';
+export { PlaneAnchors, DrawRoom, type AnchorMark, type Inset, type Surface } from './PlaneAnchors';

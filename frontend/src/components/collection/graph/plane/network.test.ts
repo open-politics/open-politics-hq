@@ -624,3 +624,110 @@ describe('declutter', () => {
     expect(stackAt([40, 40], [1, 2, 3], (i) => screen[i], (i) => -i)).toEqual([3]);
   });
 });
+
+describe('spread', () => {
+  // ann —meeting— bob, ann —works_for→ acme; rome links to nothing.
+  const at = (f: Float32Array) => Array.from(f, (v) => (Number.isNaN(v) ? 'NaN' : Math.round(v * 1000) / 1000));
+
+  test('a halo reaches what the members touch, and never the set’s own weight', async () => {
+    const { evaluateSets, haloOf } = await import('./sets');
+    const score = Float32Array.from([0.8, 0.2, NaN, NaN, NaN]);
+    const set = { id: 's', terms: [{ kind: 'value' as const, op: '=' as const, values: [], field: 'stance', measure: true }], spread: 0.5 };
+    const r = evaluateSets([set], { net, groupMembers: () => undefined, valueAssets: () => new Set(), weights: () => score }).get('s')!;
+    // The set: Ann and Bob, by their stance — the meeting and Acme beside them say nothing.
+    expect(at(r.weight!)).toEqual([0.8, 0.2, 'NaN', 'NaN', 'NaN']);
+    // Its halo: each neighbour at half the most it touches; Rome touches no one.
+    expect(at(haloOf(net, set, r))).toEqual([0.8, 0.2, 0.4, 0.4, 'NaN']);
+    expect(at(haloOf(net, { ...set, spread: 0 }, r))).toEqual([0.8, 0.2, 'NaN', 'NaN', 'NaN']);
+  });
+
+  test('a plain set’s halo is full on its members, its spread beside them', async () => {
+    const { haloOf, SPREAD } = await import('./sets');
+    const halo = haloOf(net, { id: 'p', terms: [] }, { members: [0], pending: false });
+    expect(at(halo)).toEqual([1, 'NaN', SPREAD, SPREAD, 'NaN']);
+  });
+
+  test('a set turned up reaches as far as its halo', async () => {
+    const { gainStops, GAIN_STOPS } = await import('./gain');
+    const halo = Float32Array.from([1, NaN, 0.4, 0.4, NaN]);
+    const stops = gainStops(net, [{ kind: 'set', key: 'p', value: 1 }], () => null, () => halo);
+    expect(at(stops)).toEqual([GAIN_STOPS, 0, GAIN_STOPS * 0.4, GAIN_STOPS * 0.4, 0]);
+  });
+});
+
+describe('rooms', () => {
+  const ids = (xs: Iterable<number>) => [...xs].map((i) => net.id[i]).sort();
+  const at = (...xs: number[]) => Float32Array.from(xs);
+  // ann (0,0)  bob (10,0)  meet (5,5)  acme (100,100)  rome (NaN — not drawn)
+  const positions = at(0, 0, 10, 0, 5, 5, 100, 100, NaN, NaN);
+
+  test('a room holds what is drawn inside it — what is shown, a folded group whole', async () => {
+    const { insideOf, roomBetween } = await import('./rooms');
+    const { identity } = await import('./collapse');
+    const view = identity(net);
+    const room = roomBetween([-1, -1], [11, 6]);
+    expect(room).toEqual([5, 2.5, 12, 7]);
+    const mask = insideOf(view, positions, room);
+    expect(ids(mask.reduce<number[]>((xs, m, i) => (m ? [...xs, i] : xs), []))).toEqual(['ann', 'bob', 'meet']);
+    const shown = Uint8Array.from([1, 0, 1, 1, 1]);
+    expect(insideOf(view, positions, room, shown)[1]).toBe(0);
+  });
+
+  test('the region term reads its own room; with none here nothing is inside', async () => {
+    const { evaluateSets } = await import('./sets');
+    const inside = Uint8Array.from([1, 1, 1, 0, 0]);
+    const r = evaluateSets([
+      { id: 'room', terms: [{ kind: 'region', op: '=', values: [] }] },
+      { id: 'people', terms: [{ kind: 'type', op: '=', values: ['Person'] }, { kind: 'region', op: '=', values: [] }] },
+      { id: 'away', terms: [{ kind: 'region', op: '=', values: [] }] },
+      { id: 'later', terms: [{ kind: 'region', op: '=', values: [] }] },
+    ], {
+      net, groupMembers: () => undefined, valueAssets: () => undefined,
+      inside: (id) => (id === 'away' ? null : id === 'later' ? undefined : inside),
+    });
+    expect(ids(r.get('room')!.members)).toEqual(['ann', 'bob', 'meet']);
+    expect(ids(r.get('people')!.members)).toEqual(['ann', 'bob']);
+    expect(r.get('away')!).toEqual({ members: [], pending: false });
+    expect(r.get('later')!.pending).toBe(true);
+  });
+
+  test('a room\'s documents are those mostly about what is inside', async () => {
+    const { roomDocuments } = await import('./rooms');
+    // 100 produced ann and acme; 101 all five.
+    expect(roomDocuments(net, Uint8Array.from([1, 0, 0, 1, 0]))).toEqual([100]);
+    // Nothing past half: the most inside.
+    expect(roomDocuments(net, Uint8Array.from([0, 1, 0, 0, 0]))).toEqual([101]);
+    expect(roomDocuments(net, new Uint8Array(5))).toEqual([]);
+  });
+
+  test('holding swaps the region for a snapshot of what it read, reading swaps it back', async () => {
+    const { holdRoom, readRoom, readsInside, holdsSnapshot } = await import('./rooms');
+    const { describeSet, dropValue } = await import('./sets');
+    const reading = { id: 'r', terms: [{ kind: 'type' as const, op: '=' as const, values: ['Person'] }, { kind: 'region' as const, op: '=' as const, values: [] }] };
+    const held = holdRoom(reading, ['ann', 'bob'], 0.1);
+    expect(readsInside(held)).toBe(false);
+    expect(holdsSnapshot(held)).toBe(true);
+    expect(held.terms[1]).toEqual({ kind: 'about', op: '=', values: [], like: ['ann', 'bob'], range: [0.9, 1] });
+    expect(describeSet(held, (_, v) => v)).toBe('type = Person · ≈ like 2 nodes, closest 10%');
+    expect(readRoom(held)).toEqual(reading);
+    // A room that only held starts to read; taking a region off takes it off.
+    expect(readsInside(readRoom({ id: 'p', terms: [] }))).toBe(true);
+    expect(dropValue(reading, 1, '').terms).toEqual([reading.terms[0]]);
+    expect(holdRoom(reading, [], 0.1)).toBe(reading);
+  });
+
+  test('the paths between two sets: their links, and through one node between', async () => {
+    const { betweenOf, betweenKey } = await import('./light');
+    const { identity } = await import('./collapse');
+    const view = identity(net);
+    const [ann, bob, acme] = ['ann', 'bob', 'acme'].map((id) => net.index.get(id)!);
+    const through = betweenOf(view, [ann], [bob]);
+    expect(ids(through.seeds)).toEqual(['ann', 'bob', 'meet']);
+    expect(through.links.sort()).toEqual([0, 1]);
+    const direct = betweenOf(view, [ann], [acme]);
+    expect(direct.links).toEqual([2]);
+    expect(ids(direct.points)).toEqual(['acme', 'ann']);
+    expect(betweenOf(view, [ann], [net.index.get('rome')!]).links).toEqual([]);
+    expect(betweenKey('b', 'a')).toBe(betweenKey('a', 'b'));
+  });
+});

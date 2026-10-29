@@ -70,8 +70,10 @@ interface GroundSeg {
   quad?: [number, number, number][];
 }
 
-/** The ground as wireframe pieces, grouped by the slice they start in. */
-function groundSegments(g: Ground, span: Span): GroundSeg[][] {
+/** The ground as wireframe pieces, grouped by the slice they start in — and
+ *  the pieces that close a quad, for the sheet, kept apart once so a frame
+ *  never filters them again. */
+function groundSegments(g: Ground, span: Span): { segs: GroundSeg[][]; quads: GroundSeg[][] } {
   const out: GroundSeg[][] = Array.from({ length: g.rows }, () => []);
   const step = (g.x1 - g.x0) / Math.max(1, g.cols - 1);
   const at = (r: number, c: number) => g.height[r * g.cols + c];
@@ -93,7 +95,7 @@ function groundSegments(g: Ground, span: Span): GroundSeg[][] {
       if (!Number.isNaN(next)) out[r].push({ ax: x, ay: y, ka: r, bx: x, by: heightOf(next, span), kb: r + 1, w: (h + next) / 2 });
     }
   }
-  return out;
+  return { segs: out, quads: out.map((row) => row.filter((q) => q.quad)) };
 }
 
 export interface TimeDeckProps {
@@ -129,7 +131,25 @@ export interface TimeDeckProps {
    *  every slice, and the nodes rise toward it by `rise` (0…1). Exact
    *  values draw as a wireframe; an `approximate` field — a meaning — as a
    *  lattice of points, so a reader never takes one for the other. */
-  surface?: { field: Field; hue: string; rise: number; approximate?: boolean } | null;
+  surface?: {
+    field: Field; hue: string; rise: number; approximate?: boolean;
+    /** What the heights mean, for the gauge at the present: the field's
+     *  scale (`declared` 1…10, or `rank`) and its name. */
+    scale?: { by: string; min?: number | null; max?: number | null; label?: string };
+    /** The scale's strata (`fields.bandsOf`): at the present, how many
+     *  nodes stand in each, as bars along the gauge — and the one shown. */
+    bands?: ReadonlyArray<{ lo: number; hi: number; label: string }>;
+    band?: number | null;
+  } | null;
+  /** More fields drawn as ground beside the primary one — a score and a
+   *  meaning, stacked as sheets. Drawn only: the nodes rise to the primary,
+   *  and its gauge and hover are the ones read. */
+  sheets?: ReadonlyArray<{ id: string; field: Field; hue: string; approximate?: boolean }>;
+  /** The pointer is over the primary ground: the band of `surface.bands` it
+   *  is in — null when it leaves. Told only when the band changes. */
+  onGround?: (band: number | null) => void;
+  /** The primary ground was clicked: the band there. */
+  onGroundPick?: (band: number) => void;
   /** Cut the deck at one instant of the present, named by its slice — null:
    *  no cut. */
   slicer?: { label: (slice: number) => string } | null;
@@ -216,13 +236,18 @@ export function TimeDeck(props: TimeDeckProps) {
     positions: null as Float32Array | null,
     /** How far the nodes have risen, eased toward the surface's `rise`. */
     rise: 0,
+    /** Bumped when the layout itself moves — not when the nodes only rise,
+     *  which changes no x, so the ground stands. */
+    rawVersion: 0,
+    /** The band last told to `onGround`. */
+    bandTold: null as number | null,
+    gauge: { key: '', bars: [] as Array<{ y0: number; y1: number; len: number; j: number }> },
     /** The field the nodes rise toward — kept while they settle back after
      *  the surface goes. */
     liftField: null as Field | null,
-    ground: {
-      key: '', field: null as Field | null, presence: null as Presence | null,
-      grid: null as Ground | null, segs: [] as GroundSeg[][], span: null as Span | null,
-    },
+    /** Each sheet's terrain, by its field — measured again when the layout or
+     *  the field moves. */
+    grounds: new Map<Field, { key: string; presence: Presence; grid: Ground; segs: GroundSeg[][]; quads: GroundSeg[][] }>(),
     posVersion: 0,
     target: [0, 0] as [number, number],
     zoom: 0,
@@ -361,23 +386,42 @@ export function TimeDeck(props: TimeDeckProps) {
     const span = spanNow();
     s.positions = field && span && s.rise > 0.001 && s.raw ? towardField(s.raw, field, span, s.rise) : s.raw;
   };
-  /** The terrain for the field as it stands, measured from what is drawn. */
+  /** The sheets drawn: the primary first, then the rest. */
+  const sheetsNow = (): Array<{ id: string; field: Field; hue: string; approximate?: boolean; primary: boolean }> => {
+    const { surface, sheets } = latest.current;
+    const out: Array<{ id: string; field: Field; hue: string; approximate?: boolean; primary: boolean }> =
+      surface ? [{ id: 'primary', field: surface.field, hue: surface.hue, approximate: surface.approximate, primary: true }] : [];
+    for (const x of sheets ?? []) if (x.field !== surface?.field) out.push({ ...x, primary: false });
+    return out;
+  };
+  /** A field's terrain as it stands, measured from what is drawn. */
+  const groundOf = (field: Field) => {
+    const box = plateNow();
+    const span = spanNow();
+    if (!box || !span || !s.positions) return null;
+    const presence = latest.current.presence;
+    // The ground is measured across x alone, which the rise never moves.
+    const key = `${s.rawVersion}`;
+    const had = s.grounds.get(field);
+    if (had && had.key === key && had.presence === presence) return had;
+    const grid = surfaceGrid(s.raw ?? s.positions, field, presence, box[0], box[2]);
+    const made = { key, presence, grid, ...groundSegments(grid, span) };
+    // Only the sheets on show are kept.
+    const live = new Set(sheetsNow().map((x) => x.field));
+    for (const f of s.grounds.keys()) if (!live.has(f)) s.grounds.delete(f);
+    s.grounds.set(field, made);
+    return made;
+  };
   const groundNow = () => {
     const sf = latest.current.surface;
-    const box = plateNow();
-    if (!sf || !box || !s.positions) return null;
-    const presence = latest.current.presence;
-    const key = `${s.posVersion}`;
-    if (s.ground.key !== key || s.ground.field !== sf.field || s.ground.presence !== presence) {
-      const grid = surfaceGrid(s.positions, sf.field, presence, box[0], box[2]);
-      const span = spanNow()!;
-      s.ground = { key, field: sf.field, presence, grid, segs: groundSegments(grid, span), span };
-    }
-    return s.ground;
+    return sf ? groundOf(sf.field) : null;
   };
-  const groundLayers = (k: number, alpha: number, ground: { key: string; segs: GroundSeg[][] }) => {
+  const groundLayers = (
+    k: number, alpha: number, ground: { key: string; segs: GroundSeg[][]; quads: GroundSeg[][] },
+    sf: { id: string; hue: string; approximate?: boolean; primary: boolean },
+  ) => {
     const M = mods.current!;
-    const sf = latest.current.surface!;
+    const present = sf.primary && k === Math.round(focus());
     const [r, g, b] = hexToRgba(sf.hue);
     const z = (q: number) => -q * s.depth;
     const segs = ground.segs[k];
@@ -386,9 +430,10 @@ export function TimeDeck(props: TimeDeckProps) {
     const tone = (w: number, a: number) => [base[0], base[1], base[2], (a + (255 - a) * w) * 0.7];
     if (sf.approximate) {
       return [new M.ScatterplotLayer({
-        id: `gd-${k}`,
+        id: `gd-${sf.id}-${k}`,
         data: segs,
         opacity: alpha,
+        pickable: sf.primary && alpha > 0.3,
         radiusUnits: 'pixels',
         getPosition: (q: GroundSeg) => [q.ax, q.ay, z(q.ka)],
         getRadius: 1.4,
@@ -398,8 +443,8 @@ export function TimeDeck(props: TimeDeckProps) {
     }
     return [
       new M.SolidPolygonLayer({
-        id: `gf-${k}`,
-        data: segs.filter((q) => q.quad),
+        id: `gf-${sf.id}-${k}`,
+        data: ground.quads[k],
         _full3d: true,
         opacity: alpha * 0.35,
         parameters: { depthWriteEnabled: false },
@@ -408,15 +453,130 @@ export function TimeDeck(props: TimeDeckProps) {
         updateTriggers: { getPolygon: [ground.key, s.depth], getFillColor: [sf.hue] },
       }),
       new M.LineLayer({
-        id: `gl-${k}`,
+        id: `gl-${sf.id}-${k}`,
         data: segs,
         opacity: alpha,
+        // The primary sheet is the one read under the pointer.
+        pickable: sf.primary && alpha > 0.3,
         getSourcePosition: (q: GroundSeg) => [q.ax, q.ay, z(q.ka)],
         getTargetPosition: (q: GroundSeg) => [q.bx, q.by, z(q.kb)],
-        getColor: (q: GroundSeg) => tone(q.w, 40),
-        getWidth: (q: GroundSeg) => (q.ka === q.kb ? 1.1 : 0.6),
+        // At the present the ground's own row is its cross-section — drawn
+        // full, the profile of the scale at this instant.
+        getColor: (q: GroundSeg) => (present && q.ka === q.kb ? [base[0], base[1], base[2], 235] : tone(q.w, 40)),
+        getWidth: (q: GroundSeg) => (q.ka === q.kb ? (present ? 2 : 1.1) : 0.6),
         widthUnits: 'pixels',
-        updateTriggers: { getSourcePosition: [ground.key, s.depth], getTargetPosition: [ground.key, s.depth], getColor: [sf.hue] },
+        updateTriggers: {
+          getSourcePosition: [ground.key, s.depth], getTargetPosition: [ground.key, s.depth],
+          getColor: [sf.hue, present], getWidth: [present],
+        },
+      }),
+    ];
+  };
+
+  /** The strata at slice k: the drawn nodes there, counted per band — kept
+   *  while the slice, the field and what is drawn stay as they are. */
+  const strataAt = (
+    k: number, sf: NonNullable<TimeDeckProps['surface']>, box: [number, number, number, number], span: Span,
+  ) => {
+    const d = dataRef.current;
+    if (!sf.bands?.length) return [];
+    const key = `${k}:${s.rawVersion}`;
+    if (s.gauge.key === key && (s.gauge as any).field === sf.field && (s.gauge as any).data === d) return s.gauge.bars;
+    const here = d.nodes[k] ?? [];
+    const counts = sf.bands.map(() => 0);
+    for (const i of here) {
+      const w = sf.field[i];
+      if (Number.isNaN(w)) continue;
+      const j = sf.bands.findIndex((b) => w >= b.lo - 1e-6 && w <= b.hi + 1e-6);
+      if (j >= 0) counts[j]++;
+    }
+    const most = Math.max(1, ...counts);
+    const room = (box[2] - box[0]) * 0.12;
+    const bars = sf.bands.flatMap((b, j) => (counts[j]
+      ? [{ y0: heightOf(b.lo, span), y1: heightOf(b.hi, span), len: (counts[j] / most) * room, j }] : []));
+    s.gauge = { key, bars };
+    Object.assign(s.gauge, { field: sf.field, data: d });
+    return bars;
+  };
+
+  /** The band of the primary ground under a pick, or null. */
+  const groundBand = (id: string | undefined, info: any): number | null => {
+    if (!(id?.startsWith('gl-primary-') || id?.startsWith('gd-primary-')) || !(info?.index >= 0)) return null;
+    const bands = latest.current.surface?.bands;
+    const w = (info.object as GroundSeg).w;
+    if (!bands?.length) return null;
+    const j = bands.findIndex((b) => w >= b.lo - 1e-6 && w <= b.hi + 1e-6);
+    return j >= 0 ? j : null;
+  };
+
+  const gaugeLayers = () => {
+    const sf = latest.current.surface;
+    const box = plateNow();
+    const span = spanNow();
+    if (!sf || !box || !span || !groundNow()) return null;
+    const M = mods.current!;
+    const theme = themeRef.current;
+    const [r, g, b] = hexToRgba(sf.hue);
+    const z = -focus() * s.depth;
+    const x = box[0];
+    const unit = 1 / 2 ** s.fitZoom;
+    const sc = sf.scale;
+    const word = (t: number) => {
+      if (sc?.by === 'declared' && sc.min != null && sc.max != null) {
+        const v = sc.min + t * (sc.max - sc.min);
+        return Number.isInteger(v) ? String(v) : v.toFixed(1);
+      }
+      return t === 0 ? 'lowest' : t === 1 ? 'highest' : 'middle';
+    };
+    const ticks = [0, 0.5, 1].map((t) => ({ t, y: heightOf(t, span) }));
+    // The strata at the present: the nodes there, counted per band, as bars
+    // run out from the gauge — the landscape's baseline, read as amounts.
+    const bars = strataAt(Math.round(focus()), sf, box, span);
+    const strataBars = bars.map((b) => ({ ...b, on: sf.band === b.j }));
+    return [
+      new M.SolidPolygonLayer({
+        id: 'gauge-strata',
+        data: strataBars,
+        _full3d: true,
+        parameters: { depthWriteEnabled: false },
+        getPolygon: (d: { y0: number; y1: number; len: number }) => {
+          const pad = Math.abs(d.y1 - d.y0) * 0.12;
+          const a = Math.min(d.y0, d.y1) + pad, b2 = Math.max(d.y0, d.y1) - pad;
+          return [[x - 4 * unit, a, z], [x - 4 * unit - d.len, a, z], [x - 4 * unit - d.len, b2, z], [x - 4 * unit, b2, z]];
+        },
+        getFillColor: (d: { on: boolean }) => [r * 255, g * 255, b * 255, d.on ? 200 : 70],
+        updateTriggers: { getPolygon: [x, span.lo, span.hi, z, strataBars.length], getFillColor: [sf.band] },
+      }),
+      new M.LineLayer({
+        id: 'gauge-axis',
+        data: [0],
+        getSourcePosition: () => [x, span.lo, z],
+        getTargetPosition: () => [x, span.hi, z],
+        getColor: [r * 255, g * 255, b * 255, 150],
+        getWidth: 1,
+        widthUnits: 'pixels',
+        updateTriggers: { getSourcePosition: [x, span.lo, z], getTargetPosition: [x, span.hi, z] },
+      }),
+      new M.TextLayer({
+        id: 'gauge-ticks',
+        data: [...ticks, ...(sc?.label ? [{ t: -1, y: span.hi }] : [])],
+        characterSet: 'auto',
+        fontFamily: 'Inter, ui-sans-serif, system-ui, sans-serif',
+        fontWeight: 500,
+        fontSettings: { sdf: true, fontSize: 40, buffer: 6 },
+        outlineWidth: 3,
+        outlineColor: [theme.halo[0], theme.halo[1], theme.halo[2], 220],
+        sizeUnits: 'common',
+        sizeMinPixels: 8,
+        sizeMaxPixels: 12,
+        getSize: 10 * unit,
+        getText: (d: { t: number }) => (d.t < 0 ? sc!.label! : word(d.t)),
+        getPosition: (d: { y: number }) => [x, d.y, z],
+        getPixelOffset: (d: { t: number }) => (d.t < 0 ? [-6, -14] : [-6, 0]),
+        getColor: (d: { t: number }) => (d.t < 0 ? [r * 255, g * 255, b * 255, 230] : [theme.fg[0], theme.fg[1], theme.fg[2], 190]),
+        getTextAnchor: 'end',
+        getAlignmentBaseline: 'center',
+        updateTriggers: { getPosition: [x, span.lo, span.hi, z], getText: [sc?.by, sc?.min, sc?.max, sc?.label], getSize: [unit] },
       }),
     ];
   };
@@ -481,8 +641,10 @@ export function TimeDeck(props: TimeDeckProps) {
         }));
       }
       // The ground: the field's terrain at this time, and its run into the next.
-      const ground = groundNow();
-      if (ground && ground.segs[k]?.length) out.push(...groundLayers(k, alpha, ground));
+      for (const sheet of sheetsNow()) {
+        const ground = groundOf(sheet.field);
+        if (ground && ground.segs[k]?.length) out.push(...groundLayers(k, alpha, ground, sheet));
+      }
       // Streams: links whose ends never meet in time, across the depth.
       if (d.streams[k].length) {
         out.push(new M.LineLayer({
@@ -599,6 +761,10 @@ export function TimeDeck(props: TimeDeckProps) {
       }
     }
     if (!sliced) out.push(...slicerLayers());
+    // The gauge: what the ground's heights mean, at the plate's edge where
+    // the present is — the scale's ends and middle, in the field's own units.
+    const gauge = gaugeLayers();
+    if (gauge) out.push(...gauge);
     // Anchors: pillars from the present into the depth.
     if (anchors?.length) {
       const far = -(s.front + s.width + 4.2 * falloff) * s.depth;
@@ -853,8 +1019,11 @@ export function TimeDeck(props: TimeDeckProps) {
         onClick: (info: any, event: any) => {
           if (s.viewpointGesture) { s.viewpointGesture = false; return; }
           const src: MouseEvent = event?.srcEvent ?? event;
+          const band = groundBand(info?.layer?.id, info);
           if (info?.layer?.id === 'slicer-label') {
             latest.current.onCut?.(Math.round(focus()));
+          } else if (band != null && latest.current.onGroundPick) {
+            latest.current.onGroundPick(band);
           } else if (info?.layer?.id?.startsWith('n-') && info.index >= 0) {
             // A pile — nodes drawn over one another on the page that was hit —
             // is asked about, not guessed. Dots on other pages that merely
@@ -866,7 +1035,12 @@ export function TimeDeck(props: TimeDeckProps) {
           } else latest.current.onBackground();
         },
         onHover: (info: any) => {
-          latest.current.onHover(info?.layer?.id?.startsWith('n-') && info.index >= 0 ? (info.object as number) : null);
+          const id: string | undefined = info?.layer?.id;
+          latest.current.onHover(id?.startsWith('n-') && info.index >= 0 ? (info.object as number) : null);
+          // Over the ground: which band — the panel lights it. Told only when
+          // it changes, so moving along a ridge re-renders nothing.
+          const band = groundBand(id, info);
+          if (band !== s.bandTold) { s.bandTold = band; latest.current.onGround?.(band); }
         },
         onResize: ({ width, height }: { width: number; height: number }) => {
           s.size = [Math.max(1, width), Math.max(1, height)];
@@ -909,6 +1083,7 @@ export function TimeDeck(props: TimeDeckProps) {
     if (!live.length) return;
     s.raw = Float32Array.from(live);
     s.posVersion++;
+    s.rawVersion++;
     relift();
     if (!s.framed) frame();
     else draw();

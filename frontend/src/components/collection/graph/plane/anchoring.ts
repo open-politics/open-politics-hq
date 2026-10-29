@@ -14,8 +14,13 @@
  *   geo    the map — a point on the world: members gather there, those with
  *          no place of their own too
  *
+ * A set can also stand as a **room**, a box around its point: holding, it
+ * gathers at the centre like any anchor (`rooms.ts`).
+ *
  * Members are pulled firmly, their neighbours more lightly — the related, not
- * only the named.
+ * only the named — as far as the set's spread says (`sets.haloOf`). A set
+ * with a degree pulls each member as firmly as it belongs: the closest to a
+ * meaning gather tightest.
  *
  * A set with a degree (`fields.ts`) can be placed **along** an axis instead
  * of at a point: each member goes to the height its weight gives — a 9 high,
@@ -36,6 +41,11 @@ import type { Field } from './fields';
 
 export type AnchorSpace = 'free' | 'time' | 'geo';
 
+/** Where a set stands in a space: a point `[x, y]`, or a room `[x, y, w, h]`
+ *  centred on it (`rooms.ts`). A room that holds pulls to its centre, as a
+ *  point does; one that reads does not pull at all. */
+export type Place = [number, number] | [number, number, number, number];
+
 /** One placed set, as the forces read it. */
 export interface Pull {
   space: AnchorSpace;
@@ -46,13 +56,18 @@ export interface Pull {
   gain: number;
   /** Base nodes pulled firmly — the members. */
   direct: readonly number[];
-  /** Base nodes pulled lightly — what links to them. */
+  /** Base nodes pulled lightly — what links to them, the strongest of the
+   *  set's halo. */
   related: readonly number[];
   /** Placed along an axis by a field instead of at the point: each node's
    *  position on `axis` comes from its weight — `unit` maps 0…1 onto
    *  `lo…hi`, `signed` maps −1…1 (a versus, `a − b`). Nodes without a basis
    *  are not pulled. */
   along?: { field: Field; axis: 'x' | 'y'; range: 'unit' | 'signed'; lo: number; hi: number };
+  /** How firmly each node is pulled, 0…1 — the set's halo (`sets.haloOf`):
+   *  members by their degree, the related by the set's spread. Unset, or
+   *  absent for a node: members full, the related at `RELATED`. */
+  weight?: Field;
 }
 
 /** Value bands a field-placed lane is cut into — fine enough to read as a
@@ -75,6 +90,10 @@ export function anchored(pulls: readonly Pull[]): Set<number> {
 /** The cluster force an anchored view runs at, at least — a reader's anchor
  *  should visibly pull, whatever the view's own force. */
 const ANCHOR_CLUSTER = 0.4;
+/** How firmly a member is pulled at no gain. */
+const DIRECT = 0.85;
+/** The related's share of it, without a halo to say. */
+const RELATED = 0.35 / DIRECT;
 
 /**
  * The arrangement with the anchors' pulls added, in base nodes; `view` maps
@@ -141,8 +160,13 @@ export function withAnchors(arr: Arrangement, view: View, pulls: readonly Pull[]
       strength[u] = s;
       if (include) include[u] = 1;
     };
-    a.direct.forEach((i) => pull(i, Math.min(1, 0.85 * g)));
-    a.related.forEach((i) => pull(i, Math.min(1, 0.35 * g)));
+    const degree = (i: number, otherwise: number) => {
+      const w = a.weight?.[i];
+      return w === undefined || Number.isNaN(w) ? otherwise : w;
+    };
+    a.direct.forEach((i) => pull(i, Math.min(1, DIRECT * g * degree(i, 1))));
+    // Along a field only what has a value of its own is placed — no halo.
+    if (!a.along) a.related.forEach((i) => pull(i, Math.min(1, DIRECT * g * degree(i, RELATED))));
   });
 
   return {

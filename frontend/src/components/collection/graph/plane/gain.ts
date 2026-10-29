@@ -13,7 +13,8 @@
  *   node     the entity, and its sub-network at a little less: turning up
  *            "Donald Trump" turns up what he is linked to, so with Interest
  *            turned up too, *his* interests come out loudest
- *   set      every member of the set
+ *   set      its members by their degree, and what they touch by its
+ *            spread — the set's halo (`sets.haloOf`)
  *
  * What it does to the picture (`applyGain`): a node turned up grows and keeps
  * its strength; a node turned down shrinks and fades. And once anything is
@@ -23,6 +24,7 @@
  */
 import type { Network } from './network';
 import type { View } from './collapse';
+import type { Field } from './fields';
 
 export type GainKind = 'type' | 'node' | 'group' | 'set';
 
@@ -45,12 +47,13 @@ const FLOOR_SIZE = 3;
 
 export const gainKey = (kind: GainKind, key: string) => `${kind}:${key}`;
 
-/** Gains → stops per base node. */
+/** Gains → stops per base node. A set's reach by its halo — 0…1, absent
+ *  outside it. */
 export function gainStops(
   base: Network,
   gains: readonly Gain[],
   groupOf: (i: number) => string | null,
-  setMembers?: (id: string) => readonly number[] | undefined,
+  setHalo?: (id: string) => Field | undefined,
 ): Float32Array {
   const out = new Float32Array(base.size);
   const live = gains.filter((g) => g.value !== 0);
@@ -72,7 +75,8 @@ export function gainStops(
   }
   for (const g of live) {
     if (g.kind === 'set') {
-      for (const i of setMembers?.(g.key) ?? []) out[i] += g.value * GAIN_STOPS;
+      const halo = setHalo?.(g.key);
+      if (halo) for (let i = 0; i < base.size; i++) if (!Number.isNaN(halo[i])) out[i] += g.value * GAIN_STOPS * halo[i];
       continue;
     }
     if (g.kind !== 'node') continue;

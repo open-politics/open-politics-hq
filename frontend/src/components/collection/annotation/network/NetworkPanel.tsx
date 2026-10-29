@@ -17,7 +17,7 @@
  *   Geo               each node at its place, on the overview's map, which
  *                     follows the plane's camera
  *
- *   top-left      query · Time · Geo · anchor, then the builder — finding a
+ *   top-left      query · Time · Geo · anchor · room, then the builder — finding a
  *                 node, or gathering a set — then the sets, and the lists:
  *                 groups, places, the window, and the labels — types,
  *                 occurrences and the unconnected as chips over the entities;
@@ -27,9 +27,11 @@
  * anything the network knows and from the documents' annotation values. A set
  * can be picked (highlighted, its documents opened), shown alone with the
  * other sets shown alone, lit with its direct links, turned up or down, and
- * placed as an anchor in any view. Light (`plane/light`) is the same for any
- * row — a node, a group, a type — and stays on for as many as the reader
- * wants.
+ * placed as an anchor in any view — or as a room, a box drawn over the
+ * plane that reads what is inside it, in words, or holds what it gathers
+ * (`plane/rooms`). Light (`plane/light`) is the same for any row — a node, a
+ * group, a type — and stays on for as many as the reader wants; between two
+ * sets it is the paths that join them.
  *   top-right     of how many — or the documents behind what is selected
  *   bottom-left   the colour key, deep in time
  *   bottom        the time strip, in the time view
@@ -42,7 +44,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { format } from 'date-fns';
 import {
   Activity, Anchor as AnchorIcon, Boxes, CircleDot, Clock, Contrast, Expand, Eye, EyeOff, Flame, FlaskConical, Focus, Frame, Layers,
-  MapPin, Maximize2, Merge, Minimize2, Minus, Mountain, Pause, Play, Plus, Scan, Spline, Unlink, Waypoints, X,
+  MapPin, Maximize2, Merge, Minimize2, Minus, Mountain, Pause, Play, Plus, Scan, Spline, SquareDashed, Unlink, Waypoints, X,
 } from 'lucide-react';
 import type { GraphConfig } from '@cosmos.gl/graph';
 import { NetworkService, RunsService, type AnnotationSchemaRead } from '@/client';
@@ -62,10 +64,12 @@ import { useAssetPages } from '@/hooks/useAssetPages';
 import { useResolution } from '@/hooks/useResolution';
 import {
   CosmosPlane, DECK_DEFAULTS, GROUP_HUES, PlaneAnchors, PlaneLabels, PlaneLink, PlaneMap, RUNG_PRESETS, SPACE_SIZE,
-  TimeDeck, addTerm, anchored, annotationsOf, applyGain, around, byGroups, describeSet, evaluateSets, fromWords,
+  TimeDeck, addTerm, anchored, annotationsOf, applyGain, byGroups, describeSet, evaluateSets, fromWords, haloOf, SPREAD,
   gainStops, hexToRgba, joinLight, lightOf, loudest, newSetId, setGain, setHue, spaceOf, toggleLight, unitStops,
-  withAnchors, foldAnnotations, onView,
-  type AnchorMark, type DeckApi, type Field, type Term, type Gain, type GainKind, type Light, type LightKind, type NodeSet, type Pull,
+  withAnchors, foldWeights, foldMeaning, ranked, graded, reachRange, REACH, onView, bandsOf, strata, fieldLabel,
+  explainNode, describeTerm, isRoom, readsInside, insideOf, roomDocuments, holdRoom, readRoom, betweenOf, betweenKey,
+  DrawRoom,
+  type AnchorMark, type Room, type DeckApi, type Field, type Term, type Gain, type GainKind, type Light, type LightKind, type NodeSet, type Pull,
   type Surface, type TermKind,
   byPlace, byTime, cellOf, collapse, degree, expandedKeys, expansionOf, findNodes, groupPath, headsOf,
   groupsAt, groupColors, identity, inheritFrom, keyIndex, linkArrows, linkColors, linkStrength, linkWidths, merge,
@@ -84,10 +88,12 @@ import { DEFAULT_GEO, DEFAULT_TIME, GeoButton, TimeButton } from './ViewButtons'
 import { ResolverHistory, ResolverTicker } from './Resolver';
 import { DeepControls } from './DeepControls';
 import { StackPicker } from './StackPicker';
-import { SetBuilder, type TermPick } from './SetBuilder';
+import { SetBuilder, type MeaningReading, type TermPick } from './SetBuilder';
 import { RowTools, ToolButton } from './RowTools';
 import { fieldsOf, placesOf, type Catalog, type FieldOption } from './suggest';
 import { useValueTerms, valueKey } from './useValueTerms';
+import { useReadings } from './useReadings';
+import { RoomReading } from './RoomReading';
 import { networkTarget } from './barTarget';
 import { useAnnotationRunStore } from '@/zustand_stores/useAnnotationRunStore';
 
@@ -113,8 +119,20 @@ const STEP_MS = 900;
 const DOUBLE_CLICK_MS = 350;
 /** An anchor pulls its most frequent members firmly, up to this many. */
 const PULL_LIMIT = 2000;
+/** What a set's halo pulls along at most — its strongest. */
+const RELATED_LIMIT = 1600;
+/** A meaning's weights are ranks over the nodes: its strata are fifths of
+ *  them (`bandsOf`). */
+const MEANING_SCALE = { by: 'rank' } as const;
+/** A set weighed by a meaning reads approximately — drawn as a lattice of
+ *  points, not a measured sheet. */
+const approximate = (x: NodeSet) => x.terms.some((t) => t.kind === 'about' && t.op !== '!' && (t.values.length > 0 || !!t.like?.length));
 /** Among groups, a set shown alone is drawn node by node, up to this many. */
 const LOOSE_LIMIT = 5000;
+/** How often a room reads what is drawn inside it while the layout moves. */
+const ROOM_READ_MS = 500;
+/** Names a room's reading weighs, its loudest first. */
+const ROOM_NAMES = 3000;
 
 /** Where each panel's nodes last were, by id, for a remount. */
 const LAYOUTS = new Map<string, Map<string, [number, number]>>();
@@ -273,53 +291,113 @@ export function NetworkPanel({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const definitions = useMemo(() => sets.map((x) => ({ id: x.id, terms: x.terms })), [definitionKey]);
   const allTerms = useMemo(() => definitions.flatMap((d) => d.terms), [definitions]);
-  const valueTerms = useValueTerms({ infospaceId, runId, terms: allTerms, version: stream.shownKey });
+  // A meaning like some nodes is made of the documents mostly about them.
+  const documentsOf = useCallback((ids: readonly string[]) => {
+    if (!base) return [];
+    const mask = new Uint8Array(base.size);
+    for (const id of ids) { const i = base.index.get(id); if (i !== undefined) mask[i] = 1; }
+    return roomDocuments(base, mask);
+  }, [base]);
+  const valueTerms = useValueTerms({
+    infospaceId, runId, terms: allTerms, version: stream.shownKey, names: raw?.name, documentsOf,
+  });
   // A graded term's weights per annotation, folded once per network onto its
   // nodes — the field a set's degree is made of (`plane/fields`).
-  const folded = useMemo(() => new Map<string, Field>(), [base, valueTerms.weights]);
+  // Folded on the network as it came, then carried through the resolver's
+  // merges — an actor merged under another name keeps the rows that named
+  // it. Kept per answer, so one term's new answer refolds that term alone.
+  const folded = useMemo(() => new WeakMap<object, Map<number, Field>>(), [raw, merged]);
   const weightsOf = useCallback((t: Term) => {
-    const w = base ? valueTerms.weights(t) : undefined;
-    if (!w || !base) return undefined;
-    const key = valueKey(t);
-    let f = folded.get(key);
-    if (!f) folded.set(key, (f = foldAnnotations(base, w.annotation)));
+    const w = valueTerms.weights(t);
+    if (!w || !raw || !merged) return undefined;
+    // A meaning is read again per basis from the one answer; a score once.
+    const basis = t.kind === 'about' ? t.basis ?? 0.5 : -1;
+    let byBasis = folded.get(w);
+    if (!byBasis) folded.set(w, (byBasis = new Map()));
+    let f = byBasis.get(basis);
+    if (!f) {
+      // A meaning: the documents' chunks and the nodes' own names, blended,
+      // then ranked over the nodes — so a reach is "the closest tenth".
+      // A number inside an array of actors folds onto the actors themselves;
+      // a document's number onto everything the document produced.
+      f = t.kind === 'about'
+        ? ranked(onView(merged, foldMeaning(raw, w, basis)))
+        : onView(merged, foldWeights(raw, w));
+      byBasis.set(basis, f);
+    }
     return f;
-  }, [base, valueTerms.weights, folded]);
+  }, [raw, merged, valueTerms.weights, folded]);
+  // Rooms in this view's space, and what is drawn inside each — read from
+  // the layout as it moves (below), so a room's reading follows it.
+  const roomsHere = useMemo(() => sets.flatMap((x) => {
+    const p = x.at?.[anchorSpace];
+    return isRoom(p) ? [{ id: x.id, room: p }] : [];
+  }), [sets, anchorSpace]);
+  const [insides, setInsides] = useState<ReadonlyMap<string, Uint8Array>>(new Map());
+  const roomIds = useMemo(() => new Set(roomsHere.map((r) => r.id)), [roomsHere]);
   const setResults = useMemo(() => (base ? evaluateSets(definitions, {
     net: base,
     groupMembers: (head) => groupByHead(head)?.members,
     valueAssets: valueTerms.lookup,
     weights: weightsOf,
-  }) : new Map<string, { members: number[]; pending: boolean; weight?: Field }>()), [base, definitions, groupByHead, valueTerms.lookup, weightsOf]);
-  const membersOfSet = useCallback((id: string) => setResults.get(id)?.members, [setResults]);
+    inside: (id) => (roomIds.has(id) ? insides.get(id) : null),
+  }) : new Map<string, { members: number[]; pending: boolean; weight?: Field }>()),
+  [base, definitions, groupByHead, valueTerms.lookup, weightsOf, roomIds, insides]);
   const hueOf = useCallback((id: string) => setHue(Math.max(0, sets.findIndex((x) => x.id === id))), [sets]);
 
-  // Placed in this view's space: firmly its members, lightly what they link
-  // to — of the types that are drawn.
+  // Each set's halo (`sets.haloOf`): its members by their degree, what they
+  // link to by its spread — what its pull and its gain reach with. The set's
+  // own weight stays its members'.
+  const spreadKey = JSON.stringify(sets.map((x) => [x.id, x.spread]));
+  const halos = useMemo(() => {
+    const out = new Map<string, Field>();
+    if (!base) return out;
+    const spreadOf = new Map<string, number | undefined>(JSON.parse(spreadKey));
+    for (const x of definitions) {
+      const r = setResults.get(x.id);
+      if (r) out.set(x.id, haloOf(base, { ...x, spread: spreadOf.get(x.id) }, r));
+    }
+    return out;
+  }, [base, definitions, setResults, spreadKey]);
+  const haloOfSet = useCallback((id: string) => halos.get(id), [halos]);
+
+  // Placed in this view's space: firmly its members, lightly the strongest of
+  // its halo — of the types that are drawn, a bounded few of each.
   const reach = useMemo(() => {
     const out = new Map<string, { direct: number[]; related: number[] }>();
     if (!base) return out;
     const off = base.types.map((t) => hidden.has(t || 'unknown'));
     const drawn = (i: number) => !off[base.type[i]];
     for (const x of definitions) {
-      const direct = (setResults.get(x.id)?.members ?? []).filter(drawn).slice(0, PULL_LIMIT);
-      out.set(x.id, { direct, related: around(base, direct).filter(drawn) });
+      const members = setResults.get(x.id)?.members ?? [];
+      const direct = members.filter(drawn).slice(0, PULL_LIMIT);
+      const halo = halos.get(x.id);
+      const inSet = new Uint8Array(base.size);
+      for (const i of members) inSet[i] = 1;
+      const related: number[] = [];
+      if (halo) for (let i = 0; i < base.size; i++) if (!inSet[i] && !Number.isNaN(halo[i]) && drawn(i)) related.push(i);
+      related.sort((a, b) => halo![b] - halo![a] || base.frequency[b] - base.frequency[a]);
+      out.set(x.id, { direct, related: related.slice(0, RELATED_LIMIT) });
     }
     return out;
-  }, [base, definitions, setResults, hidden]);
-  const pulls = useMemo<Pull[]>(() => sets.flatMap((x) => {
+  }, [base, definitions, setResults, halos, hidden]);
+  const pulls = useMemo<Pull[]>(() => sets.flatMap((x): Pull[] => {
     const at = x.at?.[anchorSpace];
+    // A room that reads never pulls — it would gather its own reading.
+    if (isRoom(at) && readsInside(x)) return [];
     const r = reach.get(x.id);
     const weight = setResults.get(x.id)?.weight;
     // A set drawn as ground, on the flat timeline: its members take lanes by
     // value in their own time column — no point to place, the scale is the
     // place. (Deep time does it where it draws.)
-    if (x.ground && weight && r && anchorSpace === 'time') {
+    // Gain is how much it matters, here as deep in time: at 0 the scale
+    // places nothing.
+    if (x.ground && weight && r && anchorSpace === 'time' && (x.gain ?? 0) > 0) {
       const along = { field: weight, axis: 'y' as const, range: 'unit' as const, lo: SPACE_SIZE * 0.7, hi: SPACE_SIZE * 0.3 };
       return [{ space: anchorSpace, x: 0, y: 0, gain: x.gain ?? 0, direct: r.direct, related: [], along }];
     }
-    return at && r ? [{ space: anchorSpace, x: at[0], y: at[1], gain: x.gain ?? 0, ...r }] : [];
-  }), [sets, anchorSpace, reach, setResults]);
+    return at && r ? [{ space: anchorSpace, x: at[0], y: at[1], gain: x.gain ?? 0, ...r, weight: halos.get(x.id) }] : [];
+  }), [sets, anchorSpace, reach, setResults, halos]);
   // Shown alone: the plane narrows to these sets' members, together.
   const alone = useMemo(() => {
     const ids = sets.filter((x) => x.only).map((x) => x.id);
@@ -401,8 +479,8 @@ export function NetworkPanel({
   const groupKeyOf = useCallback(
     (i: number) => (groupOfNode[i] >= 0 ? headOf(groups[groupOfNode[i]]) : null), [groupOfNode, groups, headOf]);
   const stops = useMemo(
-    () => (base && view && gains.length ? unitStops(view, gainStops(base, gains, groupKeyOf, membersOfSet)) : null),
-    [base, view, gains, groupKeyOf, membersOfSet]);
+    () => (base && view && gains.length ? unitStops(view, gainStops(base, gains, groupKeyOf, haloOfSet)) : null),
+    [base, view, gains, groupKeyOf, haloOfSet]);
 
   // ── Light: rows kept lit with their direct links ──────────────────────────
   const [lights, setLights] = useDraft<Light[]>(
@@ -412,6 +490,10 @@ export function NetworkPanel({
   const litParts = useMemo(() => {
     if (!view || !base) return [];
     return lights.map((l) => {
+      if (l.kind === 'between') {
+        const [a, b] = l.key.split('|');
+        return { light: l, ...betweenOf(view, setResults.get(a)?.members ?? [], setResults.get(b)?.members ?? []) };
+      }
       let members: readonly number[] = [];
       if (l.kind === 'node') { const i = base.index.get(l.key); members = i === undefined ? [] : [i]; }
       else if (l.kind === 'group') members = groupByHead(l.key)?.members ?? [];
@@ -832,8 +914,89 @@ export function NetworkPanel({
       subscribe: (fn) => plane.current?.view.subscribe(fn) ?? (() => {}),
     };
   }, [deep, deckApi, net]);
-  /** Placing an anchor: a new set (`id` null), or one that exists. */
-  const [placing, setPlacing] = useState<{ id: string | null } | null>(null);
+  // ── Rooms: what is drawn inside each, and what that is about ────────────
+  // Read from the layout while it moves, a few times a second at most, and
+  // kept as it was while nothing crosses an edge — so the sets reading it do
+  // not churn. Deep in time a room reads what is there in the present: as
+  // you travel, it reads again.
+  useEffect(() => {
+    if (!roomsHere.length || !view) {
+      setInsides((prev) => (prev.size ? new Map() : prev));
+      return;
+    }
+    const readNow = () => {
+      const positions = plane.current?.positions();
+      if (!positions?.length) return;
+      let shown = visible;
+      if (presence) {
+        shown = new Uint8Array(view.net.size);
+        for (const u of presentIn(presence, present[0], present[1], visible)) shown[u] = 1;
+      }
+      setInsides((prev) => {
+        const next = new Map<string, Uint8Array>();
+        let changed = prev.size !== roomsHere.length;
+        for (const r of roomsHere) {
+          const mask = insideOf(view, positions, r.room, shown);
+          const old = prev.get(r.id);
+          const same = old && old.length === mask.length && old.every((v, i) => v === mask[i]);
+          next.set(r.id, same ? old : mask);
+          if (!same) changed = true;
+        }
+        return changed ? next : prev;
+      });
+    };
+    readNow();
+    let last = performance.now(), trailing: ReturnType<typeof setTimeout> | undefined;
+    const off = plane.current?.view.subscribe(() => {
+      clearTimeout(trailing);
+      const now = performance.now();
+      if (now - last >= ROOM_READ_MS) { last = now; readNow(); }
+      else trailing = setTimeout(() => { last = performance.now(); readNow(); }, ROOM_READ_MS);
+    });
+    return () => { off?.(); clearTimeout(trailing); };
+  }, [roomsHere, view, visible, presence, present]);
+  /** What each room is read from: a reading room its members — what is
+   *  inside, as its other terms narrow it — a holding room what is inside. */
+  const roomContents = useMemo(() => {
+    const out = new Map<string, { documents: number[]; names: string[]; loudest: string[] }>();
+    if (!base) return out;
+    for (const x of sets) {
+      const inside = insides.get(x.id);
+      if (!inside) continue;
+      let mask = inside;
+      if (readsInside(x)) {
+        mask = new Uint8Array(base.size);
+        for (const i of setResults.get(x.id)?.members ?? []) mask[i] = 1;
+      }
+      const members: number[] = [];
+      for (let i = 0; i < base.size; i++) if (mask[i]) members.push(i);
+      members.sort(byFrequency(base));
+      const names = [...new Set(members.slice(0, ROOM_NAMES).map((i) => base.name[i].trim()).filter(Boolean))];
+      const loud = members.filter((i) => base.kind[i] === 0).slice(0, 3).map((i) => base.name[i]);
+      out.set(x.id, { documents: roomDocuments(base, mask), names, loudest: loud });
+    }
+    return out;
+  }, [base, sets, insides, setResults]);
+  const roomAsks = useMemo(
+    () => new Map([...roomContents].map(([id, c]) => [id, { documents: c.documents, names: c.names }])),
+    [roomContents]);
+  const readingOfRoom = useReadings({ infospaceId, runId, asks: roomAsks });
+  /** Pin: a reading room holds what it reads — named by it, unnamed — and a
+   *  holding room reads again. */
+  const pinRoom = (id: string) => {
+    const x = sets.find((t) => t.id === id);
+    if (!x || !base) return;
+    if (!readsInside(x)) { setSets(sets.map((t) => (t.id === id ? readRoom(t) : t))); return; }
+    const members = setResults.get(id)?.members ?? [];
+    const about = readingOfRoom(id).reading?.terms[0]?.text;
+    setSets(sets.map((t) => (t.id === id
+      ? { ...holdRoom(t, members.map((i) => base.id[i]), members.length / Math.max(1, base.size)), name: t.name ?? about }
+      : t)));
+  };
+
+  /** Placing an anchor — or drawing a room: for a new set (`id` null), or
+   *  one that exists. */
+  const [placing, setPlacing] = useState<{ id: string | null; room?: boolean } | null>(null);
   useEffect(() => { setPlacing(null); }, [anchorSpace]);
   const builderInput = useRef<HTMLInputElement>(null);
   const pickSet = useCallback((id: string) => {
@@ -851,6 +1014,25 @@ export function NetworkPanel({
     }
     setPlacing(null);
   };
+  /** A room drawn: a new one reads what is inside it; a set that exists
+   *  holds what it has there. */
+  const dropRoom = (room: Room) => {
+    if (placing?.id) {
+      const id = placing.id;
+      setSets(sets.map((t) => (t.id === id ? { ...t, at: { ...t.at, [anchorSpace]: room } } : t)));
+    } else {
+      const id = newSetId();
+      setSets([...sets, { id, terms: [{ kind: 'region', op: '=', values: [] }], at: { [anchorSpace]: room } }]);
+      pickSet(id);
+    }
+    setPlacing(null);
+  };
+  /** A mark moved: a room keeps its size. */
+  const moveMark = (id: string, x: number, y: number) => {
+    const t = sets.find((z) => z.id === id);
+    const p = t?.at?.[anchorSpace];
+    if (t) editSet(id, { at: { ...t.at, [anchorSpace]: isRoom(p) ? [x, y, p[2], p[3]] : [x, y] } });
+  };
   const unplace = (id: string) => {
     const t = sets.find((x) => x.id === id);
     if (!t) return;
@@ -867,7 +1049,8 @@ export function NetworkPanel({
         .filter((t) => t.values.length),
     })));
     if (gains.some((g) => g.kind === 'set' && g.key === id)) setGains(setGain(gains, 'set', id, 0));
-    if (isLit('set', id)) light('set', id);
+    const still = lights.filter((l) => !(l.kind === 'set' && l.key === id) && !(l.kind === 'between' && l.key.split('|').includes(id)));
+    if (still.length !== lights.length) setLights(still);
     if (selection?.kind === 'set' && selection.id === id) select(null);
   };
   // A set with nothing in it lasts only while it is being built.
@@ -894,20 +1077,41 @@ export function NetworkPanel({
     setSets([...sets, { id, terms: [] }]);
     pickSet(id);
   };
-  /** Into the set being built — or, with none, a new set of it. */
-  const gather = (term: TermPick['term'], apart = false) => {
-    if (activeSet) { setSets(sets.map((x) => (x.id === activeSet.id ? addTerm(x, term, apart) : x))); return; }
+  /** Into the set being built — or, with none, a new set of them. */
+  const gather = (term: Term | Term[], apart = false) => {
+    const terms = Array.isArray(term) ? term : [term];
+    const into = (x: NodeSet) => terms.reduce((acc, t) => addTerm(acc, t, apart), x);
+    if (activeSet) { setSets(sets.map((x) => (x.id === activeSet.id ? into(x) : x))); return; }
     const id = newSetId();
-    setSets([...sets, { id, terms: [term] }]);
+    setSets([...sets, into({ id, terms: [] })]);
     pickSet(id);
   };
   const onBuilderPick = (pick: TermPick, how: { apart: boolean; shift: boolean }) => {
-    if (pick.node != null && base) {
+    if (pick.node != null && base && !pick.also?.length) {
       if (how.shift) { if (base.kind[pick.node] === 0) toggleMark(base.id[pick.node]); return; }
       if (!activeSet) { goToBase(pick.node); return; }
     }
-    gather(pick.term, how.apart);
+    gather([...(pick.also ?? []), pick.term], how.apart);
   };
+  // What a meaning's answer stands on, for its chip: how much of the network
+  // is embedded, and how alike the documents at its reach's edge read.
+  const totals = useMemo(() => (raw
+    ? { names: new Set(raw.name.map((n) => n.trim())).size, documents: new Set(raw.assetOf.values()).size }
+    : null), [raw]);
+  const readingOf = useCallback((t: Term): MeaningReading | undefined => {
+    const w = valueTerms.weights(t);
+    if (!w || !raw || !totals) return undefined;
+    const documents = new Set<number>();
+    for (const a of w.annotation.ids) { const d = raw.assetOf.get(a); if (d !== undefined) documents.add(d); }
+    // The documents' rank at the reach's edge — the nodes' own rank is
+    // folded from it, so this is the similarity the cut stands near.
+    const q = w.scale.quantiles;
+    const edge = q?.length && t.range ? q[Math.round(t.range[0] * (q.length - 1))] : null;
+    return {
+      documents: documents.size, ofDocuments: totals.documents,
+      names: w.label?.names.length ?? 0, ofNames: totals.names, edge,
+    };
+  }, [valueTerms, raw, totals]);
   const fields = useMemo(() => fieldsOf(schemas), [schemas]);
   const placeList = useMemo(() => (base ? placesOf(base) : []), [base]);
   const loadValues = useCallback(async (field: FieldOption, search: string) => {
@@ -928,25 +1132,171 @@ export function NetworkPanel({
     return picked ?? sets.find(drawn) ?? null;
   }, [sets, setResults, selection]);
   const groundWeight = groundSet ? setResults.get(groundSet.id)?.weight : undefined;
-  const groundField = useMemo(
-    () => (deep && view && groundWeight ? onView(view, groundWeight) : null), [deep, view, groundWeight]);
+  // The graded term the ground is raised from: its field names the scale,
+  // and the run says how its numbers were read.
+  const groundTerm = groundSet?.terms.find((t) => graded(t) && t.op !== '!');
+  const groundWeighed = groundTerm ? valueTerms.weights(groundTerm) : undefined;
+  // Read per actor, the actors' own scale is the one the ground stands on.
+  // A meaning stands on its rank over the nodes, whatever the answer's.
+  const groundScale = groundTerm?.kind === 'about' ? MEANING_SCALE
+    : groundWeighed ? (groundWeighed.element?.scale ?? groundWeighed.scale) : undefined;
+  const groundLabel = groundTerm?.kind === 'about' ? describeTerm({ ...groundTerm, range: undefined }, nameOf)
+    : groundTerm ? fieldLabel(groundTerm.field ?? '') : '';
+  // The field as drawn — over the view's units — in every view: deep it is
+  // height, elsewhere colour.
+  // Each field as the view draws it, kept by the field it came from — so a
+  // gain tick or a rename rebuilds no sheet and re-measures no ground.
+  const viewFields = useMemo(() => new WeakMap<Field, Field>(), [view]);
+  const onViewKept = useCallback((w: Field) => {
+    let f = viewFields.get(w);
+    if (!f && view) viewFields.set(w, (f = onView(view, w)));
+    return f!;
+  }, [view, viewFields]);
+  const scoreField = useMemo(() => (view && groundWeight ? onViewKept(groundWeight) : null), [view, groundWeight, onViewKept]);
+  const groundField = deep ? scoreField : null;
+
+  // ── Why this node ───────────────────────────────────────────────────────
+  // The node under the pointer, or picked: in each set it is in, every
+  // term's reading of it and the weight they make — `Person 1 × stance .72
+  // = .72`. A score reads in its own units where the scale is declared.
+  const explained = hover ?? focused;
+  const whyOf = useMemo(() => {
+    const out = new Map<string, Why>();
+    if (explained == null || !view || !base) return out;
+    if (view.memberOffsets[explained + 1] - view.memberOffsets[explained] !== 1) return out; // a group stands for many
+    const node = view.memberIds[view.memberOffsets[explained]];
+    const world = {
+      net: base, groupMembers: (h: string) => groupByHead(h)?.members, valueAssets: valueTerms.lookup, weights: weightsOf,
+      inside: (id: string) => (roomIds.has(id) ? insides.get(id) : null),
+    };
+    const name = (kind: TermKind, v: string) => nameOf(kind, v);
+    for (const x of sets) {
+      const r = setResults.get(x.id);
+      if (!r?.weight || Number.isNaN(r.weight[node])) continue;
+      const readings = explainNode(x, node, world, (id) => setResults.get(id));
+      const parts = readings.map(({ term, value }) => {
+        let shown = value == null ? '—' : value === 1 || value === 0 ? String(value) : value.toFixed(2);
+        const scale = term.measure && value != null ? valueTerms.weights(term) : undefined;
+        const sc = scale ? (scale.element?.scale ?? scale.scale) : undefined;
+        if (sc?.by === 'declared' && sc.min != null && sc.max != null && value != null) {
+          shown = `${(sc.min + value * (sc.max - sc.min)).toFixed(1).replace(/\.0$/, '')} of ${sc.min}–${sc.max}`;
+        }
+        return `${describeTerm(term, name)} ${shown}`;
+      });
+      out.set(x.id, {
+        weight: r.weight[node],
+        text: `${base.name[node]}: ${parts.join(' × ')} = ${r.weight[node].toFixed(2)}`,
+        terms: readings.map(({ term, value }) => ({ label: describeTerm(term, name), value, less: term.op === '!' })),
+      });
+    }
+    return out;
+  }, [explained, view, base, sets, setResults, groupByHead, valueTerms, weightsOf, nameOf, roomIds, insides]);
+
+  // ── Strata: the landscape taken apart ───────────────────────────────────
+  // The scale cut in bands (`fields.bandsOf`) — how many stand at each
+  // level. A band, hovered here or on the ground, lights its nodes; picked,
+  // it becomes a set of its own — the ground set's terms held to that band —
+  // which light, gain, anchors and the drill then read like any other.
+  const bands = useMemo(() => bandsOf(groundScale), [groundScale]);
+  // Per band, its drawn members — base nodes of the types on show, as the
+  // card counts them and as a band lights (with its links, like any light).
+  const bandMembers = useMemo(() => {
+    if (!groundWeight || !base) return [] as number[][];
+    const off = base.types.map((t) => hidden.has(t || 'unknown'));
+    const out = bands.map(() => [] as number[]);
+    for (let i = 0; i < groundWeight.length; i++) {
+      const w = groundWeight[i];
+      if (Number.isNaN(w) || off[base.type[i]]) continue;
+      const k = bands.findIndex((b) => w >= b.lo - 1e-6 && w <= b.hi + 1e-6);
+      if (k >= 0) out[k].push(i);
+    }
+    return out;
+  }, [groundWeight, base, bands, hidden]);
+  const bandCounts = useMemo(() => bandMembers.map((m) => m.length), [bandMembers]);
+  const [bandHover, setBandHover] = useState<number | null>(null);
+  const [groundBand, setGroundBand] = useState<number | null>(null);
+  const bandShown = bandHover ?? groundBand ?? -1;
+  const bandLit = useMemo(
+    () => (view && bandShown >= 0 && bandMembers[bandShown]?.length ? lightOf(view, bandMembers[bandShown]) : null),
+    [view, bandShown, bandMembers]);
   const ground = useMemo(() => (groundField && groundSet ? {
     field: groundField,
     hue: hueOf(groundSet.id),
     // The set's gain is how much it matters — turned up, its members stand
     // on their value.
     rise: Math.max(0, groundSet.gain ?? 0),
-    approximate: false,
-  } : null), [groundField, groundSet, hueOf]);
+    approximate: approximate(groundSet),
+    scale: groundScale ? { ...groundScale, label: groundLabel } : { by: 'none', label: groundLabel },
+    bands,
+    band: bandShown != null && bandShown >= 0 ? bandShown : null,
+  } : null), [groundField, groundSet, hueOf, groundScale, groundLabel, bands, bandShown]);
+  // Every other set drawn as ground stands as a sheet beside it — a score
+  // and a meaning, a combined weighing and its parts, stacked to compare.
+  const sheets = useMemo(() => {
+    if (!deep || !view) return [];
+    return sets.flatMap((x) => {
+      const w = x.ground && x.id !== groundSet?.id ? setResults.get(x.id)?.weight : undefined;
+      return w ? [{ id: x.id, field: onViewKept(w), hue: hueOf(x.id), approximate: approximate(x) }] : [];
+    });
+  }, [deep, view, sets, setResults, groundSet, hueOf, onViewKept]);
+  // A meaning keeps its phrases and is held to the band; a score's one
+  // value is the band's name.
+  const bandTerm = (k: number): Term | null => (groundTerm ? {
+    ...groundTerm, values: groundTerm.kind === 'about' ? groundTerm.values : [bands[k].label], range: [bands[k].lo, bands[k].hi],
+  } : null);
+  /** A band as a set of its own: the ground set, held to that stratum. */
+  const dissect = (k: number) => {
+    const term = bandTerm(k);
+    if (!groundSet || !term) return;
+    const id = newSetId();
+    const terms = groundSet.terms.map((t) => (t === groundTerm ? term : t));
+    setSets([...sets, { id, terms, name: `${groundLabel} ${bands[k].label}` }]);
+    pickSet(id);
+  };
+  const strataItems = useMemo<RankItem[]>(() => bands.map((b, k) => ({
+    id: String(k), name: b.label, count: bandCounts[k] ?? 0,
+  })).reverse(), [bands, bandCounts]);
 
+  // Outside deep time the scale has no height to take: it colours instead —
+  // the set's hue, pale at the floor, full at the ridge — over what the view
+  // draws already.
+  const shownBuffers = useMemo(() => {
+    if (!buffers || deep || !scoreField || !groundSet) return buffers;
+    const colors = Float32Array.from(buffers.colors);
+    const [r, g, b] = hexToRgba(hueOf(groundSet.id));
+    for (let u = 0; u < scoreField.length; u++) {
+      const w = scoreField[u];
+      if (Number.isNaN(w)) continue;
+      const t = 0.25 + 0.75 * w;
+      colors[4 * u] = colors[4 * u] * (1 - t) + r * t;
+      colors[4 * u + 1] = colors[4 * u + 1] * (1 - t) + g * t;
+      colors[4 * u + 2] = colors[4 * u + 2] * (1 - t) + b * t;
+    }
+    return { ...buffers, colors };
+  }, [buffers, deep, scoreField, groundSet, hueOf]);
+  const shownHighlight = useMemo(() => (bandLit ? joinLight([highlight, bandLit]) : highlight), [highlight, bandLit]);
+
+  const pickedSet = selection?.kind === 'set' ? selection.id : null;
   const anchorMarks = useMemo<AnchorMark[]>(() => sets.flatMap((x) => {
     const at = x.at?.[anchorSpace];
-    return at ? [{
+    if (!at) return [];
+    const room = isRoom(at) ? {
+      room: [at[2], at[3]] as [number, number],
+      reads: readsInside(x),
+      // Unnamed, a room goes by what it is about, once read.
+      about: x.name ? undefined : readingOfRoom(x.id).reading?.terms[0]?.text,
+      inside: roomContents.get(x.id)?.loudest,
+    } : {};
+    return [{
       id: x.id, label: setLabel(x), hue: hueOf(x.id), count: setResults.get(x.id)?.members.length ?? 0,
-      gain: x.gain ?? 0, lit: isLit('set', x.id), space: anchorSpace, x: at[0], y: at[1],
-    }] : [];
+      gain: x.gain ?? 0, lit: isLit('set', x.id), space: anchorSpace, x: at[0], y: at[1], ...room,
+      between: pickedSet && pickedSet !== x.id ? isLit('between', betweenKey(x.id, pickedSet)) : undefined,
+    }];
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [sets, anchorSpace, setLabel, hueOf, setResults, lights]);
+  }), [sets, anchorSpace, setLabel, hueOf, setResults, lights, pickedSet, roomContents, readingOfRoom]);
+  // The deck stands an anchor as a pillar through time; a room that reads
+  // gathers nothing to stand.
+  const deckAnchors = useMemo(() => anchorMarks.filter((a) => !a.reads), [anchorMarks]);
   // Deep: the legend can single out one stream — a group's rank, or a type.
   const [solo, setSolo] = useState<number | null>(null);
   useEffect(() => { setSolo(null); }, [deep, deepColor]);
@@ -1041,7 +1391,7 @@ export function NetworkPanel({
     if (!deep || !net) return null;
     // A window is the present itself, deep — the deck already lights it.
     const picked = focused != null || selection?.kind === 'set' ? subject?.highlight : null;
-    const on = joinLight([picked, lit]);
+    const on = joinLight([picked, lit, bandLit]);
     if (on) {
       const e = new Uint8Array(net.size);
       for (const i of on.points) e[i] = 1;
@@ -1051,7 +1401,7 @@ export function NetworkPanel({
     const e = new Uint8Array(net.size);
     for (let i = 0; i < net.size; i++) e[i] = (deepColor === 'types' ? net.type[i] === solo : rankOf(i) === solo) ? 1 : 0;
     return e;
-  }, [deep, net, focused, solo, deepColor, rankOf, selection, subject, lit]);
+  }, [deep, net, focused, solo, deepColor, rankOf, selection, subject, lit, bandLit]);
 
   const catalog = useMemo<Catalog | null>(() => (base ? {
     base,
@@ -1138,13 +1488,15 @@ export function NetworkPanel({
       const x = sets.find((t) => t.id === selection.id);
       const r = setResults.get(selection.id);
       if (!x || !r) return null;
+      const at = x.at?.[anchorSpace];
       return {
         subject: {
-          icon: x.at?.[anchorSpace] ? AnchorIcon : Layers, name: setLabel(x),
+          icon: isRoom(at) ? SquareDashed : at ? AnchorIcon : Layers, name: setLabel(x),
           caption: `a set of ${r.members.length.toLocaleString()}${r.pending ? ' · reading values…' : ''}`,
           unit: 'annotations',
         },
-        context: [x.at?.[anchorSpace] ? (anchorSpace === 'time' ? 'a lane through time' : anchorSpace === 'geo' ? 'anchored on the map' : 'anchored') : 'yours'],
+        context: [isRoom(at) ? (readsInside(x) ? 'a room, reading what is inside' : 'a room, holding what it gathers')
+          : at ? (anchorSpace === 'time' ? 'a lane through time' : anchorSpace === 'geo' ? 'anchored on the map' : 'anchored') : 'yours'],
         actions: (
           <HudButton size="sm" icon={Focus} active={!!x.only} className="-mr-1 border-transparent"
                      title={x.only ? 'Show everything again' : 'Show it alone — with any other set shown alone'}
@@ -1200,9 +1552,9 @@ export function NetworkPanel({
           layout={LAYOUTS.get(panel.id)}
           inherit={inherit}
           arrangement={arrangement}
-          buffers={buffers}
+          buffers={shownBuffers ?? buffers}
           visible={visible}
-          highlight={highlight}
+          highlight={shownHighlight}
           focused={focused}
           outlined={outlined}
           config={planeLook}
@@ -1231,8 +1583,11 @@ export function NetworkPanel({
               ahead={deckView?.ahead}
               vanish={deckView?.vanish}
               onVanish={(vanish) => setDeckView({ ...deckView, vanish })}
-              anchors={anchorMarks}
+              anchors={deckAnchors}
               surface={ground}
+              sheets={sheets}
+              onGround={setGroundBand}
+              onGroundPick={(k) => dissect(k)}
               slicer={slicer}
               onCut={(k) => { if (cells[k] != null) { setWin([cells[k], cells[k]]); setPlaying(false); } }}
               inset={openCanvas}
@@ -1257,17 +1612,27 @@ export function NetworkPanel({
           anchors={anchorMarks}
           selected={selection?.kind === 'set' ? selection.id : null}
           inset={openCanvas}
-          onMove={(id, x, y) => {
+          onMove={(id, x, y) => moveMark(id, x, y)}
+          onSize={(id, room) => {
             const t = sets.find((z) => z.id === id);
-            if (t) editSet(id, { at: { ...t.at, [anchorSpace]: [x, y] } });
+            if (t) editSet(id, { at: { ...t.at, [anchorSpace]: room } });
           }}
           onGain={(id, gain) => editSet(id, { gain })}
           onLight={(id) => light('set', id)}
+          onPin={pinRoom}
+          onBetween={(id) => { if (pickedSet) light('between', betweenKey(id, pickedSet)); }}
           onRemove={unplace}
           onPick={(id) => (selection?.kind === 'set' && selection.id === id ? select(null) : pickSet(id))}
         />
       )}
-      {placing && surface && (
+      {placing?.room && surface && (
+        <DrawRoom surface={surface} onDraw={dropRoom}
+                  hint={`${(() => {
+                    const x = placing.id ? sets.find((t) => t.id === placing.id) : null;
+                    return x ? `Drag where “${setLabel(x)}” gathers` : 'Drag over what to read — or click for a room around it';
+                  })()} · Esc to cancel`} />
+      )}
+      {placing && !placing.room && surface && (
         <div className="absolute inset-0 z-[5] cursor-crosshair"
              onClick={(e) => {
                const r = e.currentTarget.getBoundingClientRect();
@@ -1305,11 +1670,14 @@ export function NetworkPanel({
             <GeoButton active={core === 'geo'} value={config.view?.geo}
                        onApply={(geo) => setView({ core: 'geo', geo })}
                        onLeave={() => setView({ core: 'groups' })} />
-            <HudButton size="sm" icon={AnchorIcon} active={placing != null} disabled={!surface}
+            <HudButton size="sm" icon={AnchorIcon} active={placing != null && !placing.room} disabled={!surface}
                        title={anchorSpace === 'time'
                          ? 'Drop an anchor — a lane: the set you build moves to its height, keeping its time'
                          : 'Drop an anchor — build a set in the bar below, and it gathers there'}
-                       onClick={() => setPlacing((p) => (p ? null : { id: null }))} />
+                       onClick={() => setPlacing((p) => (p && !p.room ? null : { id: null }))} />
+            <HudButton size="sm" icon={SquareDashed} active={!!placing?.room} disabled={!surface}
+                       title='Draw a room — drag over a cluster to read what is in it, in words; pin it to hold what is like it'
+                       onClick={() => setPlacing((p) => (p?.room ? null : { id: null, room: true }))} />
           </div>
           {draft !== (config.q ?? '') && (
             <p className={cn(HUD_PROSE, 'px-1 text-hud-dimmer')}>Enter to apply · Esc to discard</p>
@@ -1320,6 +1688,7 @@ export function NetworkPanel({
             catalog={catalog}
             nameOf={nameOf}
             loadValues={loadValues}
+            readingOf={readingOf}
             onTerms={(terms) => { if (activeSet) editSet(activeSet.id, { terms }); }}
             onPick={onBuilderPick}
             onEscape={() => { if (activeSet) select(null); }}
@@ -1357,6 +1726,7 @@ export function NetworkPanel({
                 canPlace={!!surface}
                 lit={isLit('set', x.id)}
                 graded={!!setResults.get(x.id)?.weight}
+                why={whyOf.get(x.id) ?? null}
                 onGround={() => editSet(x.id, { ground: !x.ground || undefined })}
                 onPick={() => (selection?.kind === 'set' && selection.id === x.id ? select(null) : pickSet(x.id))}
                 onName={(name) => editSet(x.id, { name: name || undefined })}
@@ -1364,12 +1734,44 @@ export function NetworkPanel({
                 onPlace={() => (x.at?.[anchorSpace] ? unplace(x.id) : setPlacing({ id: x.id }))}
                 onLight={() => light('set', x.id)}
                 onGain={(v) => editSet(x.id, { gain: v || undefined })}
+                onSpread={(v) => editSet(x.id, { spread: v === SPREAD ? undefined : v })}
                 onRemove={() => removeSet(x.id)}
               />
             ))}
           </section>
         )}
 
+        {activeSet && roomContents.has(activeSet.id) && (
+          <RoomReading
+            className="pointer-events-auto max-h-[34%] shrink-0 @max-[640px]/network:hidden"
+            title={activeSet.name ?? readingOfRoom(activeSet.id).reading?.terms[0]?.text ?? 'Room'}
+            hue={hueOf(activeSet.id)}
+            {...readingOfRoom(activeSet.id)}
+            loudest={roomContents.get(activeSet.id)!.loudest}
+            onTerm={(text) => {
+              const id = newSetId();
+              setSets([...sets, { id, terms: [{ kind: 'about', op: '=', values: [text], range: reachRange(REACH) }] }]);
+              pickSet(id);
+            }}
+            onPassage={(assetId) => setOpenAsset(assetId)}
+          />
+        )}
+        {groundSet && groundWeight && (
+          <RankCard className="pointer-events-auto max-h-[30%] @max-[640px]/network:hidden"
+                    title={`${groundLabel || 'Score'} · strata`}
+                    total={bandCounts.reduce((a, b) => a + b, 0)} unit="nodes" items={strataItems}
+                    highlighted={bandShown != null && bandShown >= 0 ? String(bandShown) : null}
+                    onHover={(id) => setBandHover(id == null ? null : Number(id))}
+                    onPick={(id) => dissect(Number(id))}
+                    trailing={(item, active) => {
+                      const term = bandTerm(Number(item.id));
+                      return term ? (
+                        <RowTools active={active}
+                                  addTitle="Into the set being built — or a new set of this band"
+                                  onAdd={() => gather(term)} />
+                      ) : null;
+                    }} />
+        )}
         {base && core === 'groups' && (
           <RankCard className="pointer-events-auto max-h-[38%] @max-[640px]/network:hidden" title="Groups"
                     total={groups.length} unit="groups" items={groupItems} onPick={pickGroup}
@@ -1808,8 +2210,8 @@ function Chip({
  * this view, lit, turned up or down, removed.
  */
 function SetRow({
-  set, label, hue, result, picked, placed, placing, canPlace, lit, graded, onGround,
-  onPick, onName, onAlone, onPlace, onLight, onGain, onRemove,
+  set, label, hue, result, picked, placed, placing, canPlace, lit, graded, why, onGround,
+  onPick, onName, onAlone, onPlace, onLight, onGain, onSpread, onRemove,
 }: {
   set: NodeSet;
   label: string;
@@ -1822,6 +2224,8 @@ function SetRow({
   lit: boolean;
   /** The set has a degree — a score read by its terms — and can be ground. */
   graded: boolean;
+  /** The node in view, read by this set's terms. */
+  why: Why | null;
   onGround: () => void;
   onPick: () => void;
   onName: (name: string) => void;
@@ -1829,60 +2233,128 @@ function SetRow({
   onPlace: () => void;
   onLight: () => void;
   onGain: (v: number) => void;
+  onSpread: (v: number) => void;
   onRemove: () => void;
 }) {
   const [naming, setNaming] = useState(false);
+  const spread = set.spread ?? SPREAD;
   const reveal = (on: boolean) => (on || picked ? 'opacity-100' : 'opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100');
   return (
-    <div className={cn('group/row flex items-center gap-0.5 rounded px-1', picked ? 'bg-hud-sunken' : 'hover:bg-hud-sunken')}>
-      <span aria-hidden className="h-2.5 w-1 shrink-0 rounded-full" style={{ background: hue }} />
-      {naming ? (
-        <input
-          autoFocus
-          defaultValue={set.name ?? ''}
-          placeholder={label}
-          onBlur={(e) => { onName(e.target.value.trim()); setNaming(false); }}
-          onKeyDown={(e) => {
-            e.stopPropagation();
-            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-            if (e.key === 'Escape') setNaming(false);
-          }}
-          className="h-[18px] min-w-0 flex-1 bg-transparent px-1 text-[11px] text-hud-fg outline-none placeholder:text-hud-dimmer"
-        />
-      ) : (
-        <button type="button" onClick={onPick} onDoubleClick={() => setNaming(true)}
-                title={`${label} — click to pick and edit, double-click to name`}
-                className="flex min-w-0 flex-1 items-center gap-1 px-1 text-left">
-          <span className={cn('min-w-0 flex-1 truncate text-[11px] leading-[18px]', picked ? 'font-medium text-hud-fg' : 'text-hud-fg/85')}>
-            {label}
-          </span>
-          <span className={cn(HUD_NUM, 'text-hud-dimmer')}>
-            {result?.pending ? '…' : (result?.members.length ?? 0).toLocaleString()}
-          </span>
-        </button>
-      )}
-      <ToolButton title={set.only ? 'Show everything again' : 'Show it alone — with any other set shown alone'}
-                  on={!!set.only} onClick={onAlone} className={reveal(!!set.only)}>
-        <Focus className="size-3" />
-      </ToolButton>
-      {graded && (
-        <ToolButton title={set.ground
-                      ? 'Stop drawing its scores as ground'
-                      : 'Draw its scores as ground — deep in time a terrain of the scale, on the timeline lanes by value. Turn its gain up and its members stand on their value.'}
-                    on={!!set.ground} onClick={onGround} className={reveal(!!set.ground)}>
-          <Mountain className="size-3" />
+    <div className={cn('rounded', picked ? 'bg-hud-sunken' : 'hover:bg-hud-sunken')}>
+      <div className="group/row flex items-center gap-0.5 px-1">
+        <span aria-hidden className="h-2.5 w-1 shrink-0 rounded-full" style={{ background: hue }} />
+        {naming ? (
+          <input
+            autoFocus
+            defaultValue={set.name ?? ''}
+            placeholder={label}
+            onBlur={(e) => { onName(e.target.value.trim()); setNaming(false); }}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+              if (e.key === 'Escape') setNaming(false);
+            }}
+            className="h-[18px] min-w-0 flex-1 bg-transparent px-1 text-[11px] text-hud-fg outline-none placeholder:text-hud-dimmer"
+          />
+        ) : (
+          <button type="button" onClick={onPick} onDoubleClick={() => setNaming(true)}
+                  title={`${label} — click to pick and edit, double-click to name`}
+                  className="flex min-w-0 flex-1 items-center gap-1 px-1 text-left">
+            <span className={cn('min-w-0 flex-1 truncate text-[11px] leading-[18px]', picked ? 'font-medium text-hud-fg' : 'text-hud-fg/85')}>
+              {label}
+            </span>
+            {why ? (
+              // The node in view, by this set: its weight, the terms behind it on hover.
+              <span className={cn(HUD_NUM, 'font-medium')} style={{ color: hue }} title={why.text}>
+                {why.weight.toFixed(2)}
+              </span>
+            ) : (
+              <span className={cn(HUD_NUM, 'text-hud-dimmer')}>
+                {result?.pending ? '…' : (result?.members.length ?? 0).toLocaleString()}
+              </span>
+            )}
+          </button>
+        )}
+        <ToolButton title={set.only ? 'Show everything again' : 'Show it alone — with any other set shown alone'}
+                    on={!!set.only} onClick={onAlone} className={reveal(!!set.only)}>
+          <Focus className="size-3" />
         </ToolButton>
-      )}
-      {canPlace && (
-        <ToolButton title={placed ? 'Take its anchor off this view' : placing ? 'Click the canvas to place it' : 'Anchor it in this view — what it holds gathers there'}
-                    on={placed || placing} onClick={onPlace} className={reveal(placed || placing)}>
-          <AnchorIcon className="size-3" />
+        {graded && (
+          <ToolButton title={set.ground
+                        ? 'Stop drawing its scores as ground'
+                        : 'Draw its scores as ground — deep in time a terrain of the scale, on the timeline lanes by value. Turn its gain up and its members stand on their value.'}
+                      on={!!set.ground} onClick={onGround} className={reveal(!!set.ground)}>
+            <Mountain className="size-3" />
+          </ToolButton>
+        )}
+        {canPlace && (
+          <ToolButton title={placed ? 'Take its anchor off this view' : placing ? 'Click the canvas to place it' : 'Anchor it in this view — what it holds gathers there'}
+                      on={placed || placing} onClick={onPlace} className={reveal(placed || placing)}>
+            <AnchorIcon className="size-3" />
+          </ToolButton>
+        )}
+        <RowTools active={picked} lit={lit} onLight={onLight} gain={set.gain ?? 0} onGain={onGain} />
+        <ToolButton title="Remove the set" onClick={onRemove} className={reveal(false)}>
+          <X className="size-3" />
         </ToolButton>
+      </div>
+      {picked && (
+        // "Itself ↔ and what it touches": how far its pull and gain reach.
+        <div className="flex items-center gap-1.5 pb-1 pl-3 pr-1">
+          <span className={cn(HUD_PROSE, 'flex-1 text-[10px] text-hud-dim')}>Reaches</span>
+          <HudSegmented size="sm" value={nearestSpread(spread)} options={SPREADS}
+                        onChange={(v) => onSpread(Number(v))} />
+        </div>
       )}
-      <RowTools active={picked} lit={lit} onLight={onLight} gain={set.gain ?? 0} onGain={onGain} />
-      <ToolButton title="Remove the set" onClick={onRemove} className={reveal(false)}>
-        <X className="size-3" />
-      </ToolButton>
+      {why && picked && <WhyBars why={why} hue={hue} />}
+    </div>
+  );
+}
+
+const SPREADS = [
+  { value: '0', label: 'Itself', title: 'Only its members pull and turn up' },
+  { value: String(SPREAD), label: 'Near', title: 'What its members link to comes along lightly' },
+  { value: '0.8', label: 'Wide', title: 'What its members link to comes along nearly as strongly' },
+];
+const nearestSpread = (v: number) =>
+  SPREADS.reduce((best, o) => (Math.abs(Number(o.value) - v) < Math.abs(Number(best.value) - v) ? o : best)).value;
+
+/** What one set says about the node in view: the node's weight in it, and the
+ *  terms that make it. */
+interface Why {
+  weight: number;
+  text: string;
+  /** Each live term's reading — 1 or 0 for a match, a degree, null where it
+   *  cannot judge; `less` takes away. */
+  terms: Array<{ label: string; value: number | null; less: boolean }>;
+}
+
+/** Why a node weighs what it does in a set: a bar per term, the product
+ *  last — `Person 1 × ≈ sanctions .72 × less Gaza .10 = .65`, read as
+ *  lengths, never typed. */
+function WhyBars({ why, hue }: { why: Why; hue: string }) {
+  const bar = (value: number | null, less: boolean) => (
+    <span className="relative h-1 w-12 shrink-0 overflow-hidden rounded-full bg-hud-line">
+      {value != null && (
+        <span className={cn('absolute inset-y-0 left-0 rounded-full', less ? 'bg-hud-dim' : '')}
+              style={{ width: `${Math.round(value * 100)}%`, background: less ? undefined : hue }} />
+      )}
+    </span>
+  );
+  return (
+    <div className="space-y-px pb-1 pl-3 pr-1">
+      {why.terms.map((t, k) => (
+        <div key={k} className="flex items-center gap-1.5" title={t.less ? 'Taken away' : undefined}>
+          <span className={cn(HUD_PROSE, 'min-w-0 flex-1 truncate text-[10px] text-hud-dim')}>{t.less ? `less ${t.label}` : t.label}</span>
+          {bar(t.value, t.less)}
+          <span className={cn(HUD_NUM, 'w-7 text-right text-hud-dim')}>{t.value == null ? '—' : t.value.toFixed(2)}</span>
+        </div>
+      ))}
+      <div className="flex items-center gap-1.5">
+        <span className={cn(HUD_PROSE, 'min-w-0 flex-1 text-[10px] font-medium text-hud-fg')}>=</span>
+        {bar(why.weight, false)}
+        <span className={cn(HUD_NUM, 'w-7 text-right font-medium')} style={{ color: hue }}>{why.weight.toFixed(2)}</span>
+      </div>
     </div>
   );
 }

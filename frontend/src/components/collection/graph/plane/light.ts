@@ -10,10 +10,14 @@
  *
  * Light is read through the network underneath, then drawn: a node inside a
  * folded group lights its group, and only the links that carry one of its own.
+ *
+ * Between two sets, light is the paths that join them (`betweenOf`): their
+ * links to each other, and through one node between — what connects two
+ * rooms, two anchors, two meanings.
  */
 import type { View } from './collapse';
 
-export type LightKind = 'node' | 'group' | 'type' | 'set';
+export type LightKind = 'node' | 'group' | 'type' | 'set' | 'between';
 
 export interface Light {
   kind: LightKind;
@@ -49,6 +53,42 @@ export function lightOf(view: View, base: Iterable<number>): Lit {
     }
   }
   return { seeds: [...seedUnits], points: [...points], links: [...new Set(links)] };
+}
+
+/** The key of the paths between two sets — the same either way round. */
+export const betweenKey = (a: string, b: string) => [a, b].sort().join('|');
+
+/**
+ * The paths between two things, as drawn: the links joining them, and those
+ * through one node that links to both. The seeds are where the paths touch
+ * each side, and what stands between.
+ */
+export function betweenOf(view: View, a: Iterable<number>, b: Iterable<number>): Lit {
+  const { net, unitOf } = view;
+  const side = new Uint8Array(net.size);             // 1 a, 2 b, 3 both
+  for (const i of a) side[unitOf[i]] |= 1;
+  for (const i of b) side[unitOf[i]] |= 2;
+  const seeds = new Set<number>(), links = new Set<number>();
+  for (let u = 0; u < net.size; u++) {
+    if (side[u] === 1 || side[u] === 2) {
+      // Direct: a link from one side to the other.
+      for (let k = net.adjOffsets[u]; k < net.adjOffsets[u + 1]; k++) {
+        const v = net.adjNodes[k];
+        if (side[v] && side[v] !== side[u]) { links.add(net.adjLinks[k]); seeds.add(u); seeds.add(v); }
+      }
+    } else if (!side[u]) {
+      // Between: a node that links to both sides.
+      let reaches = 0;
+      for (let k = net.adjOffsets[u]; k < net.adjOffsets[u + 1] && reaches !== 3; k++) reaches |= side[net.adjNodes[k]];
+      if (reaches !== 3) continue;
+      seeds.add(u);
+      for (let k = net.adjOffsets[u]; k < net.adjOffsets[u + 1]; k++) {
+        const v = net.adjNodes[k];
+        if (side[v]) { links.add(net.adjLinks[k]); seeds.add(v); }
+      }
+    }
+  }
+  return { seeds: [...seeds], points: [...seeds], links: [...links] };
 }
 
 /** Several highlights as one. */

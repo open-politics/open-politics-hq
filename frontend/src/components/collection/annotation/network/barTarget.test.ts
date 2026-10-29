@@ -44,7 +44,7 @@ describe('network bar target', () => {
   test('beside other terms, a held name reads as what links to it', () => {
     const { find } = target();
     const held = find.settle!([berlin, trump, interest]);
-    expect(held.map((i) => i.op)).toEqual(['=', '~', '=']);
+    expect(held.map((i) => i.op)).toEqual(['=', '∗', '=']);
     // …and one held alone stays itself.
     expect(find.settle!([trump])[0].op).toBe('=');
   });

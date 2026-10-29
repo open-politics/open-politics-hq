@@ -1214,23 +1214,34 @@ export interface NetworkView {
   /** Types, entities, groups and sets turned up or down (`plane/gain`). */
   gains?: Array<{ kind: 'type' | 'node' | 'group' | 'set'; key: string; value: number }>;
   /** The reader's own sets — built from types, names, nodes, groups, places,
-   *  other sets and annotation values; shown alone, lit, or placed as anchors
-   *  (`plane/sets`). */
+   *  other sets, annotation values, meanings and what is inside a room; shown
+   *  alone, lit, drawn as ground, or placed as anchors and rooms
+   *  (`plane/sets`, whose `NodeSet` this is). */
   sets?: Array<{
     id: string;
     name?: string;
     terms: Array<{
-      kind: 'type' | 'name' | 'entity' | 'group' | 'place' | 'set' | 'value';
+      kind: 'type' | 'name' | 'entity' | 'group' | 'place' | 'set' | 'value' | 'about' | 'region';
       op: '=' | '~' | '!';
       values: string[];
       field?: string;
+      cmp?: '>' | '>=' | '<' | '<=';
+      measure?: boolean;
+      range?: [number, number];
+      basis?: number;
+      strength?: number;
+      like?: string[];
     }>;
     gain?: number;
     only?: boolean;
-    at?: Partial<Record<'free' | 'time' | 'geo', [number, number]>>;
+    ground?: boolean;
+    spread?: number;
+    /** A point `[x, y]`, or a room `[x, y, w, h]` centred on it. */
+    at?: Partial<Record<'free' | 'time' | 'geo', [number, number] | [number, number, number, number]>>;
   }>;
-  /** What is kept lit with its direct links (`plane/light`). */
-  lights?: Array<{ kind: 'node' | 'group' | 'type' | 'set'; key: string }>;
+  /** What is kept lit with its direct links (`plane/light`); `between` keys
+   *  two sets, `a|b`. */
+  lights?: Array<{ kind: 'node' | 'group' | 'type' | 'set' | 'between'; key: string }>;
   /** @deprecated The first anchors, a line of words each — read as sets
    *  (`plane/sets.fromWords`) until the panel next saves. */
   anchors?: Array<{ id: string; q: string; space: 'free' | 'time' | 'geo'; x: number; y: number; gain?: number }>;

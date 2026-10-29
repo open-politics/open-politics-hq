@@ -19,16 +19,18 @@
  */
 import type { BarCommand, BarItem, BarTarget } from '@/lib/commandBar';
 import {
-  OP_GLYPH, addTerm, fieldLabel, newSetId, nextOp,
+  CMP_GLYPH, OP_GLYPH, addTerm, fieldLabel, newSetId, nextOp,
   type NodeSet, type Term, type TermOp,
 } from '@/components/collection/graph/plane';
 import type { NetworkView } from '@/lib/annotations/types';
+import { openField } from './dialect';
 import { suggest, valueSuggestions, type Catalog, type FieldOption, type Suggestion } from './suggest';
 import { DEFAULT_GEO, DEFAULT_TIME } from './ViewButtons';
 
-/** A held item, to the network: a term (and the node it names), or a field
- *  waiting for its value under an operator. */
-type Pick = { term: Term; node?: number } | { field: FieldOption; op: TermOp };
+/** A held item, to the network: a term (and the node it names, and the
+ *  typed line's other clauses), or a field waiting for its value under an
+ *  operator. */
+type Pick = { term: Term; node?: number; also?: Term[] } | { field: FieldOption; op: TermOp };
 
 const pickOf = (item: BarItem) => item.data as Pick;
 
@@ -37,7 +39,7 @@ function termItem(term: Term, label: string, extra: Partial<BarItem> = {}): BarI
     key: `${term.kind}:${term.field ?? ''}:${term.values.join('|')}`,
     label,
     facet: term.kind === 'value' ? fieldLabel(term.field ?? '') : term.kind === 'entity' ? undefined : term.kind,
-    op: OP_GLYPH[term.op],
+    op: term.cmp ? CMP_GLYPH[term.cmp] : OP_GLYPH[term.op],
     // A loose name reads as its words, not as the offer's sentence.
     chip: term.kind === 'name' ? `“${term.values[0]}”` : undefined,
     ...extra,
@@ -51,10 +53,14 @@ function fieldItem(field: FieldOption, op: TermOp): BarItem {
   };
 }
 
-function itemOf(s: Suggestion): BarItem {
+/** An offer as the bar holds it — words for the input are the builder's
+ *  alone: the bar holds picks, it does not rewrite what is typed. */
+function itemOf(s: Suggestion): BarItem | null {
+  if (s.kind === 'text') return null;
   if (s.kind === 'field') return { ...fieldItem(s.field, '='), label: s.label, hint: s.hint };
-  return termItem(s.term, s.label, { hint: s.hint, count: s.count, data: { term: s.term, node: s.node } satisfies Pick });
+  return termItem(s.term, s.label, { hint: s.hint, count: s.count, data: { term: s.term, node: s.node, also: s.also } satisfies Pick });
 }
+const itemsOf = (ss: Suggestion[]) => ss.map(itemOf).filter((i): i is BarItem => !!i);
 
 /** The item with its operator turned, `=` → `~` → `≠`. */
 function turn(item: BarItem): BarItem {
@@ -80,7 +86,7 @@ function settle(held: BarItem[]): BarItem[] {
 function setOf(held: BarItem[]): NodeSet {
   return held.reduce<NodeSet>((set, item) => {
     const p = pickOf(item);
-    return 'term' in p ? addTerm(set, p.term) : set;
+    return 'term' in p ? [...(p.also ?? []), p.term].reduce((s, t) => addTerm(s, t), set) : set;
   }, { id: newSetId(), terms: [] });
 }
 
@@ -117,14 +123,16 @@ export function networkTarget({
         const p = last?.open ? pickOf(last) : null;
         if (p && 'field' in p) {
           const values = await loadValues(p.field, text.trim());
-          return valueSuggestions(p.field, p.op, text, values).map(itemOf);
+          return itemsOf(valueSuggestions(p.field, p.op, text, values));
         }
-        return catalog ? suggest(text, catalog).map(itemOf) : [];
+        if (!catalog) return [];
+        const open = openField(text, catalog);
+        return itemsOf(suggest(text, catalog, open ? await loadValues(open.field, open.search) : []));
       },
       go: (held) => {
         const only = held.length === 1 ? pickOf(held[0]) : null;
         // A name, as itself: go to it. Loosened or negated, it is a set.
-        if (only && 'term' in only && only.node != null && only.term.op === '=') { goTo(only.node); return; }
+        if (only && 'term' in only && only.node != null && only.term.op === '=' && !only.also?.length) { goTo(only.node); return; }
         gather(held);
       },
       turn,

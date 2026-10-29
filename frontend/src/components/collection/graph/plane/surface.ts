@@ -99,6 +99,7 @@ export function surfaceGrid(
   const step = (x1 - x0) / Math.max(1, cols - 1);
   const reach = Math.ceil(width * 3);
   const inv = 1 / (2 * width * width);
+  const kernel = new Float64Array(2 * reach + 3);
 
   for (let i = 0; i < field.length; i++) {
     const w = field[i];
@@ -108,11 +109,15 @@ export function surfaceGrid(
     const c = (x - x0) / step;
     const from = Math.max(0, Math.floor(c - reach));
     const to = Math.min(cols - 1, Math.ceil(c + reach));
+    // The kernel depends on the column alone — once per node, not per slice.
+    for (let j = from; j <= to; j++) {
+      const d = j - c;
+      kernel[j - from] = Math.exp(-d * d * inv);
+    }
     for (let k = presence.offsets[i]; k < presence.offsets[i + 1]; k++) {
       const row = presence.slice[k] * cols;
       for (let j = from; j <= to; j++) {
-        const d = j - c;
-        const g = Math.exp(-d * d * inv);
+        const g = kernel[j - from];
         sum[row + j] += g * w;
         mass[row + j] += g;
       }
@@ -137,14 +142,23 @@ export function surfaceGrid(
     }
   }
 
+  // Cover is judged within each slice — a quiet time beside a burst keeps
+  // its ground — but never against less than a tenth of the busiest one, so
+  // a single straggler does not raise a sheet of its own.
   let most = 0;
   for (const m of m2) if (m > most) most = m;
   const height = new Float32Array(rows * cols).fill(NaN);
   const cover = new Float32Array(rows * cols);
-  for (let k = 0; k < height.length; k++) {
-    const share = most > 0 ? m2[k] / most : 0;
-    cover[k] = share;
-    if (share >= floor) height[k] = s2[k] / m2[k];
+  for (let r = 0; r < rows; r++) {
+    let rowMost = 0;
+    for (let j = 0; j < cols; j++) rowMost = Math.max(rowMost, m2[r * cols + j]);
+    const ref = Math.max(rowMost, most * 0.1);
+    for (let j = 0; j < cols; j++) {
+      const k = r * cols + j;
+      const share = ref > 0 ? m2[k] / ref : 0;
+      cover[k] = share;
+      if (share >= floor) height[k] = s2[k] / m2[k];
+    }
   }
   return { cols, x0, x1, rows, height, cover };
 }
